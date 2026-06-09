@@ -182,6 +182,7 @@ Hobby 含 $5 资源额度，全套常驻约 **$20～35/月**，以 Dashboard →
 
 | 现象 | 处理 |
 |------|------|
+| `Cannot find module .../dist/main` | 确认 Build 成功；根目录已有 `nixpacks.toml`（`npm ci --include=dev`）；Build 命令为 `npm run build:api` |
 | API 启动报 Prisma Client 未生成 | 确认 Build 命令含 `npm run build:api`（内含 `prisma generate`） |
 | 前端请求失败 / CORS | 检查 `VITE_API_URL` 与 `CORS_ORIGIN` 域名是否完全一致 |
 | 前端仍请求 localhost | 改 `VITE_API_URL` 后重新 Deploy Web |

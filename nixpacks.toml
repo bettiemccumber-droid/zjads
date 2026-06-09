@@ -1,0 +1,9 @@
+# Railway / Nixpacks：构建阶段需要 devDependencies（@nestjs/cli、typescript、prisma CLI）
+[phases.install]
+cmds = ["npm ci --include=dev"]
+
+[phases.build]
+cmds = ["npm run build:api"]
+
+[start]
+cmd = "npm run start:api"

@@ -1,0 +1,494 @@
+/* 广告系列报表：主表与展开区统一浅色 */
+
+.campaign-report-wrap {
+  border-radius: 10px;
+  overflow-x: auto;
+  overflow-y: visible;
+  max-width: 100%;
+  border: 1px solid #e8ecf1;
+  background: #fff;
+}
+
+.campaign-report-table.ant-table-wrapper .ant-table {
+  background: #fff;
+  font-variant-numeric: tabular-nums;
+}
+
+.campaign-report-table .ant-table-thead > tr > th {
+  background: #f4f6f9 !important;
+  color: #5c6b7a !important;
+  font-weight: 600 !important;
+  font-size: 12px !important;
+  padding: 10px 8px !important;
+  border-bottom: 1px solid #e2e8f0 !important;
+  text-align: center !important;
+}
+
+.campaign-report-table .ant-table-thead > tr > th:first-child,
+.campaign-report-table .ant-table-thead > tr > th:nth-child(2) {
+  text-align: left !important;
+}
+
+.campaign-report-table .ant-table-tbody > tr > td {
+  padding: 12px 8px !important;
+  border-bottom: 1px solid #f0f2f5 !important;
+  background: #fff !important;
+  font-size: 13px;
+  vertical-align: middle !important;
+}
+
+.campaign-report-table .ant-table-tbody > tr:hover > td {
+  background: #fafbfc !important;
+}
+
+.campaign-report-table .ant-table-tbody > tr.campaign-row-expanded > td {
+  background: #f6f8fb !important;
+  border-bottom-color: transparent !important;
+}
+
+.campaign-report-table .ant-table-expanded-row > td {
+  padding: 0 !important;
+  background: #f6f8fb !important;
+  border-bottom: 1px solid #e8ecf1 !important;
+  overflow: visible !important;
+}
+
+.campaign-report-table .ant-table-expanded-row .ant-table-cell {
+  overflow: visible !important;
+}
+
+.campaign-report-table .ant-table-row-expand-icon {
+  border-radius: 4px;
+  border-color: #cbd5e1;
+  color: #64748b;
+}
+
+.campaign-report-table .ant-table-row-expand-icon:hover {
+  border-color: #3b82f6;
+  color: #3b82f6;
+}
+
+/* 系列名 */
+.campaign-name-cell {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  text-align: left;
+}
+
+.campaign-status-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  background: #cbd5e1;
+}
+
+.campaign-status-dot.on {
+  background: #22c55e;
+  box-shadow: 0 0 0 2px rgba(34, 197, 94, 0.25);
+}
+
+.campaign-name-text {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: #1e293b;
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.campaign-day-badge {
+  flex-shrink: 0;
+  padding: 0 6px;
+  height: 20px;
+  line-height: 20px;
+  font-size: 11px;
+  color: #64748b;
+  background: #f1f5f9;
+  border: 1px solid #e2e8f0;
+  border-radius: 4px;
+}
+
+.campaign-account-badge {
+  flex-shrink: 0;
+  padding: 0 6px;
+  height: 20px;
+  line-height: 20px;
+  font-size: 11px;
+  color: #0369a1;
+  background: #e0f2fe;
+  border: 1px solid #bae6fd;
+  border-radius: 4px;
+  cursor: help;
+}
+
+/* 指标色（主表浅底） */
+.campaign-report-table .cell-merchant-id {
+  color: #ea580c;
+  font-weight: 700;
+  font-size: 13px;
+}
+
+.campaign-report-table .cell-num {
+  color: #334155;
+  font-weight: 600;
+}
+
+.campaign-report-table .cell-num-accent {
+  color: #475569;
+  font-weight: 600;
+  font-size: 13px;
+}
+
+.campaign-report-table .cell-num-affiliate {
+  color: #0d9488;
+  font-weight: 700;
+  font-size: 14px;
+}
+
+.campaign-report-table .cell-money {
+  color: #334155;
+  font-weight: 600;
+}
+
+.campaign-report-table .cell-money-cost {
+  color: #b91c1c;
+  font-weight: 700;
+}
+
+.campaign-report-table .cell-money-commission {
+  color: #047857;
+  font-weight: 700;
+}
+
+.campaign-report-table .cell-kpi-value.cell-money-cost {
+  font-size: 15px;
+  font-weight: 800;
+}
+
+.campaign-report-table .cell-kpi-value.cell-money-commission {
+  font-size: 15px;
+  font-weight: 800;
+  color: #047857;
+}
+
+.campaign-report-table .cell-metric-muted {
+  color: #64748b;
+  font-weight: 500;
+  font-size: 12px;
+}
+
+.campaign-report-table .ant-table-thead > tr > th.col-kpi {
+  background: #eef2f7 !important;
+  color: #1e293b !important;
+  font-weight: 700 !important;
+  font-size: 13px !important;
+  border-bottom: 2px solid #cbd5e1 !important;
+}
+
+.campaign-report-table .ant-table-tbody > tr > td.col-kpi-cost {
+  background: #fef2f2 !important;
+}
+
+.campaign-report-table .ant-table-tbody > tr:hover > td.col-kpi-cost {
+  background: #fee2e2 !important;
+}
+
+.campaign-report-table .ant-table-tbody > tr > td.col-kpi-commission {
+  background: #ecfdf5 !important;
+}
+
+.campaign-report-table .ant-table-tbody > tr:hover > td.col-kpi-commission {
+  background: #d1fae5 !important;
+}
+
+.campaign-report-table .ant-table-tbody > tr > td.col-kpi-roi {
+  background: #fffbeb !important;
+}
+
+.campaign-report-table .ant-table-tbody > tr:hover > td.col-kpi-roi {
+  background: #fef3c7 !important;
+}
+
+.campaign-report-table .cell-roi-pill {
+  display: inline-block;
+  min-width: 48px;
+  padding: 3px 10px;
+  border-radius: 6px;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.25;
+}
+
+.campaign-report-table .cell-roi-pill--main {
+  font-size: 17px;
+  min-width: 56px;
+  padding: 5px 12px;
+}
+
+.campaign-report-table .cell-roi-pill--daily {
+  font-size: 13px;
+}
+
+.campaign-report-table .cell-roi-pill--high {
+  background: rgba(22, 163, 74, 0.14);
+}
+
+.campaign-report-table .cell-roi-pill--mid {
+  background: rgba(202, 138, 4, 0.14);
+}
+
+.campaign-report-table .cell-roi-pill--low {
+  background: rgba(220, 38, 38, 0.1);
+}
+
+.campaign-daily-inner-table .col-kpi-cost {
+  background: #fef2f2 !important;
+}
+
+.campaign-daily-inner-table .col-kpi-commission {
+  background: #ecfdf5 !important;
+}
+
+.campaign-daily-inner-table .col-kpi-roi {
+  background: #fffbeb !important;
+}
+
+.campaign-daily-summary-row .col-kpi-cost,
+.campaign-daily-summary-row .col-kpi-commission,
+.campaign-daily-summary-row .col-kpi-roi {
+  font-weight: 700;
+}
+
+.campaign-report-table .cell-rank {
+  color: #94a3b8;
+  font-weight: 500;
+  font-size: 13px;
+}
+
+/* 操作建议列 */
+.campaign-report-table .ant-table-tbody > tr > td.operation-suggestion-td {
+  text-align: left !important;
+  padding-left: 12px !important;
+  padding-right: 8px !important;
+}
+
+.operation-suggestion-cell {
+  min-width: 108px;
+}
+
+.operation-suggestion-body {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 4px;
+}
+
+.operation-suggestion-left {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  min-width: 0;
+}
+
+.operation-suggestion-status {
+  font-size: 13px;
+  font-weight: 500;
+  color: #475569;
+  line-height: 1.4;
+}
+
+.operation-suggestion-status.status-keep {
+  color: #334155;
+}
+
+.operation-suggestion-status.status-watch {
+  color: #b45309;
+}
+
+.operation-suggestion-status.status-pause {
+  color: #dc2626;
+}
+
+.operation-edit-link {
+  padding: 0 !important;
+  height: auto !important;
+  font-size: 12px !important;
+  color: #0d9488 !important;
+}
+
+.operation-edit-link:hover {
+  color: #0f766e !important;
+}
+
+.operation-view-btn {
+  color: #64748b !important;
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+
+.operation-view-btn:hover {
+  color: #0d9488 !important;
+  background: #f0fdfa !important;
+}
+
+.operation-suggestion-note {
+  margin-top: 4px;
+  font-size: 11px;
+  color: #94a3b8;
+  max-width: 120px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.operation-suggestion-popover {
+  max-width: 280px;
+}
+
+.operation-suggestion-facts {
+  margin: 8px 0 12px;
+  padding-left: 18px;
+  font-size: 13px;
+  color: #334155;
+}
+
+.operation-suggestion-facts li {
+  margin-bottom: 4px;
+}
+
+/* 按天展开：与主表同套浅色，左侧色条区分层级 */
+.campaign-daily-panel {
+  margin: 0;
+  padding: 12px 16px 14px 44px;
+  background: #f8fafc;
+  border-top: 1px solid #e8ecf1;
+  border-left: 3px solid #93c5fd;
+}
+
+.campaign-daily-panel-title {
+  color: #64748b;
+  font-size: 12px;
+  margin-bottom: 10px;
+  font-weight: 600;
+}
+
+.campaign-daily-scroll {
+  overflow-x: auto;
+  max-width: 100%;
+}
+
+.campaign-daily-inner-table.ant-table-wrapper {
+  margin: 0;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  overflow: hidden;
+  background: #fff;
+  min-width: 1100px;
+}
+
+.campaign-daily-inner-table .campaign-daily-summary-row > td {
+  background: #f1f5f9 !important;
+  font-weight: 600;
+  border-top: 2px solid #e2e8f0 !important;
+}
+
+.campaign-daily-inner-table .ant-table-summary {
+  background: #f1f5f9;
+}
+
+.campaign-daily-inner-table .ant-table {
+  background: #fff !important;
+}
+
+.campaign-daily-inner-table .ant-table-container {
+  border: none !important;
+}
+
+.campaign-daily-inner-table .ant-table-thead > tr > th {
+  background: #f1f5f9 !important;
+  color: #64748b !important;
+  font-size: 11px !important;
+  font-weight: 600 !important;
+  padding: 8px 6px !important;
+  border-bottom: 1px solid #e2e8f0 !important;
+  text-align: center !important;
+}
+
+.campaign-daily-inner-table .ant-table-tbody > tr > td {
+  background: #fff !important;
+  border-bottom: 1px solid #f1f5f9 !important;
+  padding: 8px 6px !important;
+  font-size: 12px;
+  color: #334155;
+  text-align: center !important;
+}
+
+.campaign-daily-inner-table .ant-table-tbody > tr:last-child > td {
+  border-bottom: none !important;
+}
+
+.campaign-daily-inner-table .ant-table-tbody > tr:hover > td {
+  background: #fafbfc !important;
+}
+
+/* 子表指标色与主表一致 */
+.campaign-daily-inner-table .cell-day {
+  color: #2563eb;
+  font-weight: 600;
+}
+
+.campaign-daily-inner-table .cell-num {
+  color: #334155;
+  font-weight: 600;
+}
+
+.campaign-daily-inner-table .cell-num-accent {
+  color: #2563eb;
+  font-weight: 700;
+}
+
+.campaign-daily-inner-table .cell-num-affiliate {
+  color: #0d9488;
+  font-weight: 700;
+}
+
+.campaign-daily-inner-table .cell-money {
+  color: #334155;
+  font-weight: 600;
+}
+
+.campaign-daily-inner-table .cell-money-cost {
+  color: #dc2626 !important;
+  font-weight: 700;
+}
+
+.campaign-daily-inner-table .cell-money-commission {
+  color: #9333ea !important;
+  font-weight: 700;
+}
+
+.campaign-daily-inner-table .cell-metric-good {
+  color: #16a34a !important;
+  font-weight: 600;
+}
+
+.campaign-daily-inner-table .cell-metric-warn {
+  color: #d97706 !important;
+  font-weight: 600;
+}
+
+.campaign-daily-inner-table .cell-roi-daily {
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.campaign-report-table .ant-table-pagination {
+  margin: 12px 16px !important;
+  padding: 0;
+}

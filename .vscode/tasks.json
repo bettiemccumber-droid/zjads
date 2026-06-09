@@ -1,0 +1,48 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "ZJADS: 启动 API",
+      "type": "shell",
+      "command": "npm run dev:api",
+      "options": {
+        "cwd": "${workspaceFolder}",
+        "env": {
+          "FORCE_COLOR": "1"
+        }
+      },
+      "group": "none",
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated",
+        "focus": true
+      },
+      "problemMatcher": ["$tsc-watch"]
+    },
+    {
+      "label": "ZJADS: 启动 Web",
+      "type": "shell",
+      "command": "npm run dev:web",
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "group": "none",
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated",
+        "focus": true
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "ZJADS: 同时启动 API + Web",
+      "dependsOn": ["ZJADS: 启动 API", "ZJADS: 启动 Web"],
+      "dependsOrder": "parallel",
+      "group": {
+        "kind": "build",
+        "isDefault": true
+      },
+      "problemMatcher": []
+    }
+  ]
+}

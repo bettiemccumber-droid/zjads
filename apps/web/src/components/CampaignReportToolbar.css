@@ -1,0 +1,63 @@
+.campaign-analysis-block {
+  margin-bottom: 16px;
+}
+
+.campaign-analysis-header {
+  margin-bottom: 14px;
+}
+
+.campaign-analysis-eyebrow {
+  display: block;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  color: #3b82f6;
+  margin-bottom: 4px;
+}
+
+.campaign-analysis-title {
+  margin: 0 0 6px !important;
+  font-weight: 700 !important;
+  color: #0f172a !important;
+}
+
+.campaign-analysis-desc {
+  margin: 0 !important;
+  font-size: 13px;
+  max-width: 720px;
+}
+
+.campaign-filter-card {
+  padding: 14px 16px;
+  background: #fff;
+  border: 1px solid #e8ecf1;
+  border-radius: 10px;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+}
+
+.campaign-status-filter {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  padding: 4px 10px 4px 12px;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+}
+
+.campaign-status-label {
+  font-size: 13px;
+  color: #64748b;
+  white-space: nowrap;
+}
+
+.campaign-status-filter .ant-radio-button-wrapper {
+  font-size: 13px;
+  height: 30px;
+  line-height: 28px;
+  padding-inline: 14px;
+}
+
+.campaign-filter-hint {
+  font-size: 13px;
+}

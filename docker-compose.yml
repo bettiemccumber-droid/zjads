@@ -1,0 +1,28 @@
+services:
+  mysql:
+    image: mysql:8.0
+    container_name: zjads-mysql
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: root
+      MYSQL_DATABASE: zjads
+      MYSQL_USER: zjads
+      MYSQL_PASSWORD: zjads
+    ports:
+      - "3306:3306"
+    volumes:
+      - zjads_mysql_data:/var/lib/mysql
+    command: --default-authentication-plugin=mysql_native_password --character-set-server=utf8mb4 --collation-server=utf8mb4_unicode_ci
+
+  redis:
+    image: redis:7-alpine
+    container_name: zjads-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - zjads_redis_data:/data
+
+volumes:
+  zjads_mysql_data:
+  zjads_redis_data:

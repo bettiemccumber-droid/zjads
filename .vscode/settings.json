@@ -1,0 +1,6 @@
+{
+  "npm.packageManager": "npm",
+  "npm.autoDetect": "off",
+  "npm.exclude": "**/node_modules/**",
+  "typescript.tsdk": "node_modules/typescript/lib"
+}

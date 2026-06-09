@@ -1,0 +1,320 @@
+// ZJADS — MySQL schema（单一事实来源，见 docs/TECHNICAL.md）
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+enum UserRole {
+  ADMIN
+  OPERATOR
+  VIEWER
+}
+
+enum NormalizedStatus {
+  approved
+  pending
+  rejected
+  unknown
+}
+
+enum SyncJobStatus {
+  pending
+  running
+  completed
+  failed
+  partial
+}
+
+enum AffiliateClickSource {
+  api
+  manual
+}
+
+enum SyncJobItemStatus {
+  pending
+  running
+  completed
+  failed
+}
+
+enum CommissionAlertStatus {
+  open
+  ack
+  superseded
+}
+
+model Organization {
+  id        Int      @id @default(autoincrement())
+  name      String   @db.VarChar(255)
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  users User[]
+
+  @@map("organizations")
+}
+
+model User {
+  id             Int      @id @default(autoincrement())
+  organizationId Int      @map("organization_id")
+  email          String   @unique @db.VarChar(255)
+  passwordHash   String   @map("password_hash") @db.VarChar(255)
+  username       String   @db.VarChar(100)
+  role           UserRole @default(OPERATOR)
+  isActive       Boolean  @default(true) @map("is_active")
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+
+  organization         Organization          @relation(fields: [organizationId], references: [id])
+  channelAccounts      ChannelAccount[]
+  syncJobs             SyncJob[]
+  adDataSources        AdDataSource[]
+  commissionAlertRule  CommissionAlertRule?
+  commissionAlerts     CommissionAlert[]
+
+  @@index([organizationId])
+  @@map("users")
+}
+
+model Platform {
+  id               Int      @id @default(autoincrement())
+  code             String   @unique @db.VarChar(50)
+  name             String   @db.VarChar(100)
+  credentialSchema Json?    @map("credential_schema")
+  isEnabled        Boolean  @default(true) @map("is_enabled")
+  sortOrder        Int      @default(0) @map("sort_order")
+  createdAt        DateTime @default(now()) @map("created_at")
+  updatedAt        DateTime @updatedAt @map("updated_at")
+
+  statusMappings  PlatformStatusMapping[]
+  channelAccounts ChannelAccount[]
+
+  @@map("platforms")
+}
+
+model PlatformStatusMapping {
+  id                Int              @id @default(autoincrement())
+  platformId        Int              @map("platform_id")
+  rawStatus         String           @map("raw_status") @db.VarChar(80)
+  normalizedStatus  NormalizedStatus @map("normalized_status")
+  affectsCommission Boolean          @default(true) @map("affects_commission")
+  note              String?          @db.VarChar(255)
+
+  platform Platform @relation(fields: [platformId], references: [id], onDelete: Cascade)
+
+  @@unique([platformId, rawStatus])
+  @@map("platform_status_mappings")
+}
+
+model ChannelAccount {
+  id                 Int      @id @default(autoincrement())
+  ownerUserId        Int      @map("owner_user_id")
+  platformId         Int      @map("platform_id")
+  externalChannelId  String   @default("") @map("external_channel_id") @db.VarChar(100)
+  displayName        String   @map("display_name") @db.VarChar(255)
+  affiliateAlias     String   @default("") @map("affiliate_alias") @db.VarChar(50)
+  credentialsEnc     String   @map("credentials_enc") @db.Text
+  isActive           Boolean  @default(true) @map("is_active")
+  createdAt          DateTime @default(now()) @map("created_at")
+  updatedAt          DateTime @updatedAt @map("updated_at")
+
+  ownerUser    User              @relation(fields: [ownerUserId], references: [id], onDelete: Cascade)
+  platform     Platform          @relation(fields: [platformId], references: [id])
+  orders       AffiliateOrder[]
+  merchantClicks AffiliateMerchantClickDaily[]
+  syncJobItems SyncJobItem[]
+
+  @@unique([ownerUserId, platformId, externalChannelId])
+  @@index([ownerUserId])
+  @@index([platformId])
+  @@map("channel_accounts")
+}
+
+model AffiliateOrder {
+  id                Int              @id @default(autoincrement())
+  channelAccountId  Int              @map("channel_account_id")
+  externalOrderId   String           @map("external_order_id") @db.VarChar(255)
+  merchantId        String?          @map("merchant_id") @db.VarChar(100)
+  merchantName      String?          @map("merchant_name") @db.VarChar(255)
+  merchantSlug      String?          @map("merchant_slug") @db.VarChar(100)
+  productId         String?          @map("product_id") @db.VarChar(50)
+  orderAmount       Decimal          @default(0) @map("order_amount") @db.Decimal(14, 2)
+  commission        Decimal          @default(0) @db.Decimal(14, 2)
+  currency          String           @default("USD") @db.VarChar(10)
+  rawStatus         String?          @map("raw_status") @db.VarChar(80)
+  normalizedStatus  NormalizedStatus @default(pending) @map("normalized_status")
+  orderDate         DateTime         @map("order_date") @db.Date
+  confirmDate       DateTime?        @map("confirm_date") @db.Date
+  priceModel        String?          @map("price_model") @db.VarChar(20)
+  rawPayload        Json?            @map("raw_payload")
+  collectedAt       DateTime         @default(now()) @map("collected_at")
+  createdAt         DateTime         @default(now()) @map("created_at")
+  updatedAt         DateTime         @updatedAt @map("updated_at")
+
+  channelAccount ChannelAccount @relation(fields: [channelAccountId], references: [id], onDelete: Cascade)
+
+  @@unique([channelAccountId, externalOrderId])
+  @@index([orderDate])
+  @@index([merchantId])
+  @@index([normalizedStatus])
+  @@map("affiliate_orders")
+}
+
+/** PM click_report 按商家+日汇总（刷量/换链监控，与 Google Ads 点击分开） */
+model AffiliateMerchantClickDaily {
+  id               Int      @id @default(autoincrement())
+  channelAccountId Int      @map("channel_account_id")
+  merchantId       String   @map("merchant_id") @db.VarChar(100)
+  merchantName     String   @default("") @map("merchant_name") @db.VarChar(255)
+  clickDate        DateTime @map("click_date") @db.Date
+  clicks           Int      @default(0)
+  /** api=采集写入；manual=后台导出校准，同步时不覆盖 */
+  source           AffiliateClickSource @default(api) @map("source")
+  updatedAt        DateTime @updatedAt @map("updated_at")
+
+  channelAccount ChannelAccount @relation(fields: [channelAccountId], references: [id], onDelete: Cascade)
+
+  @@unique([channelAccountId, merchantId, clickDate])
+  @@index([clickDate])
+  @@map("affiliate_merchant_click_daily")
+}
+
+model SyncJob {
+  id          Int           @id @default(autoincrement())
+  ownerUserId Int           @map("owner_user_id")
+  startDate   DateTime      @map("start_date") @db.Date
+  endDate     DateTime      @map("end_date") @db.Date
+  status      SyncJobStatus @default(pending)
+  totalItems  Int           @default(0) @map("total_items")
+  completed   Int           @default(0)
+  failed      Int           @default(0)
+  errorMessage String?      @map("error_message") @db.Text
+  /** 是否同时拉取 PM 联盟点击（按小时 API，较慢） */
+  includeClicks Boolean     @default(false) @map("include_clicks")
+  startedAt   DateTime?     @map("started_at")
+  completedAt DateTime?     @map("completed_at")
+  createdAt   DateTime      @default(now()) @map("created_at")
+
+  ownerUser User          @relation(fields: [ownerUserId], references: [id], onDelete: Cascade)
+  items     SyncJobItem[]
+
+  @@index([ownerUserId])
+  @@map("sync_jobs")
+}
+
+model SyncJobItem {
+  id               Int               @id @default(autoincrement())
+  syncJobId        Int               @map("sync_job_id")
+  channelAccountId Int               @map("channel_account_id")
+  status           SyncJobItemStatus @default(pending)
+  ordersFetched    Int               @default(0) @map("orders_fetched")
+  ordersInserted   Int               @default(0) @map("orders_inserted")
+  ordersUpdated    Int               @default(0) @map("orders_updated")
+  errorMessage     String?           @map("error_message") @db.Text
+  startedAt        DateTime?         @map("started_at")
+  completedAt      DateTime?         @map("completed_at")
+
+  syncJob        SyncJob        @relation(fields: [syncJobId], references: [id], onDelete: Cascade)
+  channelAccount ChannelAccount @relation(fields: [channelAccountId], references: [id], onDelete: Cascade)
+
+  @@index([syncJobId])
+  @@map("sync_job_items")
+}
+
+model AdDataSource {
+  id          Int      @id @default(autoincrement())
+  ownerUserId Int      @map("owner_user_id")
+  name        String   @db.VarChar(255)
+  sheetUrl    String   @map("sheet_url") @db.VarChar(500)
+  sheetId     String   @map("sheet_id") @db.VarChar(100)
+  mainTab     String   @default("raw_daily_report") @map("main_tab") @db.VarChar(100)
+  description String?  @db.Text
+  isActive    Boolean  @default(true) @map("is_active")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  ownerUser User @relation(fields: [ownerUserId], references: [id], onDelete: Cascade)
+
+  @@index([ownerUserId])
+  @@map("ad_data_sources")
+}
+
+model AdCampaignDaily {
+  id             Int      @id @default(autoincrement())
+  ownerUserId    Int      @map("owner_user_id")
+  date           DateTime @db.Date
+  customerId     String   @map("customer_id") @db.VarChar(30)
+  campaignId     String   @map("campaign_id") @db.VarChar(30)
+  campaignName   String   @map("campaign_name") @db.VarChar(500)
+  campaignStatus String   @default("") @map("campaign_status") @db.VarChar(20)
+  affiliateAlias String   @default("") @map("affiliate_alias") @db.VarChar(50)
+  merchantId     String   @default("") @map("merchant_id") @db.VarChar(100)
+  impressions    Int      @default(0)
+  clicks         Int      @default(0)
+  cost           Decimal  @default(0) @db.Decimal(14, 4)
+  campaignBudget Decimal  @default(0) @map("campaign_budget") @db.Decimal(14, 2)
+  searchBudgetLostIs Decimal @default(0) @map("search_budget_lost_is") @db.Decimal(7, 4)
+  searchRankLostIs   Decimal @default(0) @map("search_rank_lost_is") @db.Decimal(7, 4)
+  avgCpc         Decimal  @default(0) @map("avg_cpc") @db.Decimal(14, 4)
+  maxCpc         Decimal  @default(0) @map("max_cpc") @db.Decimal(14, 4)
+  currency       String   @default("USD") @db.VarChar(10)
+  updatedAt      DateTime @updatedAt @map("updated_at")
+
+  @@unique([ownerUserId, date, customerId, campaignId])
+  @@index([ownerUserId, date])
+  @@index([merchantId])
+  @@map("ad_campaign_daily")
+}
+
+model CommissionAlertRule {
+  id                      Int      @id @default(autoincrement())
+  userId                  Int      @unique @map("user_id")
+  isEnabled               Boolean  @default(true) @map("is_enabled")
+  windowDays              Int      @default(30) @map("window_days")
+  rejectedAmountThreshold Decimal  @default(100) @map("rejected_amount_threshold") @db.Decimal(14, 2)
+  rejectedRateThreshold   Decimal  @default(25) @map("rejected_rate_threshold") @db.Decimal(5, 2)
+  minRejectedOrders       Int      @default(1) @map("min_rejected_orders")
+  minOrdersForRate        Int      @default(1) @map("min_orders_for_rate")
+  minRejectedForRate      Decimal  @default(1) @map("min_rejected_for_rate") @db.Decimal(14, 2)
+  autoCheckOnSync         Boolean  @default(true) @map("auto_check_on_sync")
+  createdAt               DateTime @default(now()) @map("created_at")
+  updatedAt               DateTime @updatedAt @map("updated_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("commission_alert_rules")
+}
+
+model CommissionAlert {
+  id                  Int                   @id @default(autoincrement())
+  userId              Int                   @map("user_id")
+  merchantId          String                @map("merchant_id") @db.VarChar(100)
+  merchantName        String                @default("") @map("merchant_name") @db.VarChar(255)
+  windowStart         DateTime              @map("window_start") @db.Date
+  windowEnd           DateTime              @map("window_end") @db.Date
+  totalCommission     Decimal               @map("total_commission") @db.Decimal(14, 2)
+  rejectedCommission  Decimal               @map("rejected_commission") @db.Decimal(14, 2)
+  pendingCommission   Decimal               @default(0) @map("pending_commission") @db.Decimal(14, 2)
+  rejectedOrderCount  Int                   @default(0) @map("rejected_order_count")
+  totalOrderCount     Int                   @default(0) @map("total_order_count")
+  rejectionRate       Decimal               @map("rejection_rate") @db.Decimal(5, 2)
+  severity            String                @default("warning") @db.VarChar(20)
+  thresholdAmount     Decimal               @map("threshold_amount") @db.Decimal(14, 2)
+  thresholdRate       Decimal               @map("threshold_rate") @db.Decimal(5, 2)
+  triggerReason       String                @map("trigger_reason") @db.VarChar(500)
+  status              CommissionAlertStatus @default(open)
+  lastTriggeredAt     DateTime              @default(now()) @map("last_triggered_at")
+  createdAt           DateTime              @default(now()) @map("created_at")
+  updatedAt           DateTime              @updatedAt @map("updated_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, merchantId, windowStart, windowEnd])
+  @@index([userId, status])
+  @@map("commission_alerts")
+}

@@ -1,0 +1,26 @@
+{
+  "name": "zjads",
+  "version": "1.0.0",
+  "private": true,
+  "description": "ZJADS affiliate data and ads analytics platform",
+  "workspaces": [
+    "apps/api",
+    "apps/web"
+  ],
+  "scripts": {
+    "dev:api": "npm run start:dev --workspace=@zjads/api",
+    "dev:web": "npm run dev --workspace=@zjads/web",
+    "start:dev": "npm run dev:api",
+    "build": "npm run build --workspace=@zjads/api && npm run build --workspace=@zjads/web",
+    "build:api": "npm run build:railway --workspace=@zjads/api",
+    "build:web": "npm run build --workspace=@zjads/web",
+    "start:api": "npm run start:prod --workspace=@zjads/api",
+    "start:web": "npm run start --workspace=@zjads/web",
+    "db:migrate": "npm run prisma:migrate --workspace=@zjads/api",
+    "db:seed": "npm run prisma:seed --workspace=@zjads/api",
+    "db:init": "npm run db:init --workspace=@zjads/api"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

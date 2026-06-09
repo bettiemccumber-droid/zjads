@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Button, Card, Form, Input, Modal, Select, Table, message } from 'antd';
+import { Button, Card, Form, Input, Modal, Select, Space, Table, message } from 'antd';
 import { api, type ApiResult } from '../../api/client';
 
 interface UserRow {
@@ -10,10 +10,17 @@ interface UserRow {
   isActive: boolean;
 }
 
-/** 员工账号 CRUD（创建/启用） */
+const ROLE_LABELS: Record<string, string> = {
+  ADMIN: '管理员',
+  OPERATOR: '员工',
+  VIEWER: '只读',
+};
+
+/** 员工账号管理（创建 / 编辑 / 启用停用） */
 export default function AdminUserManagePage() {
   const [users, setUsers] = useState<UserRow[]>([]);
   const [open, setOpen] = useState(false);
+  const [editing, setEditing] = useState<UserRow | null>(null);
   const [form] = Form.useForm();
 
   const load = async () => {
@@ -25,12 +32,53 @@ export default function AdminUserManagePage() {
     load();
   }, []);
 
-  const create = async () => {
+  const openCreate = () => {
+    setEditing(null);
+    form.resetFields();
+    form.setFieldsValue({ role: 'OPERATOR' });
+    setOpen(true);
+  };
+
+  const openEdit = (row: UserRow) => {
+    setEditing(row);
+    form.setFieldsValue({
+      username: row.username,
+      email: row.email,
+      role: row.role,
+    });
+    setOpen(true);
+  };
+
+  const closeModal = () => {
+    setOpen(false);
+    setEditing(null);
+    form.resetFields();
+  };
+
+  const submit = async () => {
     const values = await form.validateFields();
+    if (editing) {
+      const payload: Record<string, string> = {
+        username: values.username,
+        email: values.email,
+        role: values.role,
+      };
+      if (values.password) payload.password = values.password;
+      const { data } = await api.patch<ApiResult<UserRow>>(`/admin/users/${editing.id}`, payload);
+      if (data.success) {
+        message.success('员工信息已更新');
+        closeModal();
+        load();
+      } else {
+        message.error(data.message);
+      }
+      return;
+    }
+
     const { data } = await api.post<ApiResult<UserRow>>('/admin/users', values);
     if (data.success) {
       message.success('员工已创建');
-      setOpen(false);
+      closeModal();
       load();
     } else {
       message.error(data.message);
@@ -47,9 +95,9 @@ export default function AdminUserManagePage() {
 
   return (
     <Card
-      title="创建员工账号"
+      title="员工账号管理"
       extra={
-        <Button type="primary" onClick={() => setOpen(true)}>
+        <Button type="primary" onClick={openCreate}>
           新建员工
         </Button>
       }
@@ -64,8 +112,7 @@ export default function AdminUserManagePage() {
           {
             title: '角色',
             dataIndex: 'role',
-            render: (role: string) =>
-              ({ ADMIN: '管理员', OPERATOR: '员工', VIEWER: '只读' })[role] ?? role,
+            render: (role: string) => ROLE_LABELS[role] ?? role,
           },
           {
             title: '状态',
@@ -75,17 +122,25 @@ export default function AdminUserManagePage() {
           {
             title: '操作',
             render: (_, r) => (
-              <Button
-                size="small"
-                onClick={() => toggleActive(r.id, !r.isActive)}
-              >
-                {r.isActive ? '停用' : '启用'}
-              </Button>
+              <Space>
+                <Button size="small" onClick={() => openEdit(r)}>
+                  编辑
+                </Button>
+                <Button size="small" onClick={() => toggleActive(r.id, !r.isActive)}>
+                  {r.isActive ? '停用' : '启用'}
+                </Button>
+              </Space>
             ),
           },
         ]}
       />
-      <Modal title="新建员工" open={open} onOk={create} onCancel={() => setOpen(false)}>
+      <Modal
+        title={editing ? '编辑员工' : '新建员工'}
+        open={open}
+        onOk={submit}
+        onCancel={closeModal}
+        destroyOnClose
+      >
         <Form form={form} layout="vertical">
           <Form.Item name="username" label="用户名" rules={[{ required: true }]}>
             <Input />
@@ -93,10 +148,14 @@ export default function AdminUserManagePage() {
           <Form.Item name="email" label="邮箱" rules={[{ required: true, type: 'email' }]}>
             <Input />
           </Form.Item>
-          <Form.Item name="password" label="初始密码" rules={[{ required: true, min: 6 }]}>
-            <Input.Password />
+          <Form.Item
+            name="password"
+            label={editing ? '新密码（留空则不修改）' : '初始密码'}
+            rules={editing ? [{ min: 6, message: '密码至少 6 位' }] : [{ required: true, min: 6 }]}
+          >
+            <Input.Password placeholder={editing ? '不修改请留空' : undefined} />
           </Form.Item>
-          <Form.Item name="role" label="角色" initialValue="OPERATOR" rules={[{ required: true }]}>
+          <Form.Item name="role" label="角色" rules={[{ required: true }]}>
             <Select
               options={[
                 { value: 'OPERATOR', label: '员工' },

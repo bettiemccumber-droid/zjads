@@ -1,7 +1,7 @@
 import { Body, Controller, Get, Param, ParseIntPipe, Patch, Post, UseGuards } from '@nestjs/common';
 import { AuthGuard } from '@nestjs/passport';
 import { UserRole } from '@prisma/client';
-import { IsBoolean, IsEmail, IsEnum, IsString, MinLength } from 'class-validator';
+import { IsBoolean, IsEmail, IsEnum, IsOptional, IsString, MinLength } from 'class-validator';
 import { ok } from '../common/api-response';
 import { AuthUser } from '../common/ownership.util';
 import { CurrentUser } from '../auth/current-user.decorator';
@@ -29,6 +29,25 @@ class SetActiveDto {
   isActive!: boolean;
 }
 
+class UpdateUserDto {
+  @IsOptional()
+  @IsString()
+  username?: string;
+
+  @IsOptional()
+  @IsEmail()
+  email?: string;
+
+  @IsOptional()
+  @IsEnum(UserRole)
+  role?: UserRole;
+
+  @IsOptional()
+  @IsString()
+  @MinLength(6)
+  password?: string;
+}
+
 @Controller('admin/users')
 @UseGuards(AuthGuard('jwt'), RolesGuard)
 @Roles(UserRole.ADMIN)
@@ -52,5 +71,15 @@ export class UsersController {
   @Patch(':id/active')
   async setActive(@Param('id', ParseIntPipe) id: number, @Body() dto: SetActiveDto) {
     return ok(await this.users.setActive(id, dto.isActive));
+  }
+
+  @Patch(':id')
+  async update(
+    @CurrentUser() user: AuthUser,
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: UpdateUserDto,
+  ) {
+    const data = await this.users.update(id, user.organizationId, dto);
+    return ok(data, '更新成功');
   }
 }

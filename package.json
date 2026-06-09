@@ -21,6 +21,6 @@
     "db:init": "npm run db:init --workspace=@zjads/api"
   },
   "engines": {
-    "node": ">=18"
+    "node": ">=20"
   }
 }

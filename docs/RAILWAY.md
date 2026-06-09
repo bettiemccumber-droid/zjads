@@ -55,7 +55,7 @@ git push origin main
 
 | 项 | 值 |
 |----|-----|
-| **Build Command** | `npm ci && npm run build:api` |
+| **Build Command** | `npm run build:api` |
 | **Start Command** | `npm run start:api` |
 
 ### Variables
@@ -118,7 +118,7 @@ https://你的-api-域名.up.railway.app/api/v1
 
 | 项 | 值 |
 |----|-----|
-| **Build Command** | `npm ci && npm run build:web` |
+| **Build Command** | `npm run build:web` |
 | **Start Command** | `npm run start:web` |
 
 ### Variables（构建时注入）

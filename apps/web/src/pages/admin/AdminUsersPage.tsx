@@ -3,6 +3,11 @@ import { Button, Card, DatePicker, Input, Space, Table, Tag, message } from 'ant
 import dayjs, { Dayjs } from 'dayjs';
 import { Link } from 'react-router-dom';
 import { api, type ApiResult } from '../../api/client';
+import {
+  AffiliateCollectionCell,
+  SheetCollectionCell,
+} from '../../components/CollectionStatusCells';
+import { formatCollectionTime, formatRelativeTime } from '../../utils/collection-display';
 
 const { RangePicker } = DatePicker;
 
@@ -21,6 +26,14 @@ interface UserSummaryRow {
   profit: number;
   lastSyncStatus: string | null;
   lastSyncAt: string | null;
+  lastSyncDateRange: string | null;
+  lastSyncStartedAt: string | null;
+  lastSyncProgress: string | null;
+  lastSyncError: string | null;
+  lastSyncJobId: number | null;
+  lastSheetName: string | null;
+  lastSheetImportAt: string | null;
+  lastOrderCollectedAt: string | null;
 }
 
 function defaultRange(): [Dayjs, Dayjs] {
@@ -63,9 +76,14 @@ export default function AdminUsersPage() {
     <Card
       title="用户管理"
       extra={
-        <Link to="/admin/users/manage">
-          <Button type="primary">创建员工</Button>
-        </Link>
+        <Space>
+          <Link to="/admin/sync">
+            <Button>数据采集中心</Button>
+          </Link>
+          <Link to="/admin/users/manage">
+            <Button type="primary">员工账号</Button>
+          </Link>
+        </Space>
       }
     >
       <Space wrap style={{ marginBottom: 16 }}>
@@ -86,58 +104,73 @@ export default function AdminUsersPage() {
         rowKey="id"
         loading={loading}
         dataSource={filtered}
-        scroll={{ x: 1100 }}
+        scroll={{ x: 1280 }}
         columns={[
-          { title: 'ID', dataIndex: 'id', width: 60 },
-          { title: '用户名', dataIndex: 'username', width: 100 },
-          { title: '邮箱', dataIndex: 'email', ellipsis: true },
+          { title: 'ID', dataIndex: 'id', width: 56, fixed: 'left' },
+          { title: '用户名', dataIndex: 'username', width: 88, fixed: 'left' },
+          { title: '邮箱', dataIndex: 'email', width: 160, ellipsis: true },
           {
             title: '状态',
             dataIndex: 'isActive',
-            width: 80,
+            width: 72,
             render: (v: boolean) => (v ? <Tag color="green">启用</Tag> : <Tag>停用</Tag>),
           },
-          { title: '平台账号', dataIndex: 'channelAccountCount', width: 90, align: 'center' },
-          { title: '广告 Sheet', dataIndex: 'adSourceCount', width: 100, align: 'center' },
-          { title: '订单数', dataIndex: 'orderCount', width: 80, align: 'right' },
+          { title: '平台账号', dataIndex: 'channelAccountCount', width: 82, align: 'center' },
+          { title: '广告 Sheet', dataIndex: 'adSourceCount', width: 92, align: 'center' },
+          { title: '订单数', dataIndex: 'orderCount', width: 76, align: 'right' },
           {
             title: '总佣金',
             dataIndex: 'totalCommission',
-            width: 100,
+            width: 96,
             align: 'right',
             render: (v: number) => `$${v.toFixed(2)}`,
           },
           {
             title: '广告费',
             dataIndex: 'totalAdSpend',
-            width: 100,
+            width: 96,
             align: 'right',
             render: (v: number) => `$${v.toFixed(2)}`,
           },
           {
             title: 'ROI',
             dataIndex: 'roi',
-            width: 72,
+            width: 68,
             align: 'right',
             render: (v: number) => (
               <span style={{ color: v >= 0 ? '#16a34a' : '#dc2626' }}>{v.toFixed(2)}</span>
             ),
           },
           {
-            title: '最近采集',
-            width: 100,
+            title: '联盟采集',
+            width: 168,
+            render: (_, r) => (
+              <AffiliateCollectionCell row={r} userId={r.id} username={r.username} />
+            ),
+          },
+          {
+            title: 'Sheet 导入',
+            width: 140,
+            render: (_, r) => <SheetCollectionCell row={r} />,
+          },
+          {
+            title: '最新订单入库',
+            width: 130,
             render: (_, r) =>
-              r.lastSyncStatus ? (
-                <Tag color={r.lastSyncStatus === 'completed' ? 'green' : 'default'}>
-                  {r.lastSyncStatus}
-                </Tag>
+              r.lastOrderCollectedAt ? (
+                <span
+                  style={{ fontSize: 12, color: '#666' }}
+                  title={formatCollectionTime(r.lastOrderCollectedAt)}
+                >
+                  {formatRelativeTime(r.lastOrderCollectedAt)}
+                </span>
               ) : (
-                '—'
+                <span style={{ color: '#999' }}>—</span>
               ),
           },
           {
             title: '操作',
-            width: 160,
+            width: 140,
             fixed: 'right',
             render: (_, r) => (
               <Space>

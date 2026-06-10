@@ -12,6 +12,10 @@ import {
 } from 'antd';
 import dayjs, { Dayjs } from 'dayjs';
 import { api, type ApiResult } from '../../api/client';
+import {
+  AffiliateCollectionCell,
+  SheetCollectionCell,
+} from '../../components/CollectionStatusCells';
 
 const { RangePicker } = DatePicker;
 
@@ -22,6 +26,11 @@ interface CollectionRow {
   adSourceCount: number;
   lastSyncStatus: string | null;
   lastSyncAt: string | null;
+  lastSyncDateRange: string | null;
+  lastSyncStartedAt: string | null;
+  lastSyncProgress: string | null;
+  lastSyncError: string | null;
+  lastSyncJobId: number | null;
   lastSheetImportAt: string | null;
   lastSheetName: string | null;
 }
@@ -91,6 +100,11 @@ export default function AdminSyncPage() {
 
   const withChannels = rows.filter((r) => r.channelAccountCount > 0).length;
   const withSheets = rows.filter((r) => r.adSourceCount > 0).length;
+  const staleCount = rows.filter((r) => {
+    if (!r.lastSyncAt) return r.channelAccountCount > 0;
+    const days = (Date.now() - new Date(r.lastSyncAt).getTime()) / (86400000);
+    return days > 2 && r.channelAccountCount > 0;
+  }).length;
 
   return (
     <div>
@@ -99,7 +113,7 @@ export default function AdminSyncPage() {
         showIcon
         style={{ marginBottom: 16 }}
         message="管理员批量采集"
-        description="将使用各员工已配置的平台 Token 与 Google Sheet，无需管理员重复添加账号。"
+        description="将使用各员工已配置的平台 Token 与 Google Sheet。下方表格展示每位员工最近采集时间、区间与 Sheet 导入情况，便于排查。"
       />
 
       <Card title="快速操作" style={{ marginBottom: 16 }}>
@@ -122,9 +136,12 @@ export default function AdminSyncPage() {
       </Card>
 
       <Card title="用户数据状态">
-        <Space style={{ marginBottom: 12 }}>
+        <Space style={{ marginBottom: 12 }} wrap>
           <Tag color="blue">有平台账号 {withChannels} 人</Tag>
           <Tag color="green">有广告 Sheet {withSheets} 人</Tag>
+          {staleCount > 0 && (
+            <Tag color="orange">超过 2 天未采集 {staleCount} 人</Tag>
+          )}
           <Button size="small" onClick={load}>
             刷新
           </Button>
@@ -133,23 +150,26 @@ export default function AdminSyncPage() {
           rowKey="userId"
           loading={loading}
           dataSource={rows}
+          scroll={{ x: 900 }}
           columns={[
-            { title: '用户', dataIndex: 'username' },
+            { title: '用户', dataIndex: 'username', width: 100 },
             { title: '平台账号', dataIndex: 'channelAccountCount', width: 90, align: 'center' },
             { title: '广告 Sheet', dataIndex: 'adSourceCount', width: 100, align: 'center' },
             {
               title: '最近联盟采集',
-              render: (_, r) =>
-                r.lastSyncAt
-                  ? `${r.lastSyncStatus ?? '—'} · ${new Date(r.lastSyncAt).toLocaleString('zh-CN')}`
-                  : '—',
+              width: 200,
+              render: (_, r) => (
+                <AffiliateCollectionCell
+                  row={r}
+                  userId={r.userId}
+                  username={r.username}
+                />
+              ),
             },
             {
               title: '最近 Sheet 导入',
-              render: (_, r) =>
-                r.lastSheetImportAt
-                  ? `${r.lastSheetName ?? ''} · ${new Date(r.lastSheetImportAt).toLocaleString('zh-CN')}`
-                  : '—',
+              width: 160,
+              render: (_, r) => <SheetCollectionCell row={r} />,
             },
           ]}
         />

@@ -97,6 +97,12 @@ export class AdminController {
     return ok(data);
   }
 
+  @Get('users/:id/sync-jobs')
+  async userSyncJobs(@Param('id', ParseIntPipe) id: number, @Query('limit') limit?: string) {
+    const n = limit ? Math.min(parseInt(limit, 10) || 10, 30) : 10;
+    return ok(await this.admin.userSyncJobs(id, n));
+  }
+
   @Get('collection-status')
   async collectionStatus() {
     return ok(await this.admin.collectionStatus());

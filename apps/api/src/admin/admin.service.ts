@@ -6,6 +6,11 @@ import { resolveOrderCommissionBuckets } from '../common/order-commission-bucket
 import { PrismaService } from '../prisma/prisma.service';
 import { ReportsService } from '../reports/reports.service';
 import { SyncService } from '../sync/sync.service';
+import {
+  buildAffiliateSnapshot,
+  pickLatestJobByUser,
+  type SyncJobPick,
+} from './collection-snapshot.util';
 
 export interface AdminDateRange {
   startDate: string;
@@ -79,7 +84,7 @@ export class AdminService {
     };
   }
 
-  /** 用户列表（含业务指标） */
+  /** 用户列表（含业务指标与采集明细） */
   async usersSummary(q: AdminDateRange) {
     const users = await this.prisma.user.findMany({
       where: { role: { not: UserRole.ADMIN } },
@@ -94,9 +99,50 @@ export class AdminService {
       orderBy: { id: 'asc' },
     });
 
+    if (users.length === 0) return [];
+
+    const userIds = users.map((u) => u.id);
+    const [allJobs, allSources] = await Promise.all([
+      this.prisma.syncJob.findMany({
+        where: { ownerUserId: { in: userIds } },
+        orderBy: { createdAt: 'desc' },
+        select: {
+          id: true,
+          ownerUserId: true,
+          status: true,
+          startDate: true,
+          endDate: true,
+          startedAt: true,
+          completedAt: true,
+          createdAt: true,
+          totalItems: true,
+          completed: true,
+          failed: true,
+          errorMessage: true,
+        },
+      }),
+      this.prisma.adDataSource.findMany({
+        where: { ownerUserId: { in: userIds } },
+        orderBy: { updatedAt: 'desc' },
+        select: { ownerUserId: true, name: true, updatedAt: true },
+      }),
+    ]);
+
+    const lastJobByUser = pickLatestJobByUser(allJobs as SyncJobPick[]);
+    const lastSourceByUser = new Map<number, { name: string; updatedAt: Date }>();
+    for (const s of allSources) {
+      if (!lastSourceByUser.has(s.ownerUserId)) {
+        lastSourceByUser.set(s.ownerUserId, { name: s.name, updatedAt: s.updatedAt });
+      }
+    }
+
     const rows = [];
     for (const u of users) {
-      const [channelCount, adSourceCount, orderAgg, report, lastJob] = await Promise.all([
+      const lastJob = lastJobByUser.get(u.id);
+      const affiliate = buildAffiliateSnapshot(lastJob);
+      const lastSource = lastSourceByUser.get(u.id);
+
+      const [channelCount, adSourceCount, orderAgg, report, lastOrder] = await Promise.all([
         this.prisma.channelAccount.count({ where: { ownerUserId: u.id, isActive: true } }),
         this.prisma.adDataSource.count({ where: { ownerUserId: u.id, isActive: true } }),
         this.prisma.affiliateOrder.aggregate({
@@ -111,10 +157,10 @@ export class AdminService {
           { id: u.id, role: UserRole.OPERATOR, organizationId: 1 } as AuthUser,
           { ...q, userId: u.id },
         ),
-        this.prisma.syncJob.findFirst({
-          where: { ownerUserId: u.id },
-          orderBy: { createdAt: 'desc' },
-          select: { status: true, createdAt: true, completedAt: true },
+        this.prisma.affiliateOrder.findFirst({
+          where: { channelAccount: { ownerUserId: u.id } },
+          orderBy: { collectedAt: 'desc' },
+          select: { collectedAt: true },
         }),
       ]);
 
@@ -127,8 +173,16 @@ export class AdminService {
         totalAdSpend: report.totals.totalAdSpend,
         roi: report.totals.overallRoi,
         profit: report.totals.profit,
-        lastSyncStatus: lastJob?.status ?? null,
-        lastSyncAt: lastJob?.completedAt ?? lastJob?.createdAt ?? null,
+        lastSyncStatus: affiliate.status,
+        lastSyncAt: affiliate.finishedAt ?? affiliate.startedAt,
+        lastSyncDateRange: affiliate.dateRange,
+        lastSyncStartedAt: affiliate.startedAt,
+        lastSyncProgress: affiliate.progress,
+        lastSyncError: affiliate.errorMessage,
+        lastSyncJobId: affiliate.jobId,
+        lastSheetName: lastSource?.name ?? null,
+        lastSheetImportAt: lastSource?.updatedAt.toISOString() ?? null,
+        lastOrderCollectedAt: lastOrder?.collectedAt.toISOString() ?? null,
       });
     }
 
@@ -143,24 +197,53 @@ export class AdminService {
       orderBy: { username: 'asc' },
     });
 
+    if (users.length === 0) return [];
+
+    const userIds = users.map((u) => u.id);
+    const [allJobs, allSources] = await Promise.all([
+      this.prisma.syncJob.findMany({
+        where: { ownerUserId: { in: userIds } },
+        orderBy: { createdAt: 'desc' },
+        select: {
+          id: true,
+          ownerUserId: true,
+          status: true,
+          startDate: true,
+          endDate: true,
+          startedAt: true,
+          completedAt: true,
+          createdAt: true,
+          totalItems: true,
+          completed: true,
+          failed: true,
+          errorMessage: true,
+        },
+      }),
+      this.prisma.adDataSource.findMany({
+        where: { ownerUserId: { in: userIds }, isActive: true },
+        select: { id: true, ownerUserId: true, name: true, updatedAt: true },
+        orderBy: { updatedAt: 'desc' },
+      }),
+    ]);
+
+    const lastJobByUser = pickLatestJobByUser(allJobs as SyncJobPick[]);
+    const sourcesByUser = new Map<number, Array<{ id: number; name: string; updatedAt: Date }>>();
+    for (const s of allSources) {
+      const list = sourcesByUser.get(s.ownerUserId) ?? [];
+      list.push({ id: s.id, name: s.name, updatedAt: s.updatedAt });
+      sourcesByUser.set(s.ownerUserId, list);
+    }
+
     const rows = [];
     for (const u of users) {
-      const [channels, sources, lastJob, lastSource] = await Promise.all([
-        this.prisma.channelAccount.count({ where: { ownerUserId: u.id, isActive: true } }),
-        this.prisma.adDataSource.findMany({
-          where: { ownerUserId: u.id, isActive: true },
-          select: { id: true, name: true, updatedAt: true },
-        }),
-        this.prisma.syncJob.findFirst({
-          where: { ownerUserId: u.id },
-          orderBy: { createdAt: 'desc' },
-        }),
-        this.prisma.adDataSource.findFirst({
-          where: { ownerUserId: u.id },
-          orderBy: { updatedAt: 'desc' },
-          select: { updatedAt: true, name: true },
-        }),
-      ]);
+      const lastJob = lastJobByUser.get(u.id);
+      const affiliate = buildAffiliateSnapshot(lastJob);
+      const sources = sourcesByUser.get(u.id) ?? [];
+      const lastSource = sources[0];
+
+      const channels = await this.prisma.channelAccount.count({
+        where: { ownerUserId: u.id, isActive: true },
+      });
 
       rows.push({
         userId: u.id,
@@ -168,13 +251,63 @@ export class AdminService {
         channelAccountCount: channels,
         adSourceCount: sources.length,
         adSources: sources,
-        lastSyncStatus: lastJob?.status ?? null,
-        lastSyncAt: lastJob?.completedAt ?? lastJob?.createdAt ?? null,
-        lastSheetImportAt: lastSource?.updatedAt ?? null,
+        lastSyncStatus: affiliate.status,
+        lastSyncAt: affiliate.finishedAt ?? affiliate.startedAt,
+        lastSyncDateRange: affiliate.dateRange,
+        lastSyncStartedAt: affiliate.startedAt,
+        lastSyncProgress: affiliate.progress,
+        lastSyncError: affiliate.errorMessage,
+        lastSyncJobId: affiliate.jobId,
+        lastSheetImportAt: lastSource?.updatedAt.toISOString() ?? null,
         lastSheetName: lastSource?.name ?? null,
       });
     }
     return rows;
+  }
+
+  /** 某员工最近采集任务（管理员排查） */
+  async userSyncJobs(userId: number, limit = 10) {
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: { id: true, role: true },
+    });
+    if (!user || user.role === UserRole.ADMIN) return [];
+
+    await this.sync.recoverStaleJobs();
+
+    const jobs = await this.prisma.syncJob.findMany({
+      where: { ownerUserId: userId },
+      orderBy: { createdAt: 'desc' },
+      take: Math.min(limit, 30),
+      include: {
+        items: {
+          include: {
+            channelAccount: { include: { platform: true } },
+          },
+        },
+      },
+    });
+
+    return jobs.map((job) => ({
+      id: job.id,
+      status: job.status,
+      startDate: job.startDate.toISOString().slice(0, 10),
+      endDate: job.endDate.toISOString().slice(0, 10),
+      startedAt: job.startedAt?.toISOString() ?? job.createdAt.toISOString(),
+      completedAt: job.completedAt?.toISOString() ?? null,
+      totalItems: job.totalItems,
+      completed: job.completed,
+      failed: job.failed,
+      errorMessage: job.errorMessage,
+      includeClicks: job.includeClicks,
+      items: job.items.map((item) => ({
+        id: item.id,
+        status: item.status,
+        platformName: item.channelAccount.platform.name,
+        accountName: item.channelAccount.displayName,
+        errorMessage: item.errorMessage,
+      })),
+    }));
   }
 
   /** 批量为所有员工创建联盟订单采集任务 */

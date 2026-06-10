@@ -3,6 +3,11 @@ import { Button, Card, Col, DatePicker, Descriptions, Row, Space, Statistic, Tab
 import dayjs, { Dayjs } from 'dayjs';
 import { Link, useParams } from 'react-router-dom';
 import { api, type ApiResult } from '../../api/client';
+import {
+  AFFILIATE_STATUS_LABELS,
+  affiliateStatusColor,
+  formatCollectionTime,
+} from '../../utils/collection-display';
 
 const { RangePicker } = DatePicker;
 
@@ -41,6 +46,26 @@ interface UserDetail {
   }>;
 }
 
+interface SyncJobRow {
+  id: number;
+  status: string;
+  startDate: string;
+  endDate: string;
+  startedAt: string;
+  completedAt: string | null;
+  totalItems: number;
+  completed: number;
+  failed: number;
+  errorMessage: string | null;
+  items: Array<{
+    id: number;
+    status: string;
+    platformName: string;
+    accountName: string;
+    errorMessage: string | null;
+  }>;
+}
+
 function defaultRange(): [Dayjs, Dayjs] {
   return [dayjs().subtract(30, 'day'), dayjs().subtract(1, 'day')];
 }
@@ -50,19 +75,26 @@ export default function AdminUserDetailPage() {
   const userId = parseInt(id ?? '0', 10);
   const [range, setRange] = useState<[Dayjs, Dayjs]>(defaultRange);
   const [detail, setDetail] = useState<UserDetail | null>(null);
+  const [syncJobs, setSyncJobs] = useState<SyncJobRow[]>([]);
   const [loading, setLoading] = useState(false);
 
   const load = async () => {
     if (!userId) return;
     setLoading(true);
     try {
-      const { data } = await api.get<ApiResult<UserDetail>>(`/admin/users/${userId}/detail`, {
-        params: {
-          startDate: range[0].format('YYYY-MM-DD'),
-          endDate: range[1].format('YYYY-MM-DD'),
-        },
-      });
-      if (data.success) setDetail(data.data);
+      const [detailRes, jobsRes] = await Promise.all([
+        api.get<ApiResult<UserDetail>>(`/admin/users/${userId}/detail`, {
+          params: {
+            startDate: range[0].format('YYYY-MM-DD'),
+            endDate: range[1].format('YYYY-MM-DD'),
+          },
+        }),
+        api.get<ApiResult<SyncJobRow[]>>(`/admin/users/${userId}/sync-jobs`, {
+          params: { limit: 10 },
+        }),
+      ]);
+      if (detailRes.data.success) setDetail(detailRes.data.data);
+      if (jobsRes.data.success) setSyncJobs(jobsRes.data.data);
     } finally {
       setLoading(false);
     }
@@ -137,6 +169,82 @@ export default function AdminUserDetailPage() {
                     title: '状态',
                     dataIndex: 'isActive',
                     render: (v: boolean) => (v ? '启用' : '停用'),
+                  },
+                ]}
+              />
+            </Card>
+
+            <Card type="inner" title="最近联盟采集" size="small" style={{ marginBottom: 12 }}>
+              <Table
+                size="small"
+                rowKey="id"
+                pagination={false}
+                dataSource={syncJobs}
+                expandable={{
+                  expandedRowRender: (job) => (
+                    <Table
+                      size="small"
+                      rowKey="id"
+                      pagination={false}
+                      dataSource={job.items}
+                      columns={[
+                        { title: '平台', dataIndex: 'platformName', width: 120 },
+                        { title: '账号', dataIndex: 'accountName' },
+                        {
+                          title: '状态',
+                          dataIndex: 'status',
+                          width: 90,
+                          render: (s: string) => (
+                            <Tag color={affiliateStatusColor(s)}>
+                              {AFFILIATE_STATUS_LABELS[s] ?? s}
+                            </Tag>
+                          ),
+                        },
+                        {
+                          title: '错误',
+                          dataIndex: 'errorMessage',
+                          render: (v: string | null) => v ?? '—',
+                        },
+                      ]}
+                    />
+                  ),
+                }}
+                columns={[
+                  { title: 'ID', dataIndex: 'id', width: 56 },
+                  {
+                    title: '状态',
+                    dataIndex: 'status',
+                    width: 88,
+                    render: (s: string) => (
+                      <Tag color={affiliateStatusColor(s)}>
+                        {AFFILIATE_STATUS_LABELS[s] ?? s}
+                      </Tag>
+                    ),
+                  },
+                  {
+                    title: '采集区间',
+                    render: (_, j) => `${j.startDate} ~ ${j.endDate}`,
+                  },
+                  {
+                    title: '开始',
+                    dataIndex: 'startedAt',
+                    render: (v: string) => formatCollectionTime(v),
+                  },
+                  {
+                    title: '完成',
+                    dataIndex: 'completedAt',
+                    render: (v: string | null) => formatCollectionTime(v),
+                  },
+                  {
+                    title: '进度',
+                    render: (_, j) =>
+                      `${j.completed}/${j.totalItems}${j.failed ? `，${j.failed} 失败` : ''}`,
+                  },
+                  {
+                    title: '错误',
+                    dataIndex: 'errorMessage',
+                    ellipsis: true,
+                    render: (v: string | null) => v ?? '—',
                   },
                 ]}
               />

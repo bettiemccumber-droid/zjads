@@ -147,4 +147,39 @@ function order(
   assert.equal(monitorRows[0].rejectedOrderCount, 2);
 }
 
+// 监控应与结算表同口径：分渠道聚合，不应跨 pm2/pm3 误合并历史拒付
+{
+  const orders = [
+    order({
+      channelAccountId: 1,
+      alias: 'pm2',
+      platformCode: 'partnermatic',
+      platformName: 'PartnerMatic',
+      merchantId: '113208',
+      merchantName: 'Yoin (BE)',
+      externalOrderId: 'new-1',
+      commission: 18.23,
+      normalizedStatus: NormalizedStatus.approved,
+    }),
+    order({
+      channelAccountId: 2,
+      alias: 'pm3',
+      platformCode: 'partnermatic',
+      platformName: 'PartnerMatic',
+      merchantId: '113208',
+      merchantName: 'Yoin (BE)',
+      externalOrderId: 'old-rej-1',
+      commission: 50,
+      normalizedStatus: NormalizedStatus.rejected,
+    }),
+  ];
+  const settlement = aggregateAffiliateOrders(orders);
+  assert.equal(settlement.length, 2);
+  const pm2 = settlement.find((r) => r.affiliateAlias === 'pm2')!;
+  assert.equal(pm2.rejectedCommission, 0);
+  assert.equal(pm2.confirmedCommission, 18.23);
+  const pm3 = settlement.find((r) => r.affiliateAlias === 'pm3')!;
+  assert.equal(pm3.rejectedCommission, 50);
+}
+
 console.log('commission-monitor.accuracy: all passed');

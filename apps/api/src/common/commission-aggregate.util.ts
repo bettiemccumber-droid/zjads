@@ -1,5 +1,6 @@
 import { NormalizedStatus } from '@prisma/client';
 import { isCollectorImplemented } from '../collectors/collectors.registry';
+import { commissionAlertMerchantId } from './commission-alert-key.util';
 import { dedupeAffiliateOrderKey } from './order-dedupe.util';
 import {
   orderHasRejectedCommission,
@@ -219,7 +220,7 @@ export function summarizeMerchantsByPlatform(
 
   const riskByPlatform = new Map<string, Set<string>>();
   for (const m of merchants) {
-    const riskKey = `${m.merchantId}|${m.platformCode}`;
+    const riskKey = commissionAlertMerchantId(m.merchantId, m.platformCode, m.affiliateAlias);
     if (!atRiskKeys.has(riskKey)) continue;
     if (!riskByPlatform.has(m.platformCode)) riskByPlatform.set(m.platformCode, new Set());
     riskByPlatform.get(m.platformCode)!.add(riskKey);

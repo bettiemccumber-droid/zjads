@@ -634,6 +634,14 @@ export default function CommissionMonitor({
         </Space>
       </Form>
 
+      <Alert
+        type="info"
+        showIcon
+        style={{ marginBottom: 12 }}
+        message="风险商家与结算查询口径一致"
+        description="按「商家 + 平台 + 渠道序号」统计所选日期区间内的订单；与上方失效佣金汇总、结算表一致。若与旧告警记录不符，请点击「同步告警（当前查询区间）」刷新。"
+      />
+
       {overview?.platformFilter && overview.platformFilter !== 'all' ? (
         <Alert
           type="info"
@@ -810,7 +818,9 @@ export default function CommissionMonitor({
             ),
             children: (
               <Table
-                rowKey="alertMerchantKey"
+                rowKey={(r) =>
+                  `${r.userId ?? 0}|${r.alertMerchantKey}|${r.affiliateAlias ?? ''}`
+                }
                 size="small"
                 dataSource={overview?.watchlist ?? []}
                 columns={watchColumns}

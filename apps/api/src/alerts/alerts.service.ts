@@ -5,7 +5,7 @@ import {
   platformCommissionAlertFilter,
 } from '../common/commission-alert-key.util';
 import {
-  aggregateAffiliateOrdersForMonitor,
+  aggregateAffiliateOrders,
   mergePlatformCatalog,
   summarizeMerchantsByPlatform,
 } from '../common/commission-aggregate.util';
@@ -126,7 +126,7 @@ export class AlertsService {
       include: { channelAccount: { include: { platform: true } } },
     });
 
-    return aggregateAffiliateOrdersForMonitor(orders);
+    return aggregateAffiliateOrders(orders);
   }
 
   private evaluateMerchants(merchants: MerchantCommissionAgg[], monitorRule: ReturnType<typeof ruleFromDb>) {
@@ -142,7 +142,11 @@ export class AlertsService {
     for (const m of merchants) {
       const ev = evaluateCommissionRisk(m, monitorRule);
       if (ev.hit) {
-        const alertMerchantKey = commissionAlertMerchantId(m.merchantId, m.platformCode);
+        const alertMerchantKey = commissionAlertMerchantId(
+          m.merchantId,
+          m.platformCode,
+          m.affiliateAlias,
+        );
         atRiskKeys.add(alertMerchantKey);
         watchlist.push({
           ...m,
@@ -200,7 +204,6 @@ export class AlertsService {
     const accounts = await this.loadAccountsForOwners(ownerIds, platformCode);
     const allAccountIds = accounts.map((a) => a.id);
     await renormalizeOrdersForAccounts(this.prisma, allAccountIds);
-    const allMerchants = await this.aggregateMerchants(allAccountIds, startDate, endDate);
 
     const windowStart = this.parseWindowDate(startDate);
     const windowEnd = this.parseWindowDate(endDate);
@@ -212,6 +215,7 @@ export class AlertsService {
 
     let watchlist: WatchRow[] = [];
     let atRiskKeys = new Set<string>();
+    let combinedMerchants: MerchantCommissionAgg[] = [];
     let employeeSummaries:
       | Array<{
           userId: number;
@@ -253,6 +257,7 @@ export class AlertsService {
         const scopedEmp = platformCode
           ? empMerchants.filter((m) => m.platformCode === platformCode)
           : empMerchants;
+        combinedMerchants.push(...scopedEmp);
         const { watchlist: empWatch, atRiskKeys: empKeys } = this.evaluateMerchants(
           scopedEmp,
           monitorRule,
@@ -302,6 +307,8 @@ export class AlertsService {
           b.rejectedCommission - a.rejectedCommission,
       );
     } else {
+      const allMerchants = await this.aggregateMerchants(allAccountIds, startDate, endDate);
+      combinedMerchants = allMerchants;
       const evaluated = this.evaluateMerchants(allMerchants, monitorRule);
       atRiskKeys = evaluated.atRiskKeys;
       watchlist = platformCode
@@ -310,7 +317,7 @@ export class AlertsService {
     }
 
     const platformSummaries = mergePlatformCatalog(
-      summarizeMerchantsByPlatform(allMerchants, atRiskKeys),
+      summarizeMerchantsByPlatform(combinedMerchants, atRiskKeys),
       accounts.map((a) => ({
         affiliateAlias: a.affiliateAlias,
         displayName: a.displayName,
@@ -319,8 +326,8 @@ export class AlertsService {
     );
 
     const scopedMerchants = platformCode
-      ? allMerchants.filter((m) => m.platformCode === platformCode)
-      : allMerchants;
+      ? combinedMerchants.filter((m) => m.platformCode === platformCode)
+      : combinedMerchants;
 
     const totals = this.sumMerchants(scopedMerchants);
     const overallRejectionRate =
@@ -464,7 +471,11 @@ export class AlertsService {
       const ev = evaluateCommissionRisk(row, monitorRule);
       if (!ev.hit) continue;
 
-      const alertMerchantKey = commissionAlertMerchantId(row.merchantId, row.platformCode);
+      const alertMerchantKey = commissionAlertMerchantId(
+        row.merchantId,
+        row.platformCode,
+        row.affiliateAlias,
+      );
       const displayName = row.merchantName
         ? `${row.merchantName} (${row.platformName})`
         : row.platformName;

@@ -32,12 +32,17 @@ const employeeMenuItems = [
   },
 ];
 
-/** 管理员侧边栏（不含「我的平台账号 / 广告数据源」，改在采集中心批量操作） */
+/** 管理员侧边栏（平台账号在员工侧配置；Sheet 在「广告数据源」代员工导入） */
 const adminMenuItems = [
   { key: '/admin', icon: <CrownOutlined />, label: <Link to="/admin">管理员中心</Link> },
   { key: '/admin/stats', icon: <PieChartOutlined />, label: <Link to="/admin/stats">平台统计</Link> },
   { key: '/admin/users', icon: <TeamOutlined />, label: <Link to="/admin/users">用户管理</Link> },
   { key: '/admin/sync', icon: <SyncOutlined />, label: <Link to="/admin/sync">数据采集中心</Link> },
+  {
+    key: '/admin/ad-sources',
+    icon: <FileExcelOutlined />,
+    label: <Link to="/admin/ad-sources">广告数据源</Link>,
+  },
   {
     key: '/admin/users/manage',
     icon: <UserOutlined />,

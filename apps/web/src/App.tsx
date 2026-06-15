@@ -75,6 +75,14 @@ export default function App() {
           <Route path="admin/users/manage" element={<AdminRoute><AdminUserManagePage /></AdminRoute>} />
           <Route path="admin/users/:id" element={<AdminRoute><AdminUserDetailPage /></AdminRoute>} />
           <Route path="admin/sync" element={<AdminRoute><AdminSyncPage /></AdminRoute>} />
+          <Route
+            path="admin/ad-sources"
+            element={
+              <AdminRoute>
+                <AdSourcesPage adminMode />
+              </AdminRoute>
+            }
+          />
           <Route path="admin/dashboard" element={<Navigate to="/admin/stats" replace />} />
         </Route>
       </Routes>

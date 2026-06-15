@@ -11,6 +11,7 @@ import {
   message,
 } from 'antd';
 import dayjs, { Dayjs } from 'dayjs';
+import { Link } from 'react-router-dom';
 import { api, type ApiResult } from '../../api/client';
 import {
   AffiliateCollectionCell,
@@ -45,6 +46,7 @@ export default function AdminSyncPage() {
   const [loading, setLoading] = useState(false);
   const [syncing, setSyncing] = useState(false);
   const [importing, setImporting] = useState(false);
+  const [importingUserId, setImportingUserId] = useState<number | null>(null);
   const [includeClicks, setIncludeClicks] = useState(false);
 
   const load = async () => {
@@ -80,14 +82,17 @@ export default function AdminSyncPage() {
     }
   };
 
-  const batchImportSheets = async () => {
-    setImporting(true);
+  const batchImportSheets = async (userIds?: number[]) => {
+    const isSingle = userIds?.length === 1;
+    if (isSingle) setImportingUserId(userIds![0]);
+    else setImporting(true);
     try {
       const { data } = await api.post<
         ApiResult<{ success: number; failed: number; results: unknown[] }>
       >('/admin/import/sheets/batch', {
         startDate: range[0].format('YYYY-MM-DD'),
         endDate: range[1].format('YYYY-MM-DD'),
+        ...(userIds?.length ? { userIds } : {}),
       });
       if (data.success) {
         message.success(`Sheet 导入成功 ${data.data.success} 个，失败 ${data.data.failed} 个`);
@@ -95,6 +100,7 @@ export default function AdminSyncPage() {
       } else message.error(data.message);
     } finally {
       setImporting(false);
+      setImportingUserId(null);
     }
   };
 
@@ -126,9 +132,10 @@ export default function AdminSyncPage() {
           <Button type="primary" loading={syncing} onClick={batchSync}>
             批量采集联盟订单
           </Button>
-          <Button loading={importing} onClick={batchImportSheets}>
+          <Button loading={importing} onClick={() => void batchImportSheets()}>
             批量导入 Google Sheet
           </Button>
+          <Link to="/admin/ad-sources">管理员工 Sheet →</Link>
         </Space>
         <p style={{ color: '#666', marginTop: 12, marginBottom: 0 }}>
           Sheet 导入使用上方日期区间过滤；无日期则导入 Sheet 内全部行。
@@ -170,6 +177,29 @@ export default function AdminSyncPage() {
               title: '最近 Sheet 导入',
               width: 160,
               render: (_, r) => <SheetCollectionCell row={r} />,
+            },
+            {
+              title: '操作',
+              width: 200,
+              fixed: 'right',
+              render: (_, r) => (
+                <Space size="small" wrap>
+                  <Button
+                    size="small"
+                    type="primary"
+                    loading={importingUserId === r.userId}
+                    disabled={r.adSourceCount === 0}
+                    onClick={() => void batchImportSheets([r.userId])}
+                  >
+                    导入 Sheet
+                  </Button>
+                  <Link
+                    to={`/admin/ad-sources?userId=${r.userId}&username=${encodeURIComponent(r.username)}`}
+                  >
+                    管理
+                  </Link>
+                </Space>
+              ),
             },
           ]}
         />

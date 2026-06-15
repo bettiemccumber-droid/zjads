@@ -30,6 +30,7 @@ import {
 
   Input,
   Select,
+  Space,
 } from 'antd';
 
 import dayjs, { Dayjs } from 'dayjs';
@@ -38,6 +39,7 @@ import { api, type ApiResult } from '../api/client';
 
 import SyncAccountPicker, { type SyncAccountPick } from '../components/SyncAccountPicker';
 import SyncJobStatus, { type SyncJobDetail } from '../components/SyncJobStatus';
+import { SheetCollectionCell } from '../components/CollectionStatusCells';
 import CampaignExpandableTable, {
   attachDailyToCampaigns,
   CAMPAIGN_MAIN_SCROLL_X,
@@ -237,6 +239,13 @@ export default function DashboardPage() {
     : undefined;
   const viewUsername = searchParams.get('username') ?? `用户#${viewUserId}`;
 
+  const [employeeSheetStatus, setEmployeeSheetStatus] = useState<{
+    adSourceCount: number;
+    lastSheetImportAt: string | null;
+    lastSheetName: string | null;
+  } | null>(null);
+  const [importingSheet, setImportingSheet] = useState(false);
+
   const [range, setRange] = useState<[Dayjs, Dayjs]>([
 
     dayjs().subtract(7, 'day'),
@@ -373,6 +382,34 @@ export default function DashboardPage() {
     void loadSyncAccounts();
   }, [loadSyncAccounts]);
 
+  useEffect(() => {
+    if (!viewUserId) {
+      setEmployeeSheetStatus(null);
+      return;
+    }
+    void (async () => {
+      const { data } = await api.get<
+        ApiResult<
+          Array<{
+            userId: number;
+            adSourceCount: number;
+            lastSheetImportAt: string | null;
+            lastSheetName: string | null;
+          }>
+        >
+      >('/admin/collection-status');
+      if (!data.success) return;
+      const row = data.data.find((r) => r.userId === viewUserId);
+      if (row) {
+        setEmployeeSheetStatus({
+          adSourceCount: row.adSourceCount,
+          lastSheetImportAt: row.lastSheetImportAt,
+          lastSheetName: row.lastSheetName,
+        });
+      }
+    })();
+  }, [viewUserId]);
+
   const fetchSyncJob = useCallback(async (jobId: number) => {
 
     const { data } = await api.get<ApiResult<SyncJobDetail>>(`/sync/jobs/${jobId}`);
@@ -469,7 +506,51 @@ export default function DashboardPage() {
 
   }, [range, campaignStatusMode, viewUserId]);
 
-
+  const importSheetForEmployee = useCallback(async () => {
+    if (!viewUserId) return;
+    setImportingSheet(true);
+    try {
+      const { data } = await api.post<
+        ApiResult<{ success: number; failed: number; results: unknown[] }>
+      >('/admin/import/sheets/batch', {
+        startDate: range[0].format('YYYY-MM-DD'),
+        endDate: range[1].format('YYYY-MM-DD'),
+        userIds: [viewUserId],
+      });
+      if (data.success) {
+        if (data.data.success > 0) {
+          message.success('Sheet 导入完成，正在刷新报表');
+          void loadReport();
+        } else {
+          message.error('Sheet 导入失败，请检查员工是否已配置 Sheet');
+        }
+        const statusRes = await api.get<
+          ApiResult<
+            Array<{
+              userId: number;
+              adSourceCount: number;
+              lastSheetImportAt: string | null;
+              lastSheetName: string | null;
+            }>
+          >
+        >('/admin/collection-status');
+        if (statusRes.data.success) {
+          const row = statusRes.data.data.find((r) => r.userId === viewUserId);
+          if (row) {
+            setEmployeeSheetStatus({
+              adSourceCount: row.adSourceCount,
+              lastSheetImportAt: row.lastSheetImportAt,
+              lastSheetName: row.lastSheetName,
+            });
+          }
+        }
+      } else {
+        message.error(data.message);
+      }
+    } finally {
+      setImportingSheet(false);
+    }
+  }, [viewUserId, range, loadReport]);
 
   const startPolling = useCallback(
 
@@ -895,6 +976,55 @@ export default function DashboardPage() {
         />
       )}
 
+      {viewUserId && employeeSheetStatus && (
+        <Alert
+          type={
+            employeeSheetStatus.adSourceCount === 0 || !employeeSheetStatus.lastSheetImportAt
+              ? 'warning'
+              : 'info'
+          }
+          showIcon
+          style={{ marginBottom: 16 }}
+          message="Google Sheet 广告费"
+          description={
+            <div>
+              {employeeSheetStatus.adSourceCount === 0 ? (
+                <p style={{ margin: '0 0 8px' }}>
+                  该员工尚未配置广告 Sheet，工作台无法显示广告费。请先在「广告数据源」添加 Sheet 并导入。
+                </p>
+              ) : !employeeSheetStatus.lastSheetImportAt ? (
+                <p style={{ margin: '0 0 8px' }}>
+                  已配置 Sheet 但尚未导入数据，广告费将为 0。请导入 Sheet 或点击下方按钮。
+                </p>
+              ) : (
+                <p style={{ margin: '0 0 8px' }}>
+                  最近导入：
+                  <SheetCollectionCell row={employeeSheetStatus} />
+                  {' '}
+                  （若当日未导入，查询区间内广告费可能不完整）
+                </p>
+              )}
+              <Space wrap>
+                <Button
+                  type="primary"
+                  size="small"
+                  loading={importingSheet}
+                  disabled={employeeSheetStatus.adSourceCount === 0}
+                  onClick={() => void importSheetForEmployee()}
+                >
+                  导入 Sheet（当前查询区间）
+                </Button>
+                <Link
+                  to={`/admin/ad-sources?userId=${viewUserId}&username=${encodeURIComponent(viewUsername)}`}
+                >
+                  管理 Sheet 数据源 →
+                </Link>
+              </Space>
+            </div>
+          }
+        />
+      )}
+
       <Card title={viewUserId ? `数据采集（${viewUsername}）` : '数据采集'} style={{ marginBottom: 16 }}>
 
         <div className="sync-collect-toolbar">
@@ -936,7 +1066,10 @@ export default function DashboardPage() {
         )}
 
         <p className="sync-collect-hint">
-          已接入 PM / LH / LB 订单与联盟点击。PM/LH 点击随订单区间采集；LB 点击仅采区间<strong>最后一天</strong>，更早日期请用「点击校准导入」。Google Ads 请在「广告数据源」导入 Sheet。
+          已接入 PM / LH / LB 订单与联盟点击。PM/LH 点击随订单区间采集；LB 点击仅采区间<strong>最后一天</strong>，更早日期请用「点击校准导入」。
+          {viewUserId
+            ? ' Google Ads 广告费请在上方「导入 Sheet」或侧边栏「广告数据源」中代员工导入。'
+            : ' Google Ads 请在「广告数据源」导入 Sheet。'}
         </p>
 
         <SyncJobStatus

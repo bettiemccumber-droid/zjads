@@ -10,7 +10,7 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import { AuthGuard } from '@nestjs/passport';
-import { IsDateString, IsOptional, IsString, IsUrl, MaxLength } from 'class-validator';
+import { IsDateString, IsInt, IsOptional, IsString, IsUrl, MaxLength } from 'class-validator';
 import { ok } from '../common/api-response';
 import { CurrentUser } from '../auth/current-user.decorator';
 import { AuthUser } from '../common/ownership.util';
@@ -33,6 +33,17 @@ class CreateAdDataSourceBody {
   @IsOptional()
   @IsString()
   description?: string;
+
+  /** 管理员代员工创建时指定归属用户 */
+  @IsOptional()
+  @IsInt()
+  userId?: number;
+}
+
+class ListQuery {
+  @IsOptional()
+  @IsInt()
+  userId?: number;
 }
 
 class ImportQuery {
@@ -71,13 +82,16 @@ export class AdSourcesController {
   constructor(private readonly adSources: AdSourcesService) {}
 
   @Get()
-  async list(@CurrentUser() user: AuthUser) {
-    return ok(await this.adSources.list(user));
+  async list(@CurrentUser() user: AuthUser, @Query() q: ListQuery) {
+    return ok(
+      await this.adSources.list(user, q.userId != null ? Number(q.userId) : undefined),
+    );
   }
 
   @Post()
   async create(@CurrentUser() user: AuthUser, @Body() body: CreateAdDataSourceBody) {
-    return ok(await this.adSources.create(user, body));
+    const { userId, ...dto } = body;
+    return ok(await this.adSources.create(user, dto, userId));
   }
 
   @Post('purge-imported')

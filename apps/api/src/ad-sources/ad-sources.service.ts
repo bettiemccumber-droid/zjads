@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import axios from 'axios';
 import { UserRole } from '@prisma/client';
 import { AuthUser, isAdmin, resolveOwnerUserId } from '../common/ownership.util';
@@ -21,17 +21,19 @@ export interface CreateAdDataSourceDto {
 export class AdSourcesService {
   constructor(private readonly prisma: PrismaService) {}
 
-  async list(user: AuthUser) {
+  async list(user: AuthUser, queryUserId?: number) {
+    const ownerUserId = this.resolveOwnerUserId(user, queryUserId);
     return this.prisma.adDataSource.findMany({
-      where: { ownerUserId: user.id },
+      where: { ownerUserId },
       orderBy: { updatedAt: 'desc' },
     });
   }
 
-  async create(user: AuthUser, dto: CreateAdDataSourceDto) {
+  async create(user: AuthUser, dto: CreateAdDataSourceDto, queryUserId?: number) {
     if (user.role === UserRole.VIEWER) {
       throw new BadRequestException('只读账号无法配置广告数据源');
     }
+    const ownerUserId = this.resolveOwnerUserId(user, queryUserId);
     const sheetId = extractSheetId(dto.sheetUrl);
     if (!sheetId) {
       throw new BadRequestException('无效的 Google Sheet URL');
@@ -39,7 +41,7 @@ export class AdSourcesService {
 
     return this.prisma.adDataSource.create({
       data: {
-        ownerUserId: user.id,
+        ownerUserId,
         name: dto.name,
         sheetUrl: dto.sheetUrl.trim(),
         sheetId,
@@ -51,14 +53,27 @@ export class AdSourcesService {
 
   async remove(user: AuthUser, id: number, purgeImported = false) {
     const row = await this.prisma.adDataSource.findFirst({
-      where: { id, ownerUserId: user.id },
+      where: {
+        id,
+        ...(user.role === UserRole.ADMIN ? {} : { ownerUserId: user.id }),
+      },
     });
     if (!row) throw new NotFoundException('数据源不存在');
     await this.prisma.adDataSource.delete({ where: { id } });
     if (purgeImported) {
-      await this.purgeImportedCampaignData(user, {});
+      await this.purgeImportedCampaignData(user, { userId: row.ownerUserId });
     }
     return { deleted: true, purged: purgeImported };
+  }
+
+  private resolveOwnerUserId(user: AuthUser, queryUserId?: number): number {
+    if (queryUserId != null) {
+      if (user.role !== UserRole.ADMIN && queryUserId !== user.id) {
+        throw new ForbiddenException('无权查看其他员工的广告数据源');
+      }
+      return queryUserId;
+    }
+    return user.id;
   }
 
   /**

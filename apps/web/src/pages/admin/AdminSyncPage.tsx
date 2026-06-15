@@ -45,6 +45,7 @@ export default function AdminSyncPage() {
   const [rows, setRows] = useState<CollectionRow[]>([]);
   const [loading, setLoading] = useState(false);
   const [syncing, setSyncing] = useState(false);
+  const [syncingUserId, setSyncingUserId] = useState<number | null>(null);
   const [importing, setImporting] = useState(false);
   const [importingUserId, setImportingUserId] = useState<number | null>(null);
   const [includeClicks, setIncludeClicks] = useState(false);
@@ -63,8 +64,10 @@ export default function AdminSyncPage() {
     void load();
   }, []);
 
-  const batchSync = async () => {
-    setSyncing(true);
+  const batchSync = async (userIds?: number[]) => {
+    const isSingle = userIds?.length === 1;
+    if (isSingle) setSyncingUserId(userIds![0]);
+    else setSyncing(true);
     try {
       const { data } = await api.post<
         ApiResult<{ started: number; failed: number; results: unknown[] }>
@@ -72,6 +75,7 @@ export default function AdminSyncPage() {
         startDate: range[0].format('YYYY-MM-DD'),
         endDate: range[1].format('YYYY-MM-DD'),
         includeClicks,
+        ...(userIds?.length ? { userIds } : {}),
       });
       if (data.success) {
         message.success(`已创建 ${data.data.started} 个采集任务，失败 ${data.data.failed} 个`);
@@ -79,6 +83,7 @@ export default function AdminSyncPage() {
       } else message.error(data.message);
     } finally {
       setSyncing(false);
+      setSyncingUserId(null);
     }
   };
 
@@ -119,7 +124,7 @@ export default function AdminSyncPage() {
         showIcon
         style={{ marginBottom: 16 }}
         message="管理员批量采集"
-        description="将使用各员工已配置的平台 Token 与 Google Sheet。下方表格展示每位员工最近采集时间、区间与 Sheet 导入情况，便于排查。"
+        description="将使用各员工已配置的平台 Token 与 Google Sheet。下方表格可单独为某位员工「采集订单」或「导入 Sheet」，也可使用上方批量操作。"
       />
 
       <Card title="快速操作" style={{ marginBottom: 16 }}>
@@ -129,7 +134,7 @@ export default function AdminSyncPage() {
           <Checkbox checked={includeClicks} onChange={(e) => setIncludeClicks(e.target.checked)}>
             含联盟点击（LB 仅最后一天）
           </Checkbox>
-          <Button type="primary" loading={syncing} onClick={batchSync}>
+          <Button type="primary" loading={syncing} onClick={() => void batchSync()}>
             批量采集联盟订单
           </Button>
           <Button loading={importing} onClick={() => void batchImportSheets()}>
@@ -180,10 +185,18 @@ export default function AdminSyncPage() {
             },
             {
               title: '操作',
-              width: 200,
+              width: 280,
               fixed: 'right',
               render: (_, r) => (
                 <Space size="small" wrap>
+                  <Button
+                    size="small"
+                    loading={syncingUserId === r.userId}
+                    disabled={r.channelAccountCount === 0}
+                    onClick={() => void batchSync([r.userId])}
+                  >
+                    采集订单
+                  </Button>
                   <Button
                     size="small"
                     type="primary"
@@ -196,7 +209,12 @@ export default function AdminSyncPage() {
                   <Link
                     to={`/admin/ad-sources?userId=${r.userId}&username=${encodeURIComponent(r.username)}`}
                   >
-                    管理
+                    Sheet
+                  </Link>
+                  <Link
+                    to={`/dashboard?userId=${r.userId}&username=${encodeURIComponent(r.username)}`}
+                  >
+                    工作台
                   </Link>
                 </Space>
               ),

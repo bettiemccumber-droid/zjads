@@ -45,6 +45,26 @@ class ImportQuery {
   endDate?: string;
 }
 
+class PurgeImportedQuery {
+  @IsOptional()
+  @IsDateString()
+  startDate?: string;
+
+  @IsOptional()
+  @IsDateString()
+  endDate?: string;
+
+  /** 管理员可指定员工 */
+  @IsOptional()
+  userId?: number;
+}
+
+class RemoveQuery {
+  /** 为 true 时同时清空该账号下全部已导入广告日数据 */
+  @IsOptional()
+  purgeImported?: string;
+}
+
 @Controller('ad-sources')
 @UseGuards(AuthGuard('jwt'))
 export class AdSourcesController {
@@ -60,9 +80,26 @@ export class AdSourcesController {
     return ok(await this.adSources.create(user, body));
   }
 
+  @Post('purge-imported')
+  async purgeImported(@CurrentUser() user: AuthUser, @Query() q: PurgeImportedQuery) {
+    return ok(
+      await this.adSources.purgeImportedCampaignData(user, {
+        startDate: q.startDate,
+        endDate: q.endDate,
+        userId: q.userId != null ? Number(q.userId) : undefined,
+      }),
+      '已清空导入的广告数据',
+    );
+  }
+
   @Delete(':id')
-  async remove(@CurrentUser() user: AuthUser, @Param('id', ParseIntPipe) id: number) {
-    return ok(await this.adSources.remove(user, id));
+  async remove(
+    @CurrentUser() user: AuthUser,
+    @Param('id', ParseIntPipe) id: number,
+    @Query() q: RemoveQuery,
+  ) {
+    const purgeImported = q.purgeImported === '1' || q.purgeImported === 'true';
+    return ok(await this.adSources.remove(user, id, purgeImported));
   }
 
   @Post(':id/import')

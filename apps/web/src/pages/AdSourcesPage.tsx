@@ -153,11 +153,40 @@ export default function AdSourcesPage() {
     setRangeTargetId(null);
   };
 
-  const onDelete = async (id: number) => {
-    const { data } = await api.delete<ApiResult<{ deleted: boolean }>>(`/ad-sources/${id}`);
+  const onDelete = async (id: number, purgeImported: boolean) => {
+    const { data } = await api.delete<ApiResult<{ deleted: boolean; purged?: boolean }>>(
+      `/ad-sources/${id}`,
+      { params: purgeImported ? { purgeImported: 'true' } : undefined },
+    );
     if (data.success) {
-      message.success('已删除');
+      message.success(purgeImported ? '已删除数据源并清空导入的广告数据' : '已删除数据源');
       void load();
+    }
+  };
+
+  const onPurgeAll = async () => {
+    const { data } = await api.post<ApiResult<{ deleted: number }>>('/ad-sources/purge-imported');
+    if (data.success) {
+      message.success(`已清空 ${data.data.deleted} 条广告日数据，请重新从正确 Sheet 导入`);
+    } else {
+      message.error(data.message);
+    }
+  };
+
+  const onPurgeRange = async () => {
+    if (!customRange) return;
+    const [start, end] = customRange;
+    const { data } = await api.post<ApiResult<{ deleted: number }>>('/ad-sources/purge-imported', null, {
+      params: {
+        startDate: start.format('YYYY-MM-DD'),
+        endDate: end.format('YYYY-MM-DD'),
+      },
+    });
+    if (data.success) {
+      message.success(`已清空 ${data.data.deleted} 条（${start.format('YYYY-MM-DD')} ~ ${end.format('YYYY-MM-DD')}）`);
+      setRangeModalOpen(false);
+    } else {
+      message.error(data.message);
     }
   };
 
@@ -189,7 +218,25 @@ export default function AdSourcesPage() {
         </Typography.Paragraph>
       </Card>
 
-      <Card title="我的广告数据源">
+      <Card title="我的广告数据源" extra={
+        <Space>
+          <Popconfirm
+            title="清空全部已导入的广告数据？"
+            description="仅删除库内广告日数据，不影响联盟订单。误导入 Sheet 后请先清空，再导入正确 Sheet。"
+            onConfirm={() => void onPurgeAll()}
+          >
+            <Button danger>清空全部导入数据</Button>
+          </Popconfirm>
+          <Button onClick={() => {
+            const { start, end } = getImportDateRange(DEFAULT_LOOKBACK_DAYS);
+            setCustomRange([dayjs(start), dayjs(end)]);
+            setRangeTargetId(-1);
+            setRangeModalOpen(true);
+          }}>
+            按日期清空
+          </Button>
+        </Space>
+      }>
         <Table
           rowKey="id"
           loading={loading}
@@ -245,9 +292,22 @@ export default function AdSourcesPage() {
                       全量
                     </Button>
                   </Popconfirm>
-                  <Popconfirm title="确定删除？" onConfirm={() => onDelete(r.id)}>
+                  <Popconfirm
+                    title="确定删除此数据源？"
+                    description="仅删除配置，已导入的广告数据仍保留。若 Sheet 填错，请选「删除并清空数据」。"
+                    onConfirm={() => onDelete(r.id, false)}
+                  >
                     <Button size="small" danger>
                       删除
+                    </Button>
+                  </Popconfirm>
+                  <Popconfirm
+                    title="删除数据源并清空全部导入的广告数据？"
+                    description="适用于填错 Sheet 链接；清空后请添加正确 Sheet 并重新导入。"
+                    onConfirm={() => onDelete(r.id, true)}
+                  >
+                    <Button size="small" danger type="primary">
+                      删除并清空
                     </Button>
                   </Popconfirm>
                 </Space>
@@ -258,16 +318,27 @@ export default function AdSourcesPage() {
       </Card>
 
       <Modal
-        title="按日期导入广告数据"
+        title={rangeTargetId === -1 ? '按日期清空广告导入数据' : '按日期导入广告数据'}
         open={rangeModalOpen}
-        onCancel={() => setRangeModalOpen(false)}
-        onOk={() => void onConfirmRangeImport()}
-        okText="开始导入"
+        onCancel={() => {
+          setRangeModalOpen(false);
+          setRangeTargetId(null);
+        }}
+        onOk={() => {
+          if (rangeTargetId === -1) {
+            void onPurgeRange();
+            return;
+          }
+          void onConfirmRangeImport();
+        }}
+        okText={rangeTargetId === -1 ? '确认清空' : '开始导入'}
+        okButtonProps={rangeTargetId === -1 ? { danger: true } : undefined}
         destroyOnClose
       >
         <Typography.Paragraph type="secondary">
-          建议区间<strong>不窄于</strong>数据采集页的查询日期；若系列在查询开始前已停投，需把导入起点再往前调（如
-          Nina Shoes 跑量在 5/24~5/27，看板查 5/28 起也要导入 5/24 起的数据）。
+          {rangeTargetId === -1
+            ? '将删除所选日期区间内、本账号下已导入的全部广告日数据（联盟订单不受影响）。'
+            : '建议区间不窄于数据采集页的查询日期；若系列在查询开始前已停投，需把导入起点再往前调。'}
         </Typography.Paragraph>
         <DatePicker.RangePicker
           value={customRange}

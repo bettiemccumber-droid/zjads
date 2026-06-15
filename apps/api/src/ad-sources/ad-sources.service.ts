@@ -1,7 +1,8 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import axios from 'axios';
 import { UserRole } from '@prisma/client';
-import { AuthUser } from '../common/ownership.util';
+import { AuthUser, isAdmin, resolveOwnerUserId } from '../common/ownership.util';
+import { buildOrderDateRangeFilter } from '../common/order-date-range.util';
 import { PrismaService } from '../prisma/prisma.service';
 import {
   buildSheetCsvUrl,
@@ -48,13 +49,52 @@ export class AdSourcesService {
     });
   }
 
-  async remove(user: AuthUser, id: number) {
+  async remove(user: AuthUser, id: number, purgeImported = false) {
     const row = await this.prisma.adDataSource.findFirst({
       where: { id, ownerUserId: user.id },
     });
     if (!row) throw new NotFoundException('数据源不存在');
     await this.prisma.adDataSource.delete({ where: { id } });
-    return { deleted: true };
+    if (purgeImported) {
+      await this.purgeImportedCampaignData(user, {});
+    }
+    return { deleted: true, purged: purgeImported };
+  }
+
+  /**
+   * 清空已导入的 Google Sheet 广告日数据（误导入 Sheet 后使用）
+   */
+  async purgeImportedCampaignData(
+    user: AuthUser,
+    opts: { startDate?: string; endDate?: string; userId?: number },
+  ) {
+    if (user.role === UserRole.VIEWER) {
+      throw new BadRequestException('只读账号无法清空广告数据');
+    }
+
+    const ownerUserId =
+      user.role === UserRole.ADMIN && opts.userId != null
+        ? opts.userId
+        : resolveOwnerUserId(user, opts.userId);
+
+    if (opts.userId != null && user.role !== UserRole.ADMIN && opts.userId !== user.id) {
+      throw new BadRequestException('无权操作其他员工的数据');
+    }
+
+    const dateRange = buildOrderDateRangeFilter(opts.startDate, opts.endDate);
+    const result = await this.prisma.adCampaignDaily.deleteMany({
+      where: {
+        ownerUserId,
+        ...(dateRange ? { date: dateRange } : {}),
+      },
+    });
+
+    return {
+      deleted: result.count,
+      ownerUserId,
+      startDate: opts.startDate ?? null,
+      endDate: opts.endDate ?? null,
+    };
   }
 
   /**

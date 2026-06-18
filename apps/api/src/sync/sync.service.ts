@@ -6,7 +6,7 @@ import {
 } from '@nestjs/common';
 import { SyncJobItemStatus, SyncJobStatus, UserRole } from '@prisma/client';
 import { ChannelAccountsService } from '../channel-accounts/channel-accounts.service';
-import { AuthUser } from '../common/ownership.util';
+import { AuthUser, isAdmin } from '../common/ownership.util';
 import { isCollectorImplemented } from '../collectors/collectors.registry';
 import { CollectorsService } from '../collectors/collectors.service';
 import { PrismaService } from '../prisma/prisma.service';
@@ -199,11 +199,12 @@ export class SyncService implements OnModuleInit {
     return list;
   }
 
-  /** 最近采集任务（用于页面展示是否成功） */
-  async listRecentJobs(user: AuthUser, limit = 5) {
+  /** 最近采集任务（用于页面展示是否成功；管理员可指定员工 userId） */
+  async listRecentJobs(user: AuthUser, limit = 5, ownerUserId?: number) {
     await this.recoverStaleJobs();
+    const filterOwnerId = isAdmin(user) && ownerUserId != null ? ownerUserId : user.id;
     return this.prisma.syncJob.findMany({
-      where: { ownerUserId: user.id },
+      where: { ownerUserId: filterOwnerId },
       orderBy: { createdAt: 'desc' },
       take: limit,
       include: {
@@ -216,10 +217,10 @@ export class SyncService implements OnModuleInit {
     });
   }
 
-  /** 手动取消/终止进行中的任务 */
+  /** 手动取消/终止进行中的任务（管理员可取消任意员工任务） */
   async cancelJob(user: AuthUser, jobId: number) {
     const job = await this.prisma.syncJob.findFirst({
-      where: { id: jobId, ownerUserId: user.id },
+      where: isAdmin(user) ? { id: jobId } : { id: jobId, ownerUserId: user.id },
     });
     if (!job) throw new NotFoundException('任务不存在');
     if (
@@ -416,7 +417,7 @@ export class SyncService implements OnModuleInit {
   async getJob(user: AuthUser, jobId: number) {
     await this.recoverStaleJobs();
     const job = await this.prisma.syncJob.findFirst({
-      where: { id: jobId, ownerUserId: user.id },
+      where: isAdmin(user) ? { id: jobId } : { id: jobId, ownerUserId: user.id },
       include: {
         items: {
           include: {

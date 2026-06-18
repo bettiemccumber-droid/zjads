@@ -1,9 +1,9 @@
-import { Body, Controller, Get, Param, ParseIntPipe, Post, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, Param, ParseIntPipe, Post, Query, UseGuards } from '@nestjs/common';
 import { AuthGuard } from '@nestjs/passport';
 import { IsArray, IsBoolean, IsDateString, IsInt, IsOptional, IsString } from 'class-validator';
 import { ok } from '../common/api-response';
 import { CurrentUser } from '../auth/current-user.decorator';
-import { AuthUser } from '../common/ownership.util';
+import { AuthUser, isAdmin } from '../common/ownership.util';
 import { SyncService } from './sync.service';
 
 class CreateSyncJobDto {
@@ -49,7 +49,7 @@ export class SyncController {
         platformCodes: dto.platformCodes,
       };
       const job =
-        user.role === 'ADMIN' && dto.targetUserId
+        isAdmin(user) && dto.targetUserId
           ? await this.sync.createJobForOwner(
               dto.targetUserId,
               dto.startDate,
@@ -77,8 +77,15 @@ export class SyncController {
   }
 
   @Get('jobs/recent')
-  async listRecent(@CurrentUser() user: AuthUser) {
-    return ok(await this.sync.listRecentJobs(user));
+  async listRecent(
+    @CurrentUser() user: AuthUser,
+    @Query('userId') userId?: string,
+    @Query('limit') limit?: string,
+  ) {
+    const ownerUserId =
+      userId && isAdmin(user) ? parseInt(userId, 10) : undefined;
+    const n = limit ? Math.min(parseInt(limit, 10) || 5, 20) : 5;
+    return ok(await this.sync.listRecentJobs(user, n, ownerUserId));
   }
 
   @Get('jobs/:id')

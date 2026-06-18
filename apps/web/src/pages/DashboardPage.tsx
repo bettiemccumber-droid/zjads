@@ -411,19 +411,16 @@ export default function DashboardPage() {
   }, [viewUserId]);
 
   const fetchSyncJob = useCallback(async (jobId: number) => {
-
-    const { data } = await api.get<ApiResult<SyncJobDetail>>(`/sync/jobs/${jobId}`);
-
-    if (data.success) {
-
-      setSyncJob(data.data);
-
-      return data.data;
-
+    try {
+      const { data } = await api.get<ApiResult<SyncJobDetail>>(`/sync/jobs/${jobId}`);
+      if (data.success) {
+        setSyncJob(data.data);
+        return data.data;
+      }
+    } catch {
+      /* 忽略轮询瞬时错误 */
     }
-
     return null;
-
   }, []);
 
 
@@ -596,38 +593,29 @@ export default function DashboardPage() {
 
   );
 
-
-
   useEffect(() => {
     void loadReport();
   }, [campaignStatusMode, loadReport]);
 
   useEffect(() => {
+    stopPolling();
+    setSyncJob(null);
     void (async () => {
-
-      const { data } = await api.get<ApiResult<SyncJobDetail[]>>('/sync/jobs/recent');
+      const { data } = await api.get<ApiResult<SyncJobDetail[]>>('/sync/jobs/recent', {
+        params: viewUserId ? { userId: viewUserId } : undefined,
+      });
 
       if (data.success && data.data[0]) {
-
         const latest = data.data[0];
-
         setSyncJob(latest);
-
         if (latest.status === 'pending' || latest.status === 'running') {
-
           startPolling(latest.id);
-
         }
-
       }
-
     })();
 
     return () => stopPolling();
-
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- 挂载时加载
-
-  }, []);
+  }, [viewUserId, startPolling, stopPolling]);
 
 
 

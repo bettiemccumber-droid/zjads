@@ -5,9 +5,11 @@ import { AuthUser, isAdmin, resolveOwnerUserId } from '../common/ownership.util'
 import { buildOrderDateRangeFilter } from '../common/order-date-range.util';
 import { PrismaService } from '../prisma/prisma.service';
 import {
+  MONTHLY_ACCOUNT_COST_TAB,
   buildSheetCsvUrl,
   extractSheetId,
   parseAdSheetCsv,
+  parseMonthlyAccountCostCsv,
 } from './sheet-parser.util';
 
 export interface CreateAdDataSourceDto {
@@ -252,6 +254,11 @@ export class AdSourcesService {
       upserted += 1;
     }
 
+    const monthlyImport = await this.importMonthlyAccountCostFromSheet(
+      source.sheetId,
+      ownerUserId,
+    );
+
     await this.prisma.adDataSource.update({
       where: { id: source.id },
       data: { updatedAt: new Date() },
@@ -263,6 +270,68 @@ export class AdSourcesService {
       dateFrom: dates[0],
       dateTo: dates[dates.length - 1],
       campaignCount: new Set(rows.map((r) => r.campaignId)).size,
+      monthlyUpserted: monthlyImport.upserted,
+      monthlyTotal: monthlyImport.totalCost,
     };
+  }
+
+  /**
+   * 从 monthly_account_cost 导入账户月花费（总广告费对账口径）
+   */
+  private async importMonthlyAccountCostFromSheet(
+    sheetId: string,
+    ownerUserId: number,
+  ): Promise<{ upserted: number; totalCost: number }> {
+    try {
+      const csvUrl = buildSheetCsvUrl(sheetId, MONTHLY_ACCOUNT_COST_TAB);
+      const res = await axios.get<string>(csvUrl, {
+        timeout: 120000,
+        responseType: 'text',
+        headers: { 'User-Agent': 'ZJADS/1.0' },
+      });
+      const monthlyRows = parseMonthlyAccountCostCsv(res.data);
+      if (!monthlyRows.length) {
+        return { upserted: 0, totalCost: 0 };
+      }
+
+      let upserted = 0;
+      for (const row of monthlyRows) {
+        await this.prisma.adAccountMonthly.upsert({
+          where: {
+            ownerUserId_month_customerId: {
+              ownerUserId,
+              month: row.month,
+              customerId: row.customerId,
+            },
+          },
+          create: {
+            ownerUserId,
+            month: row.month,
+            startDate: new Date(row.startDate),
+            endDate: new Date(row.endDate),
+            customerId: row.customerId,
+            customerName: row.customerName,
+            currency: row.currency,
+            cost: row.cost,
+          },
+          update: {
+            startDate: new Date(row.startDate),
+            endDate: new Date(row.endDate),
+            customerName: row.customerName,
+            currency: row.currency,
+            cost: row.cost,
+          },
+        });
+        upserted += 1;
+      }
+
+      const totalCost = monthlyRows.reduce((sum, r) => sum + r.cost, 0);
+      return {
+        upserted,
+        totalCost: Math.round(totalCost * 100) / 100,
+      };
+    } catch {
+      return { upserted: 0, totalCost: 0 };
+    }
   }
 }

@@ -1560,12 +1560,15 @@ export class ReportsService {
     };
   }
 
-  /** 月汇总账户花费（原脚本 monthly_account_cost，与 Google 后台一致） */
+  /** 月汇总账户花费（monthly_account_cost，与 Google 后台一致） */
   private async resolveAuthoritativeAdSpend(
     ownerId: number,
     startDate: string,
     endDate: string,
   ): Promise<number | null> {
+    const fromDb = await this.sumMonthlyAdSpendFromDb(ownerId, startDate, endDate);
+    if (fromDb != null) return fromDb;
+
     const source = await this.prisma.adDataSource.findFirst({
       where: { ownerUserId: ownerId, isActive: true },
       orderBy: { updatedAt: 'desc' },
@@ -1581,10 +1584,84 @@ export class ReportsService {
       });
       const monthlyRows = parseMonthlyAccountCostCsv(res.data);
       if (!monthlyRows.length) return null;
+
+      await this.persistMonthlyRowsToDb(ownerId, monthlyRows);
+
       const total = sumProratedMonthlyAccountCost(monthlyRows, startDate, endDate);
       return total > 0 ? total : null;
-    } catch {
+    } catch (err) {
+      console.warn(
+        '[reports] monthly_account_cost 拉取失败，回退系列明细合计:',
+        err instanceof Error ? err.message : err,
+      );
       return null;
+    }
+  }
+
+  /** 从库内月汇总表折算区间总广告费 */
+  private async sumMonthlyAdSpendFromDb(
+    ownerId: number,
+    startDate: string,
+    endDate: string,
+  ): Promise<number | null> {
+    const dbRows = await this.prisma.adAccountMonthly.findMany({
+      where: { ownerUserId: ownerId },
+    });
+    if (!dbRows.length) return null;
+
+    const monthlyRows = dbRows.map((r) => ({
+      month: r.month,
+      startDate: r.startDate.toISOString().slice(0, 10),
+      endDate: r.endDate.toISOString().slice(0, 10),
+      customerId: r.customerId,
+      customerName: r.customerName,
+      currency: r.currency,
+      cost: Number(r.cost),
+    }));
+    const total = sumProratedMonthlyAccountCost(monthlyRows, startDate, endDate);
+    return total > 0 ? total : null;
+  }
+
+  /** 将 Sheet 月汇总写入库，供后续报表直接读取 */
+  private async persistMonthlyRowsToDb(
+    ownerId: number,
+    monthlyRows: Array<{
+      month: string;
+      startDate: string;
+      endDate: string;
+      customerId: string;
+      customerName: string;
+      currency: string;
+      cost: number;
+    }>,
+  ) {
+    for (const row of monthlyRows) {
+      await this.prisma.adAccountMonthly.upsert({
+        where: {
+          ownerUserId_month_customerId: {
+            ownerUserId: ownerId,
+            month: row.month,
+            customerId: row.customerId,
+          },
+        },
+        create: {
+          ownerUserId: ownerId,
+          month: row.month,
+          startDate: new Date(row.startDate),
+          endDate: new Date(row.endDate),
+          customerId: row.customerId,
+          customerName: row.customerName,
+          currency: row.currency,
+          cost: row.cost,
+        },
+        update: {
+          startDate: new Date(row.startDate),
+          endDate: new Date(row.endDate),
+          customerName: row.customerName,
+          currency: row.currency,
+          cost: row.cost,
+        },
+      });
     }
   }
 

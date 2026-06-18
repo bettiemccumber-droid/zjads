@@ -271,6 +271,24 @@ model AdCampaignDaily {
   @@map("ad_campaign_daily")
 }
 
+/** 账户月广告费（来自 monthly_account_cost，总广告费对账口径） */
+model AdAccountMonthly {
+  id           Int      @id @default(autoincrement())
+  ownerUserId  Int      @map("owner_user_id")
+  month        String   @db.VarChar(7)
+  startDate    DateTime @map("start_date") @db.Date
+  endDate      DateTime @map("end_date") @db.Date
+  customerId   String   @map("customer_id") @db.VarChar(30)
+  customerName String   @default("") @map("customer_name") @db.VarChar(255)
+  currency     String   @default("USD") @db.VarChar(10)
+  cost         Decimal  @default(0) @db.Decimal(14, 4)
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  @@unique([ownerUserId, month, customerId])
+  @@index([ownerUserId, month])
+  @@map("ad_account_monthly")
+}
+
 model CommissionAlertRule {
   id                      Int      @id @default(autoincrement())
   userId                  Int      @unique @map("user_id")

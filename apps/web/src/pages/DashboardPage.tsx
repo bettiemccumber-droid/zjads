@@ -156,6 +156,10 @@ interface CampaignTotals {
 
   profit: number;
 
+  campaignDetailSpend?: number;
+
+  adSpendSource?: 'monthly_account' | 'campaign_detail';
+
 }
 
 interface AdSpendCoverage {

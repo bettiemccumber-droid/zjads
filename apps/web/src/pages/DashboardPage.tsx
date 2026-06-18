@@ -230,6 +230,7 @@ function ReportSummaryBar({
     label: string;
     value: React.ReactNode;
     variant?: 'cost' | 'commission' | 'roi' | 'orders';
+    hint?: string;
   }[];
 }) {
   return (
@@ -241,6 +242,9 @@ function ReportSummaryBar({
         >
           <span className="report-summary-label">{item.label}</span>
           <span className="report-summary-value">{item.value}</span>
+          {item.hint ? (
+            <span className="report-summary-hint">{item.hint}</span>
+          ) : null}
         </div>
       ))}
     </div>
@@ -532,7 +536,7 @@ export default function DashboardPage() {
 
     }
 
-  }, [range, campaignStatusMode, viewUserId]);
+  }, [range, campaignStatusMode, viewUserId, dateParams]);
 
   const importSheetForEmployee = useCallback(async () => {
     if (!viewUserId) return;
@@ -848,6 +852,11 @@ export default function DashboardPage() {
 
 
   const ct = campaignTotals;
+  const reportRangeLabel = `${range[0].format('YYYY-MM-DD')} ~ ${range[1].format('YYYY-MM-DD')}`;
+  const authoritativeAdSpendHint =
+    ct.adSpendSource === 'monthly_account'
+      ? `${reportRangeLabel} · 月汇总账户口径（对齐 Google MCC）`
+      : `${reportRangeLabel} · 系列明细合计`;
 
   const campaignPlatformOptions = useMemo(() => {
     const names = [
@@ -1306,6 +1315,9 @@ export default function DashboardPage() {
                         label: '总广告费',
                         variant: 'cost',
                         value: `$${displayCampaignTotals.cost.toFixed(2)}`,
+                        hint: campaignFilterActive
+                          ? `筛选后系列明细 · ${reportRangeLabel}`
+                          : authoritativeAdSpendHint,
                       },
                       {
                         label: '总订单数',
@@ -1538,6 +1550,12 @@ export default function DashboardPage() {
             color: #0f172a;
             font-variant-numeric: tabular-nums;
             line-height: 1.2;
+          }
+          .report-summary-hint {
+            color: #64748b;
+            font-size: 11px;
+            line-height: 1.35;
+            margin-top: 2px;
           }
           .report-summary-item--cost {
             background: #fef2f2;

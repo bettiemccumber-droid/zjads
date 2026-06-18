@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { dedupeAffiliateOrderKey } from '../common/order-dedupe.util';
+import { buildOrderDateRangeFilter } from '../common/order-date-range.util';
 import { resolveOrderCommissionBuckets } from '../common/order-commission-buckets.util';
 import {
   filterRowsByCampaignStatusMode,
@@ -147,7 +148,7 @@ export class ReportsService {
     const adRows = await this.prisma.adCampaignDaily.findMany({
       where: {
         ownerUserId: ownerId,
-        date: { gte: new Date(q.startDate), lte: new Date(q.endDate) },
+        date: this.adDateRange(q.startDate, q.endDate),
       },
     });
 
@@ -191,7 +192,7 @@ export class ReportsService {
     const affiliateClickRows = await this.prisma.affiliateMerchantClickDaily.findMany({
       where: {
         channelAccountId: { in: accountIds },
-        clickDate: { gte: new Date(q.startDate), lte: new Date(q.endDate) },
+        clickDate: this.adDateRange(q.startDate, q.endDate),
       },
       include: {
         channelAccount: { include: { platform: true } },
@@ -298,7 +299,7 @@ export class ReportsService {
     const adRows = await this.prisma.adCampaignDaily.findMany({
       where: {
         ownerUserId: ownerId,
-        date: { gte: new Date(q.startDate), lte: new Date(q.endDate) },
+        date: this.adDateRange(q.startDate, q.endDate),
       },
     });
 
@@ -522,7 +523,7 @@ export class ReportsService {
     const adRows = await this.prisma.adCampaignDaily.findMany({
       where: {
         ownerUserId: ownerId,
-        date: { gte: new Date(q.startDate), lte: new Date(q.endDate) },
+        date: this.adDateRange(q.startDate, q.endDate),
       },
       orderBy: [{ date: 'desc' }, { campaignName: 'asc' }],
     });
@@ -682,7 +683,7 @@ export class ReportsService {
     const clickRows = await this.prisma.affiliateMerchantClickDaily.findMany({
       where: {
         channelAccountId: { in: accountIds },
-        clickDate: { gte: new Date(startDate), lte: new Date(endDate) },
+        clickDate: this.adDateRange(startDate, endDate),
       },
       include: { channelAccount: true },
     });
@@ -759,7 +760,7 @@ export class ReportsService {
     const clickRows = await this.prisma.affiliateMerchantClickDaily.findMany({
       where: {
         channelAccountId: { in: accountIds },
-        clickDate: { gte: new Date(startDate), lte: new Date(endDate) },
+        clickDate: this.adDateRange(startDate, endDate),
       },
       include: { channelAccount: true },
     });
@@ -1536,11 +1537,74 @@ export class ReportsService {
     };
   }
 
+  /** 广告日数据日期范围（含结束日全天，与联盟订单一致） */
+  private adDateRange(startDate: string, endDate: string) {
+    return buildOrderDateRangeFilter(startDate, endDate)!;
+  }
+
   /** 报表日期范围（含结束日全天） */
   private orderDateRange(startDate: string, endDate: string) {
+    return this.adDateRange(startDate, endDate);
+  }
+
+  /**
+   * 广告费导入覆盖情况：用于排查「近期能对上、拉长区间对不上」
+   */
+  async adSpendCoverage(user: AuthUser, q: ReportDateQuery) {
+    const ownerId = resolveOwnerUserId(user, q.userId);
+    const dateRange = this.adDateRange(q.startDate, q.endDate);
+
+    const grouped = await this.prisma.adCampaignDaily.groupBy({
+      by: ['date'],
+      where: { ownerUserId: ownerId, date: dateRange },
+      _sum: { cost: true, clicks: true },
+      _count: { _all: true },
+      orderBy: { date: 'asc' },
+    });
+
+    const bounds = await this.prisma.adCampaignDaily.aggregate({
+      where: { ownerUserId: ownerId },
+      _min: { date: true },
+      _max: { date: true },
+    });
+
+    const dailyMap = new Map(
+      grouped.map((d) => [
+        d.date.toISOString().slice(0, 10),
+        {
+          cost: Number(d._sum.cost ?? 0),
+          clicks: Number(d._sum.clicks ?? 0),
+          rowCount: d._count._all,
+        },
+      ]),
+    );
+
+    const allDates = this.listDatesInRange_(q.startDate, q.endDate);
+    const daily = allDates.map((date) => ({
+      date,
+      cost: dailyMap.get(date)?.cost ?? 0,
+      clicks: dailyMap.get(date)?.clicks ?? 0,
+      rowCount: dailyMap.get(date)?.rowCount ?? 0,
+    }));
+
+    const missingDates = daily.filter((d) => d.rowCount === 0).map((d) => d.date);
+    const totalCost = daily.reduce((acc, d) => acc + d.cost, 0);
+    const firstDateWithData = daily.find((d) => d.rowCount > 0)?.date ?? null;
+    const lastDateWithData = [...daily].reverse().find((d) => d.rowCount > 0)?.date ?? null;
+
     return {
-      gte: new Date(`${startDate}T00:00:00.000Z`),
-      lte: new Date(`${endDate}T23:59:59.999Z`),
+      startDate: q.startDate,
+      endDate: q.endDate,
+      totalCost,
+      daily,
+      missingDates,
+      missingDayCount: missingDates.length,
+      firstDateWithData,
+      lastDateWithData,
+      importedMinDate: bounds._min.date?.toISOString().slice(0, 10) ?? null,
+      importedMaxDate: bounds._max.date?.toISOString().slice(0, 10) ?? null,
+      hasLeadingGap: firstDateWithData != null && firstDateWithData > q.startDate,
+      hasTrailingGap: lastDateWithData != null && lastDateWithData < q.endDate,
     };
   }
 }

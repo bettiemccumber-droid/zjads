@@ -65,6 +65,17 @@ export class ReportsController {
     return ok(await this.reports.campaignDaily(user, this.parseCampaignQuery(q)));
   }
 
+  @Get('ad-spend-coverage')
+  async adSpendCoverage(@CurrentUser() user: AuthUser, @Query() q: DateRangeQuery) {
+    return ok(
+      await this.reports.adSpendCoverage(user, {
+        startDate: q.startDate,
+        endDate: q.endDate,
+        userId: q.userId ? parseInt(q.userId, 10) : undefined,
+      }),
+    );
+  }
+
   private parseCampaignQuery(q: CampaignSummaryQuery): {
     startDate: string;
     endDate: string;

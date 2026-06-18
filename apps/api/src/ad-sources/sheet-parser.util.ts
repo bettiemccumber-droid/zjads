@@ -20,6 +20,22 @@ export interface ParsedAdDailyRow {
   merchantId: string;
 }
 
+/** Google 账户级日花费（与后台概览一致，含已移除系列历史花费） */
+export interface ParsedAccountDailyRow {
+  date: string;
+  customerId: string;
+  customerName: string;
+  currency: string;
+  cost: number;
+  costMicros: number;
+}
+
+export const ACCOUNT_DAILY_COST_TAB = 'raw_daily_account_cost';
+export const MONTHLY_ACCOUNT_COST_TAB = 'monthly_account_cost';
+
+/** 无系列明细时的差额补记系列 ID */
+export const ACCOUNT_GAP_CAMPAIGN_ID = '__account_gap__';
+
 const HEADER_ALIASES: Record<string, string[]> = {
   date: ['date', '日期'],
   customerId: ['customer_id', 'customer id', '账户id', '账户ID', '账户Id'],
@@ -245,9 +261,362 @@ export function parseAdSheetCsv(csvText: string): ParsedAdDailyRow[] {
         row.avgCpc = row.cost / row.clicks;
       }
     }
+    row.customerId = formatCustomerId(row.customerId);
   }
 
   return [...grouped.values()];
+}
+
+/** 月汇总账户花费（旧版脚本通常有此表） */
+export interface ParsedMonthlyAccountRow {
+  month: string;
+  startDate: string;
+  endDate: string;
+  customerId: string;
+  customerName: string;
+  currency: string;
+  cost: number;
+}
+
+/**
+ * 解析 raw_daily_account_cost（账户级日花费，与 Google 后台一致）
+ */
+export function parseAccountDailyCostCsv(csvText: string): ParsedAccountDailyRow[] {
+  const lines = splitCsvLines(csvText.trim());
+  if (lines.length < 2) return [];
+
+  const headerRowIndex = findAccountDailyHeaderRowIndex(lines);
+  if (headerRowIndex < 0) return [];
+
+  const headers = lines[headerRowIndex].map(normalizeHeader);
+  const dateIdx = headers.findIndex((h) => HEADER_ALIASES.date.includes(h));
+  const customerIdIdx = headers.findIndex((h) => HEADER_ALIASES.customerId.includes(h));
+  const customerNameIdx = headers.findIndex((h) =>
+    ['customer_name', 'customer name', '账户名'].includes(h),
+  );
+  const costIdx = headers.findIndex((h) => HEADER_ALIASES.cost.includes(h));
+  const costMicrosIdx = headers.findIndex((h) => HEADER_ALIASES.costMicros.includes(h));
+  const currencyIdx = headers.findIndex((h) => HEADER_ALIASES.currency.includes(h));
+  if (dateIdx < 0 || customerIdIdx < 0 || costIdx < 0) return [];
+
+  const grouped = new Map<string, ParsedAccountDailyRow>();
+  for (let i = headerRowIndex + 1; i < lines.length; i += 1) {
+    const cells = lines[i];
+    if (!cells.length || cells.every((c) => !c.trim())) continue;
+
+    const date = normalizeDate(getCell(cells, dateIdx));
+    if (!date) continue;
+
+    const customerId = formatCustomerId(getCell(cells, customerIdIdx) || 'unknown');
+    const costMicros = parseIntCell(getCell(cells, costMicrosIdx));
+    const costFromMicros = costMicros > 0 ? microsToCurrency(costMicros) : 0;
+    const cost = costFromMicros || parseMoney(getCell(cells, costIdx));
+    const key = `${date}|${customerId}`;
+    const existing = grouped.get(key);
+    if (existing) {
+      existing.costMicros += costMicros;
+      existing.cost = existing.costMicros > 0
+        ? microsToCurrency(existing.costMicros)
+        : existing.cost + cost;
+    } else {
+      grouped.set(key, {
+        date,
+        customerId,
+        customerName: getCell(cells, customerNameIdx),
+        currency: getCell(cells, currencyIdx) || 'USD',
+        cost: costFromMicros || cost,
+        costMicros,
+      });
+    }
+  }
+
+  return [...grouped.values()];
+}
+
+/**
+ * 用账户级日花费补齐明细与 Google 后台之间的差额（按系列花费比例分摊）
+ */
+export function applyAccountCostAdjustment(
+  campaignRows: ParsedAdDailyRow[],
+  accountRows: ParsedAccountDailyRow[],
+): { rows: ParsedAdDailyRow[]; adjustmentApplied: boolean; totalAdjustment: number } {
+  if (!accountRows.length) {
+    return { rows: campaignRows, adjustmentApplied: false, totalAdjustment: 0 };
+  }
+
+  const accountByKey = new Map<string, ParsedAccountDailyRow>();
+  for (const row of accountRows) {
+    const key = `${row.date}|${normalizeCustomerId(row.customerId)}`;
+    accountByKey.set(key, row);
+  }
+
+  const groups = new Map<string, ParsedAdDailyRow[]>();
+  for (const row of campaignRows) {
+    if (row.campaignId === ACCOUNT_GAP_CAMPAIGN_ID) continue;
+    const key = `${row.date}|${normalizeCustomerId(row.customerId)}`;
+    const list = groups.get(key) ?? [];
+    list.push(row);
+    groups.set(key, list);
+  }
+
+  const adjusted = campaignRows.filter((r) => r.campaignId !== ACCOUNT_GAP_CAMPAIGN_ID);
+  let totalAdjustment = 0;
+  let adjustmentApplied = false;
+
+  for (const [key, accountRow] of accountByKey) {
+    const accountCost = accountRow.costMicros > 0
+      ? microsToCurrency(accountRow.costMicros)
+      : accountRow.cost;
+    const detailRows = groups.get(key) ?? [];
+    const detailSum = detailRows.reduce((sum, r) => sum + r.cost, 0);
+    const delta = Math.round((accountCost - detailSum) * 100) / 100;
+
+    /** 仅向上补齐：账户表不完整时绝不压低明细花费 */
+    if (delta < 0.005) continue;
+    adjustmentApplied = true;
+    totalAdjustment += delta;
+
+    if (detailRows.length === 0) {
+      if (accountCost <= 0) continue;
+      const [date, customerId] = key.split('|');
+      adjusted.push({
+        date,
+        customerId,
+        campaignId: ACCOUNT_GAP_CAMPAIGN_ID,
+        campaignName: '[账户级差额补记]',
+        campaignStatus: '',
+        impressions: 0,
+        clicks: 0,
+        cost: accountCost,
+        campaignBudget: 0,
+        searchBudgetLostIs: 0,
+        searchRankLostIs: 0,
+        avgCpc: 0,
+        maxCpc: 0,
+        currency: accountRow.currency || 'USD',
+        affiliateAlias: '',
+        merchantId: '',
+      });
+      continue;
+    }
+
+    if (detailSum <= 0) continue;
+
+    const ratio = accountCost / detailSum;
+    for (const row of detailRows) {
+      row.cost = Math.round(row.cost * ratio * 100) / 100;
+      row.avgCpc = row.clicks > 0 ? row.cost / row.clicks : row.avgCpc;
+    }
+
+    const adjustedSum = detailRows.reduce((sum, r) => sum + r.cost, 0);
+    const remainder = Math.round((accountCost - adjustedSum) * 100) / 100;
+    if (Math.abs(remainder) >= 0.01) {
+      const largest = detailRows.reduce((a, b) => (a.cost >= b.cost ? a : b));
+      largest.cost = Math.round((largest.cost + remainder) * 100) / 100;
+      largest.avgCpc = largest.clicks > 0 ? largest.cost / largest.clicks : largest.avgCpc;
+    }
+  }
+
+  return {
+    rows: adjusted,
+    adjustmentApplied,
+    totalAdjustment: Math.round(totalAdjustment * 100) / 100,
+  };
+}
+
+/**
+ * 解析 monthly_account_cost（旧版/新版脚本均有，用于无日账户表时的差额补齐）
+ */
+export function parseMonthlyAccountCostCsv(csvText: string): ParsedMonthlyAccountRow[] {
+  const lines = splitCsvLines(csvText.trim());
+  if (lines.length < 2) return [];
+
+  let headerRowIndex = -1;
+  for (let i = 0; i < Math.min(lines.length, 5); i += 1) {
+    const normalized = lines[i].map(normalizeHeader);
+    if (
+      normalized.some((h) => h === 'month') &&
+      normalized.some((h) => HEADER_ALIASES.customerId.includes(h)) &&
+      normalized.some((h) => HEADER_ALIASES.cost.includes(h))
+    ) {
+      headerRowIndex = i;
+      break;
+    }
+  }
+  if (headerRowIndex < 0) return [];
+
+  const headers = lines[headerRowIndex].map(normalizeHeader);
+  const monthIdx = headers.findIndex((h) => h === 'month');
+  const startIdx = headers.findIndex((h) => ['start_date', 'start date'].includes(h));
+  const endIdx = headers.findIndex((h) => ['end_date', 'end date'].includes(h));
+  const customerIdIdx = headers.findIndex((h) => HEADER_ALIASES.customerId.includes(h));
+  const customerNameIdx = headers.findIndex((h) =>
+    ['customer_name', 'customer name', '账户名'].includes(h),
+  );
+  const costIdx = headers.findIndex((h) => HEADER_ALIASES.cost.includes(h));
+  const currencyIdx = headers.findIndex((h) => HEADER_ALIASES.currency.includes(h));
+  if (monthIdx < 0 || customerIdIdx < 0 || costIdx < 0) return [];
+
+  const rows: ParsedMonthlyAccountRow[] = [];
+  for (let i = headerRowIndex + 1; i < lines.length; i += 1) {
+    const cells = lines[i];
+    if (!cells.length || cells.every((c) => !c.trim())) continue;
+    const month = getCell(cells, monthIdx);
+    const startDate = normalizeDate(getCell(cells, startIdx));
+    const endDate = normalizeDate(getCell(cells, endIdx));
+    const customerId = formatCustomerId(getCell(cells, customerIdIdx) || 'unknown');
+    const cost = parseMoney(getCell(cells, costIdx));
+    if (!month || !customerId || cost <= 0) continue;
+    rows.push({
+      month,
+      startDate: startDate || month,
+      endDate: endDate || month,
+      customerId,
+      customerName: getCell(cells, customerNameIdx),
+      currency: getCell(cells, currencyIdx) || 'USD',
+      cost,
+    });
+  }
+  return rows;
+}
+
+/**
+ * 按查询区间对 monthly_account_cost 做天数比例折算并求和（与 Google 账户级花费口径一致）
+ */
+export function sumProratedMonthlyAccountCost(
+  monthlyRows: ParsedMonthlyAccountRow[],
+  importStart: string,
+  importEnd: string,
+): number {
+  if (!monthlyRows.length || !importStart || !importEnd || importStart > importEnd) {
+    return 0;
+  }
+
+  let total = 0;
+  for (const monthRow of monthlyRows) {
+    const windowStart =
+      importStart > monthRow.startDate ? importStart : monthRow.startDate;
+    const windowEnd = importEnd < monthRow.endDate ? importEnd : monthRow.endDate;
+    if (windowStart > windowEnd) continue;
+
+    const monthDays = countDaysInclusive(monthRow.startDate, monthRow.endDate);
+    const overlapDays = countDaysInclusive(windowStart, windowEnd);
+    if (monthDays <= 0 || overlapDays <= 0) continue;
+
+    total += monthRow.cost * (overlapDays / monthDays);
+  }
+
+  return Math.round(total * 100) / 100;
+}
+
+/**
+ * 用月汇总账户花费补齐明细（按导入区间在月内天数比例折算，仅作旧脚本兜底）
+ */
+export function applyMonthlyCostAdjustment(
+  campaignRows: ParsedAdDailyRow[],
+  monthlyRows: ParsedMonthlyAccountRow[],
+  importStart?: string,
+  importEnd?: string,
+): { rows: ParsedAdDailyRow[]; adjustmentApplied: boolean; totalAdjustment: number } {
+  if (!monthlyRows.length) {
+    return { rows: campaignRows, adjustmentApplied: false, totalAdjustment: 0 };
+  }
+
+  let totalAdjustment = 0;
+  let adjustmentApplied = false;
+  const adjusted = campaignRows.filter((r) => r.campaignId !== ACCOUNT_GAP_CAMPAIGN_ID);
+
+  for (const monthRow of monthlyRows) {
+    const windowStart =
+      importStart && importStart > monthRow.startDate ? importStart : monthRow.startDate;
+    const windowEnd = importEnd && importEnd < monthRow.endDate ? importEnd : monthRow.endDate;
+    if (windowStart > windowEnd) continue;
+
+    const monthDays = countDaysInclusive(monthRow.startDate, monthRow.endDate);
+    const overlapDays = countDaysInclusive(windowStart, windowEnd);
+    if (monthDays <= 0 || overlapDays <= 0) continue;
+
+    const targetCost = Math.round(monthRow.cost * (overlapDays / monthDays) * 100) / 100;
+    const detailRows = adjusted.filter(
+      (r) =>
+        formatCustomerId(r.customerId) === monthRow.customerId &&
+        r.date >= windowStart &&
+        r.date <= windowEnd &&
+        r.campaignId !== ACCOUNT_GAP_CAMPAIGN_ID,
+    );
+    const detailSum = detailRows.reduce((sum, r) => sum + r.cost, 0);
+    const delta = Math.round((targetCost - detailSum) * 100) / 100;
+    if (delta < 0.005) continue;
+
+    adjustmentApplied = true;
+    totalAdjustment += delta;
+
+    if (detailRows.length === 0) {
+      adjusted.push({
+        date: windowEnd,
+        customerId: monthRow.customerId,
+        campaignId: ACCOUNT_GAP_CAMPAIGN_ID,
+        campaignName: '[月汇总差额补记]',
+        campaignStatus: '',
+        impressions: 0,
+        clicks: 0,
+        cost: targetCost,
+        campaignBudget: 0,
+        searchBudgetLostIs: 0,
+        searchRankLostIs: 0,
+        avgCpc: 0,
+        maxCpc: 0,
+        currency: monthRow.currency || 'USD',
+        affiliateAlias: '',
+        merchantId: '',
+      });
+      continue;
+    }
+
+    if (detailSum <= 0) continue;
+    const ratio = targetCost / detailSum;
+    for (const row of detailRows) {
+      row.cost = Math.round(row.cost * ratio * 100) / 100;
+      row.avgCpc = row.clicks > 0 ? row.cost / row.clicks : row.avgCpc;
+    }
+  }
+
+  return {
+    rows: adjusted,
+    adjustmentApplied,
+    totalAdjustment: Math.round(totalAdjustment * 100) / 100,
+  };
+}
+
+function countDaysInclusive(start: string, end: string): number {
+  const s = new Date(`${start}T00:00:00Z`);
+  const e = new Date(`${end}T00:00:00Z`);
+  if (Number.isNaN(s.getTime()) || Number.isNaN(e.getTime()) || e < s) return 0;
+  return Math.floor((e.getTime() - s.getTime()) / 86400000) + 1;
+}
+
+function findAccountDailyHeaderRowIndex(lines: string[][]): number {
+  for (let i = 0; i < Math.min(lines.length, 5); i += 1) {
+    const normalized = lines[i].map(normalizeHeader);
+    const hasDate = normalized.some((h) => HEADER_ALIASES.date.includes(h));
+    const hasCustomer = normalized.some((h) => HEADER_ALIASES.customerId.includes(h));
+    const hasCost = normalized.some((h) => HEADER_ALIASES.cost.includes(h));
+    if (hasDate && hasCustomer && hasCost) return i;
+  }
+  return -1;
+}
+
+function normalizeCustomerId(raw: string): string {
+  return raw.replace(/-/g, '').trim();
+}
+
+/** 统一为 xxx-xxx-xxxx，避免同一账户多种写法进库 */
+function formatCustomerId(raw: string): string {
+  const digits = raw.replace(/\D/g, '');
+  if (digits.length === 10) {
+    return `${digits.slice(0, 3)}-${digits.slice(3, 6)}-${digits.slice(6)}`;
+  }
+  return raw.replace(/-/g, '').trim() || 'unknown';
 }
 
 function findHeaderRowIndex(lines: string[][]): number {

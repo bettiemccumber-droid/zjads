@@ -103,13 +103,33 @@ export class AdSourcesService {
         ...(dateRange ? { date: dateRange } : {}),
       },
     });
-
     return {
       deleted: result.count,
       ownerUserId,
       startDate: opts.startDate ?? null,
       endDate: opts.endDate ?? null,
     };
+  }
+
+  /**
+   * 按员工自动导入已绑定的 Sheet（采集任务完成后调用，无需人工点导入）
+   */
+  async importForOwner(ownerUserId: number, startDate?: string, endDate?: string) {
+    const source = await this.prisma.adDataSource.findFirst({
+      where: { ownerUserId, isActive: true },
+      orderBy: { updatedAt: 'desc' },
+    });
+    if (!source) {
+      return { skipped: true as const, reason: 'no_ad_source' as const };
+    }
+
+    try {
+      const result = await this.importSourceData(source, startDate, endDate);
+      return { skipped: false as const, ...result };
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e);
+      return { skipped: true as const, reason: 'import_failed' as const, message };
+    }
   }
 
   /**
@@ -129,6 +149,17 @@ export class AdSourcesService {
     });
     if (!source) throw new NotFoundException('数据源不存在或未启用');
 
+    return this.importSourceData(source, startDate, endDate);
+  }
+
+  /**
+   * 拉取并写入单个 Sheet 数据源
+   */
+  private async importSourceData(
+    source: { id: number; ownerUserId: number; sheetId: string; mainTab: string },
+    startDate?: string,
+    endDate?: string,
+  ) {
     const ownerUserId = source.ownerUserId;
 
     const csvUrl = buildSheetCsvUrl(source.sheetId, source.mainTab);

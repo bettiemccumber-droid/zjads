@@ -13,7 +13,13 @@ import { resolveCampaignGroupKey } from '../common/campaign-group.util';
 import { suggestOperation } from '../common/operation-suggest.util';
 import { AuthUser, resolveOwnerUserId } from '../common/ownership.util';
 import { isLbClickPseudoMerchant } from '../collectors/linkbux-clicks';
-import { buildSheetCsvUrl, parseAdSheetCsv } from '../ad-sources/sheet-parser.util';
+import {
+  MONTHLY_ACCOUNT_COST_TAB,
+  buildSheetCsvUrl,
+  parseAdSheetCsv,
+  parseMonthlyAccountCostCsv,
+  sumProratedMonthlyAccountCost,
+} from '../ad-sources/sheet-parser.util';
 import { PrismaService } from '../prisma/prisma.service';
 
 export interface ReportDateQuery {
@@ -266,6 +272,15 @@ export class ReportsService {
       { orderCount: 0, totalCommission: 0, totalAdSpend: 0, totalClicks: 0, totalAffiliateClicks: 0 },
     );
 
+    const authoritativeAdSpend = await this.resolveAuthoritativeAdSpend(
+      ownerId,
+      q.startDate,
+      q.endDate,
+    );
+    if (authoritativeAdSpend != null) {
+      totals.totalAdSpend = authoritativeAdSpend;
+    }
+
     const overallRoi =
       totals.totalAdSpend > 0
         ? (totals.totalCommission - totals.totalAdSpend) / totals.totalAdSpend
@@ -277,6 +292,8 @@ export class ReportsService {
         ...totals,
         overallRoi,
         profit: totals.totalCommission - totals.totalAdSpend,
+        campaignDetailSpend: summary.reduce((s, r) => s + r.totalCost, 0),
+        adSpendSource: authoritativeAdSpend != null ? 'monthly_account' : 'campaign_detail',
       },
     };
   }
@@ -491,6 +508,16 @@ export class ReportsService {
       },
     );
 
+    const authoritativeAdSpend = await this.resolveAuthoritativeAdSpend(
+      ownerId,
+      q.startDate,
+      q.endDate,
+    );
+    const campaignDetailSpend = totals.cost;
+    if (authoritativeAdSpend != null) {
+      totals.cost = authoritativeAdSpend;
+    }
+
     const overallRoi =
       totals.cost > 0 ? (totals.commission - totals.cost) / totals.cost : 0;
 
@@ -501,7 +528,13 @@ export class ReportsService {
       enabledOnly: statusMode === 'active',
       statusFilterSkipped,
       totalBeforeStatusFilter: countBeforeStatusFilter,
-      totals: { ...totals, overallRoi, profit: totals.commission - totals.cost },
+      totals: {
+        ...totals,
+        overallRoi,
+        profit: totals.commission - totals.cost,
+        campaignDetailSpend,
+        adSpendSource: authoritativeAdSpend != null ? 'monthly_account' : 'campaign_detail',
+      },
     };
   }
 
@@ -1527,6 +1560,34 @@ export class ReportsService {
     };
   }
 
+  /** 月汇总账户花费（原脚本 monthly_account_cost，与 Google 后台一致） */
+  private async resolveAuthoritativeAdSpend(
+    ownerId: number,
+    startDate: string,
+    endDate: string,
+  ): Promise<number | null> {
+    const source = await this.prisma.adDataSource.findFirst({
+      where: { ownerUserId: ownerId, isActive: true },
+      orderBy: { updatedAt: 'desc' },
+    });
+    if (!source) return null;
+
+    try {
+      const csvUrl = buildSheetCsvUrl(source.sheetId, MONTHLY_ACCOUNT_COST_TAB);
+      const res = await axios.get<string>(csvUrl, {
+        timeout: 120000,
+        responseType: 'text',
+        headers: { 'User-Agent': 'ZJADS/1.0' },
+      });
+      const monthlyRows = parseMonthlyAccountCostCsv(res.data);
+      if (!monthlyRows.length) return null;
+      const total = sumProratedMonthlyAccountCost(monthlyRows, startDate, endDate);
+      return total > 0 ? total : null;
+    } catch {
+      return null;
+    }
+  }
+
   private emptyTotals() {
     return {
       orderCount: 0,
@@ -1591,11 +1652,15 @@ export class ReportsService {
 
     const missingDates = daily.filter((d) => d.rowCount === 0).map((d) => d.date);
     const totalCost = daily.reduce((acc, d) => acc + d.cost, 0);
+    const authoritativeTotal =
+      (await this.resolveAuthoritativeAdSpend(ownerId, q.startDate, q.endDate)) ?? totalCost;
     const firstDateWithData = daily.find((d) => d.rowCount > 0)?.date ?? null;
     const lastDateWithData = [...daily].reverse().find((d) => d.rowCount > 0)?.date ?? null;
 
     let sheetTotalCost: number | null = null;
     let sheetRowCount = 0;
+    let monthlySheetTotal: number | null = null;
+    let hasMonthlyCostTab = false;
     const sources = await this.prisma.adDataSource.findMany({
       where: { ownerUserId: ownerId, isActive: true },
       orderBy: { updatedAt: 'desc' },
@@ -1617,16 +1682,48 @@ export class ReportsService {
       } catch {
         sheetTotalCost = null;
       }
+
+      try {
+        const monthlyCsvUrl = buildSheetCsvUrl(sources[0].sheetId, MONTHLY_ACCOUNT_COST_TAB);
+        const monthlyRes = await axios.get<string>(monthlyCsvUrl, {
+          timeout: 120000,
+          responseType: 'text',
+          headers: { 'User-Agent': 'ZJADS/1.0' },
+        });
+        const monthlyRows = parseMonthlyAccountCostCsv(monthlyRes.data);
+        if (monthlyRows.length) {
+          hasMonthlyCostTab = true;
+          monthlySheetTotal = sumProratedMonthlyAccountCost(
+            monthlyRows,
+            q.startDate,
+            q.endDate,
+          );
+        }
+      } catch {
+        hasMonthlyCostTab = false;
+        monthlySheetTotal = null;
+      }
     }
+
+    const monthlyDetailGap =
+      monthlySheetTotal != null && sheetTotalCost != null
+        ? Math.round((monthlySheetTotal - sheetTotalCost) * 100) / 100
+        : null;
 
     return {
       startDate: q.startDate,
       endDate: q.endDate,
-      totalCost,
+      totalCost: authoritativeTotal,
+      campaignDetailTotal: totalCost,
+      monthlySheetTotal,
       sheetTotalCost,
       sheetRowCount,
+      hasMonthlyCostTab,
+      monthlyDetailGap,
       sheetDbGap:
-        sheetTotalCost != null ? Math.round((sheetTotalCost - totalCost) * 100) / 100 : null,
+        sheetTotalCost != null
+          ? Math.round((sheetTotalCost - authoritativeTotal) * 100) / 100
+          : null,
       daily,
       missingDates,
       missingDayCount: missingDates.length,
@@ -1636,12 +1733,15 @@ export class ReportsService {
       importedMaxDate: bounds._max.date?.toISOString().slice(0, 10) ?? null,
       hasLeadingGap: firstDateWithData != null && firstDateWithData > q.startDate,
       hasTrailingGap: lastDateWithData != null && lastDateWithData < q.endDate,
+      /** 明细低于月汇总账户花费（已移除系列等），属原脚本预期差异 */
+      hasMonthlyDetailGap: monthlyDetailGap != null && monthlyDetailGap > 1,
       /** Sheet 与库内一致但查询跨度较长时，提示重跑脚本补早期花费 */
       likelySheetStale:
         sheetTotalCost != null &&
         Math.abs(sheetTotalCost - totalCost) < 0.05 &&
         missingDates.length === 0 &&
-        allDates.length > 7,
+        allDates.length > 7 &&
+        !(monthlyDetailGap != null && monthlyDetailGap > 1),
     };
   }
 }

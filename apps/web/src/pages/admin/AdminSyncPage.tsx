@@ -124,7 +124,7 @@ export default function AdminSyncPage() {
         showIcon
         style={{ marginBottom: 16 }}
         message="管理员批量采集"
-        description="将使用各员工已配置的平台 Token 与 Google Sheet。下方表格可单独为某位员工「采集订单」或「导入 Sheet」，也可使用上方批量操作。"
+        description="各员工订单采集完成后，平台会自动导入其 Google Sheet 广告费（同日期区间）。下方表格仍可单独操作。"
       />
 
       <Card title="快速操作" style={{ marginBottom: 16 }}>
@@ -135,10 +135,10 @@ export default function AdminSyncPage() {
             含联盟点击（LB 仅最后一天）
           </Checkbox>
           <Button type="primary" loading={syncing} onClick={() => void batchSync()}>
-            批量采集联盟订单
+            批量采集（含自动导入 Sheet）
           </Button>
           <Button loading={importing} onClick={() => void batchImportSheets()}>
-            批量导入 Google Sheet
+            仅导入 Sheet（不重采订单）
           </Button>
           <Link to="/admin/ad-sources">管理员工 Sheet →</Link>
         </Space>

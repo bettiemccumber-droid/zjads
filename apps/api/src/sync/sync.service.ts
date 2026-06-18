@@ -10,6 +10,7 @@ import { AuthUser, isAdmin } from '../common/ownership.util';
 import { isCollectorImplemented } from '../collectors/collectors.registry';
 import { CollectorsService } from '../collectors/collectors.service';
 import { PrismaService } from '../prisma/prisma.service';
+import { AdSourcesService } from '../ad-sources/ad-sources.service';
 import { AlertsService } from '../alerts/alerts.service';
 
 /** 超过此时长仍为 running 视为卡住（服务重启或点击采集异常） */
@@ -24,6 +25,7 @@ export class SyncService implements OnModuleInit {
     private readonly channelAccounts: ChannelAccountsService,
     private readonly collectors: CollectorsService,
     private readonly alerts: AlertsService,
+    private readonly adSources: AdSourcesService,
   ) {}
 
   async onModuleInit() {
@@ -305,6 +307,24 @@ export class SyncService implements OnModuleInit {
     console.log(`[sync] 任务 #${jobId} 结束: ${status}（成功 ${completed} / 失败 ${failed}）`);
     const syncStart = job.startDate.toISOString().slice(0, 10);
     const syncEnd = job.endDate.toISOString().slice(0, 10);
+
+    this.adSources
+      .importForOwner(job.ownerUserId, syncStart, syncEnd)
+      .then((r) => {
+        if (r.skipped) {
+          if (r.reason === 'no_ad_source') {
+            console.log(`[sync] 任务 #${jobId} 跳过 Sheet 导入：未配置广告数据源`);
+          } else if (r.reason === 'import_failed') {
+            console.log(`[sync] 任务 #${jobId} Sheet 导入失败: ${r.message ?? 'unknown'}`);
+          }
+          return;
+        }
+        console.log(
+          `[sync] 任务 #${jobId} 已自动导入 Sheet：系列 ${r.upserted} 行（${syncStart}~${syncEnd}）`,
+        );
+      })
+      .catch(console.error);
+
     this.alerts
       .runCheckAfterSync(job.ownerUserId, syncStart, syncEnd)
       .then((r) => {

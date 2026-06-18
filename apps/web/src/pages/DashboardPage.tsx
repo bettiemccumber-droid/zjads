@@ -249,12 +249,16 @@ export default function DashboardPage() {
   const [adSpendCoverage, setAdSpendCoverage] = useState<{
     totalCost: number;
     sheetTotalCost: number | null;
+    monthlySheetTotal: number | null;
+    hasMonthlyCostTab: boolean;
+    monthlyDetailGap: number | null;
     sheetDbGap: number | null;
     missingDates: string[];
     missingDayCount: number;
     firstDateWithData: string | null;
     hasLeadingGap: boolean;
     likelySheetStale: boolean;
+    hasMonthlyDetailGap: boolean;
   } | null>(null);
 
   const [range, setRange] = useState<[Dayjs, Dayjs]>([
@@ -427,12 +431,16 @@ export default function DashboardPage() {
         ApiResult<{
           totalCost: number;
           sheetTotalCost: number | null;
+          monthlySheetTotal: number | null;
+          hasMonthlyCostTab: boolean;
+          monthlyDetailGap: number | null;
           sheetDbGap: number | null;
           missingDates: string[];
           missingDayCount: number;
           firstDateWithData: string | null;
           hasLeadingGap: boolean;
           likelySheetStale: boolean;
+          hasMonthlyDetailGap: boolean;
         }>
       >('/reports/ad-spend-coverage', { params: dateParams });
       if (data.success) setAdSpendCoverage(data.data);
@@ -617,19 +625,33 @@ export default function DashboardPage() {
 
           if (job.status === 'completed') {
 
-            message.success('采集已完成，报表已自动刷新');
+            message.success('采集已完成，已自动导入 Sheet 广告费并刷新报表');
 
           } else if (job.status === 'failed') {
 
-            message.error('采集失败，请查看下方任务详情');
+            message.error('联盟采集失败，请查看下方任务详情（Sheet 仍会尝试导入）');
 
           } else {
 
-            message.warning('部分账号采集失败，请查看任务详情');
+            message.warning('部分账号采集失败，Sheet 广告费已尝试自动导入');
 
           }
 
           void loadReport();
+          void (async () => {
+            const { data } = await api.get<
+              ApiResult<{
+                totalCost: number;
+                sheetTotalCost: number | null;
+                monthlySheetTotal: number | null;
+                monthlyDetailGap: number | null;
+                hasMonthlyDetailGap: boolean;
+                likelySheetStale: boolean;
+                missingDayCount: number;
+              }>
+            >('/reports/ad-spend-coverage', { params: dateParams });
+            if (data.success) setAdSpendCoverage(data.data as typeof adSpendCoverage);
+          })();
 
         }
 
@@ -637,7 +659,7 @@ export default function DashboardPage() {
 
     },
 
-    [fetchSyncJob, stopPolling, loadReport],
+    [fetchSyncJob, stopPolling, loadReport, dateParams],
 
   );
 
@@ -1062,7 +1084,9 @@ export default function DashboardPage() {
       )}
 
       {adSpendCoverage &&
-        (adSpendCoverage.missingDayCount > 0 || adSpendCoverage.likelySheetStale) && (
+        (adSpendCoverage.missingDayCount > 0 ||
+          adSpendCoverage.likelySheetStale ||
+          adSpendCoverage.hasMonthlyDetailGap) && (
         <Alert
           type="warning"
           showIcon
@@ -1080,23 +1104,34 @@ export default function DashboardPage() {
                 </p>
               )}
               <p style={{ margin: '0 0 8px' }}>
-                库内合计 ${adSpendCoverage.totalCost.toFixed(2)}
+                平台总广告费 ${adSpendCoverage.totalCost.toFixed(2)}
                 {adSpendCoverage.sheetTotalCost != null && (
                   <>
-                    ，Sheet 合计 ${adSpendCoverage.sheetTotalCost.toFixed(2)}
+                    ，明细 Sheet ${adSpendCoverage.sheetTotalCost.toFixed(2)}
                     {Math.abs(adSpendCoverage.sheetDbGap ?? 0) < 0.05
-                      ? '（与库内一致）'
+                      ? '（与库内系列明细一致）'
                       : ''}
                   </>
                 )}
+                {adSpendCoverage.monthlySheetTotal != null && (
+                  <>，月汇总 Sheet ${adSpendCoverage.monthlySheetTotal.toFixed(2)}（账户口径，接近 Google 后台）</>
+                )}
                 。
               </p>
+              {adSpendCoverage.hasMonthlyDetailGap && (
+                <p style={{ margin: '0 0 8px', color: '#666' }}>
+                  系列明细比月汇总账户花费少约{' '}
+                  <strong>${(adSpendCoverage.monthlyDetailGap ?? 0).toFixed(2)}</strong>
+                  （已移除系列等历史花费，属原脚本预期差异）。总广告费以月汇总为准。
+                </p>
+              )}
               {adSpendCoverage.likelySheetStale && (
                 <p style={{ margin: '0 0 8px', color: '#666' }}>
-                  近期区间（如 6.11–6.17）能对上、拉长后偏低，通常是 Sheet 脚本回溯重采时漏掉了
-                  <strong>已移除广告</strong> 的历史花费。请：① 更新 Sheet 脚本并重新部署；
-                  ② 将 <code>lookback_days</code> 调到 ≥ 查询天数（如 17）后手动运行 main()；
-                  ③ 再点「导入 Sheet（当前查询区间）」。
+                  明细 Sheet 数据可能不完整（常见：脚本 init 中途停止、或{' '}
+                  <code>max_retention_days</code> 删了早期行）。
+                  请：① 确认 <code>raw_daily_report</code> 区间 cost 求和；
+                  ② init 完成后改 <code>lookback_days=7</code> 日常跑；
+                  ③ 再导入。
                 </p>
               )}
               {adSpendCoverage.missingDayCount > 0 && (
@@ -1137,6 +1172,9 @@ export default function DashboardPage() {
                 : ''}
             </Button>
           </div>
+          <p style={{ margin: '8px 0 0', color: '#888', fontSize: 12 }}>
+            一次操作：联盟订单采集 + 自动导入 Sheet 广告费（与上方日期区间一致）
+          </p>
         </div>
 
         {syncAccountOptions.length > 0 ? (

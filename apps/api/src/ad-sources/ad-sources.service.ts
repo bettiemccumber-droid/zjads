@@ -164,6 +164,14 @@ export class AdSourcesService {
       throw new BadRequestException(`所选日期区间内无广告数据。${hint}`);
     }
 
+    /** 指定日期区间导入时先清空该区间，避免 upsert 残留旧系列/旧花费 */
+    if (startDate && endDate) {
+      const dateRange = buildOrderDateRangeFilter(startDate, endDate);
+      await this.prisma.adCampaignDaily.deleteMany({
+        where: { ownerUserId, date: dateRange },
+      });
+    }
+
     let upserted = 0;
     for (const row of rows) {
       await this.prisma.adCampaignDaily.upsert({

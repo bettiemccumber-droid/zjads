@@ -1055,8 +1055,8 @@ function collectReportRows_(startDate, endDate, timezone, accountId, accountName
     'metrics.ctr, metrics.average_cpc ' +
     'FROM ad_group_ad ' +
     "WHERE campaign.status != 'REMOVED' " +
-    "AND ad_group.status != 'REMOVED' " +
-    "AND ad_group_ad.status != 'REMOVED' " +
+    // 不按 ad_group / ad 当前状态过滤：回溯窗口重采时，6 月初已移除的广告
+    // 仍应计入历史花费，否则与 Google Ads 后台（6.1–6.17 总费用）对不上。
     "AND segments.date BETWEEN '" + startDate + "' AND '" + endDate + "'";
 
   var rows = AdsApp.report(query).rows();

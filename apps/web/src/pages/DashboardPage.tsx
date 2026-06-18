@@ -248,12 +248,13 @@ export default function DashboardPage() {
 
   const [adSpendCoverage, setAdSpendCoverage] = useState<{
     totalCost: number;
+    sheetTotalCost: number | null;
+    sheetDbGap: number | null;
     missingDates: string[];
     missingDayCount: number;
     firstDateWithData: string | null;
     hasLeadingGap: boolean;
-    importedMinDate: string | null;
-    importedMaxDate: string | null;
+    likelySheetStale: boolean;
   } | null>(null);
 
   const [range, setRange] = useState<[Dayjs, Dayjs]>([
@@ -425,12 +426,13 @@ export default function DashboardPage() {
       const { data } = await api.get<
         ApiResult<{
           totalCost: number;
+          sheetTotalCost: number | null;
+          sheetDbGap: number | null;
           missingDates: string[];
           missingDayCount: number;
           firstDateWithData: string | null;
           hasLeadingGap: boolean;
-          importedMinDate: string | null;
-          importedMaxDate: string | null;
+          likelySheetStale: boolean;
         }>
       >('/reports/ad-spend-coverage', { params: dateParams });
       if (data.success) setAdSpendCoverage(data.data);
@@ -545,6 +547,25 @@ export default function DashboardPage() {
         if (data.data.success > 0) {
           message.success('Sheet 导入完成，正在刷新报表');
           void loadReport();
+          const covRes = await api.get<
+            ApiResult<{
+              totalCost: number;
+              sheetTotalCost: number | null;
+              sheetDbGap: number | null;
+              missingDates: string[];
+              missingDayCount: number;
+              firstDateWithData: string | null;
+              hasLeadingGap: boolean;
+              likelySheetStale: boolean;
+            }>
+          >('/reports/ad-spend-coverage', {
+            params: {
+              startDate: range[0].format('YYYY-MM-DD'),
+              endDate: range[1].format('YYYY-MM-DD'),
+              userId: viewUserId,
+            },
+          });
+          if (covRes.data.success) setAdSpendCoverage(covRes.data.data);
         } else {
           message.error('Sheet 导入失败，请检查员工是否已配置 Sheet');
         }
@@ -1040,30 +1061,51 @@ export default function DashboardPage() {
         />
       )}
 
-      {adSpendCoverage && adSpendCoverage.missingDayCount > 0 && (
+      {adSpendCoverage &&
+        (adSpendCoverage.missingDayCount > 0 || adSpendCoverage.likelySheetStale) && (
         <Alert
           type="warning"
           showIcon
           style={{ marginBottom: 16 }}
-          message="广告费数据不完整"
+          message="广告费可能低于 Google Ads 后台"
           description={
             <div>
+              {adSpendCoverage.missingDayCount > 0 && (
+                <p style={{ margin: '0 0 8px' }}>
+                  查询区间内有 <strong>{adSpendCoverage.missingDayCount}</strong> 天无广告数据
+                  {adSpendCoverage.hasLeadingGap && adSpendCoverage.firstDateWithData
+                    ? `（最早有数据：${adSpendCoverage.firstDateWithData}）`
+                    : ''}
+                  。
+                </p>
+              )}
               <p style={{ margin: '0 0 8px' }}>
-                查询区间 {range[0].format('YYYY-MM-DD')} ~ {range[1].format('YYYY-MM-DD')} 内，有{' '}
-                <strong>{adSpendCoverage.missingDayCount}</strong> 天没有 Sheet 广告数据
-                {adSpendCoverage.hasLeadingGap && adSpendCoverage.firstDateWithData
-                  ? `（最早有数据日为 ${adSpendCoverage.firstDateWithData}）`
-                  : ''}
-                。平台汇总 ${' '}
-                {adSpendCoverage.totalCost.toFixed(2)}，可能低于 Google Ads。
+                库内合计 ${adSpendCoverage.totalCost.toFixed(2)}
+                {adSpendCoverage.sheetTotalCost != null && (
+                  <>
+                    ，Sheet 合计 ${adSpendCoverage.sheetTotalCost.toFixed(2)}
+                    {Math.abs(adSpendCoverage.sheetDbGap ?? 0) < 0.05
+                      ? '（与库内一致）'
+                      : ''}
+                  </>
+                )}
+                。
               </p>
-              <p style={{ margin: 0, color: '#666' }}>
-                缺失日期：
-                {adSpendCoverage.missingDates.slice(0, 8).join('、')}
-                {adSpendCoverage.missingDates.length > 8 ? '…' : ''}
-                。请用「导入 Sheet（当前查询区间）」或广告数据源「自定义日期」重新导入；
-                并确认 Google Sheet 脚本 lookback 已覆盖这些日期。
-              </p>
+              {adSpendCoverage.likelySheetStale && (
+                <p style={{ margin: '0 0 8px', color: '#666' }}>
+                  近期区间（如 6.11–6.17）能对上、拉长后偏低，通常是 Sheet 脚本回溯重采时漏掉了
+                  <strong>已移除广告</strong> 的历史花费。请：① 更新 Sheet 脚本并重新部署；
+                  ② 将 <code>lookback_days</code> 调到 ≥ 查询天数（如 17）后手动运行 main()；
+                  ③ 再点「导入 Sheet（当前查询区间）」。
+                </p>
+              )}
+              {adSpendCoverage.missingDayCount > 0 && (
+                <p style={{ margin: 0, color: '#666' }}>
+                  缺失日期：
+                  {adSpendCoverage.missingDates.slice(0, 8).join('、')}
+                  {adSpendCoverage.missingDates.length > 8 ? '…' : ''}
+                </p>
+              )}
             </div>
           }
         />

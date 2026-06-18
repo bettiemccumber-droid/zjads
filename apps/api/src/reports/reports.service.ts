@@ -1,4 +1,5 @@
 import { Injectable } from '@nestjs/common';
+import axios from 'axios';
 import { dedupeAffiliateOrderKey } from '../common/order-dedupe.util';
 import { buildOrderDateRangeFilter } from '../common/order-date-range.util';
 import { resolveOrderCommissionBuckets } from '../common/order-commission-buckets.util';
@@ -12,6 +13,7 @@ import { resolveCampaignGroupKey } from '../common/campaign-group.util';
 import { suggestOperation } from '../common/operation-suggest.util';
 import { AuthUser, resolveOwnerUserId } from '../common/ownership.util';
 import { isLbClickPseudoMerchant } from '../collectors/linkbux-clicks';
+import { buildSheetCsvUrl, parseAdSheetCsv } from '../ad-sources/sheet-parser.util';
 import { PrismaService } from '../prisma/prisma.service';
 
 export interface ReportDateQuery {
@@ -1592,10 +1594,39 @@ export class ReportsService {
     const firstDateWithData = daily.find((d) => d.rowCount > 0)?.date ?? null;
     const lastDateWithData = [...daily].reverse().find((d) => d.rowCount > 0)?.date ?? null;
 
+    let sheetTotalCost: number | null = null;
+    let sheetRowCount = 0;
+    const sources = await this.prisma.adDataSource.findMany({
+      where: { ownerUserId: ownerId, isActive: true },
+      orderBy: { updatedAt: 'desc' },
+      take: 1,
+    });
+    if (sources.length) {
+      try {
+        const csvUrl = buildSheetCsvUrl(sources[0].sheetId, sources[0].mainTab);
+        const res = await axios.get<string>(csvUrl, {
+          timeout: 120000,
+          responseType: 'text',
+          headers: { 'User-Agent': 'ZJADS/1.0' },
+        });
+        let sheetRows = parseAdSheetCsv(res.data).filter(
+          (r) => r.date >= q.startDate && r.date <= q.endDate,
+        );
+        sheetRowCount = sheetRows.length;
+        sheetTotalCost = sheetRows.reduce((acc, r) => acc + r.cost, 0);
+      } catch {
+        sheetTotalCost = null;
+      }
+    }
+
     return {
       startDate: q.startDate,
       endDate: q.endDate,
       totalCost,
+      sheetTotalCost,
+      sheetRowCount,
+      sheetDbGap:
+        sheetTotalCost != null ? Math.round((sheetTotalCost - totalCost) * 100) / 100 : null,
       daily,
       missingDates,
       missingDayCount: missingDates.length,
@@ -1605,6 +1636,12 @@ export class ReportsService {
       importedMaxDate: bounds._max.date?.toISOString().slice(0, 10) ?? null,
       hasLeadingGap: firstDateWithData != null && firstDateWithData > q.startDate,
       hasTrailingGap: lastDateWithData != null && lastDateWithData < q.endDate,
+      /** Sheet 与库内一致但查询跨度较长时，提示重跑脚本补早期花费 */
+      likelySheetStale:
+        sheetTotalCost != null &&
+        Math.abs(sheetTotalCost - totalCost) < 0.05 &&
+        missingDates.length === 0 &&
+        allDates.length > 7,
     };
   }
 }

@@ -158,6 +158,21 @@ interface CampaignTotals {
 
 }
 
+interface AdSpendCoverage {
+  totalCost: number;
+  sheetTotalCost: number | null;
+  monthlySheetTotal: number | null;
+  hasMonthlyCostTab: boolean;
+  monthlyDetailGap: number | null;
+  sheetDbGap: number | null;
+  missingDates: string[];
+  missingDayCount: number;
+  firstDateWithData: string | null;
+  hasLeadingGap: boolean;
+  likelySheetStale: boolean;
+  hasMonthlyDetailGap: boolean;
+}
+
 
 
 function roiColor(v: number) {
@@ -246,20 +261,7 @@ export default function DashboardPage() {
   } | null>(null);
   const [importingSheet, setImportingSheet] = useState(false);
 
-  const [adSpendCoverage, setAdSpendCoverage] = useState<{
-    totalCost: number;
-    sheetTotalCost: number | null;
-    monthlySheetTotal: number | null;
-    hasMonthlyCostTab: boolean;
-    monthlyDetailGap: number | null;
-    sheetDbGap: number | null;
-    missingDates: string[];
-    missingDayCount: number;
-    firstDateWithData: string | null;
-    hasLeadingGap: boolean;
-    likelySheetStale: boolean;
-    hasMonthlyDetailGap: boolean;
-  } | null>(null);
+  const [adSpendCoverage, setAdSpendCoverage] = useState<AdSpendCoverage | null>(null);
 
   const [range, setRange] = useState<[Dayjs, Dayjs]>([
 
@@ -427,22 +429,10 @@ export default function DashboardPage() {
 
   useEffect(() => {
     void (async () => {
-      const { data } = await api.get<
-        ApiResult<{
-          totalCost: number;
-          sheetTotalCost: number | null;
-          monthlySheetTotal: number | null;
-          hasMonthlyCostTab: boolean;
-          monthlyDetailGap: number | null;
-          sheetDbGap: number | null;
-          missingDates: string[];
-          missingDayCount: number;
-          firstDateWithData: string | null;
-          hasLeadingGap: boolean;
-          likelySheetStale: boolean;
-          hasMonthlyDetailGap: boolean;
-        }>
-      >('/reports/ad-spend-coverage', { params: dateParams });
+      const { data } = await api.get<ApiResult<AdSpendCoverage>>(
+        '/reports/ad-spend-coverage',
+        { params: dateParams },
+      );
       if (data.success) setAdSpendCoverage(data.data);
     })();
   }, [dateParams]);
@@ -555,24 +545,16 @@ export default function DashboardPage() {
         if (data.data.success > 0) {
           message.success('Sheet 导入完成，正在刷新报表');
           void loadReport();
-          const covRes = await api.get<
-            ApiResult<{
-              totalCost: number;
-              sheetTotalCost: number | null;
-              sheetDbGap: number | null;
-              missingDates: string[];
-              missingDayCount: number;
-              firstDateWithData: string | null;
-              hasLeadingGap: boolean;
-              likelySheetStale: boolean;
-            }>
-          >('/reports/ad-spend-coverage', {
-            params: {
-              startDate: range[0].format('YYYY-MM-DD'),
-              endDate: range[1].format('YYYY-MM-DD'),
-              userId: viewUserId,
+          const covRes = await api.get<ApiResult<AdSpendCoverage>>(
+            '/reports/ad-spend-coverage',
+            {
+              params: {
+                startDate: range[0].format('YYYY-MM-DD'),
+                endDate: range[1].format('YYYY-MM-DD'),
+                userId: viewUserId,
+              },
             },
-          });
+          );
           if (covRes.data.success) setAdSpendCoverage(covRes.data.data);
         } else {
           message.error('Sheet 导入失败，请检查员工是否已配置 Sheet');
@@ -639,18 +621,11 @@ export default function DashboardPage() {
 
           void loadReport();
           void (async () => {
-            const { data } = await api.get<
-              ApiResult<{
-                totalCost: number;
-                sheetTotalCost: number | null;
-                monthlySheetTotal: number | null;
-                monthlyDetailGap: number | null;
-                hasMonthlyDetailGap: boolean;
-                likelySheetStale: boolean;
-                missingDayCount: number;
-              }>
-            >('/reports/ad-spend-coverage', { params: dateParams });
-            if (data.success) setAdSpendCoverage(data.data as typeof adSpendCoverage);
+            const { data } = await api.get<ApiResult<AdSpendCoverage>>(
+              '/reports/ad-spend-coverage',
+              { params: dateParams },
+            );
+            if (data.success) setAdSpendCoverage(data.data);
           })();
 
         }

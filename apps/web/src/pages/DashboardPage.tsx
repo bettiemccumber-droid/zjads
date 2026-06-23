@@ -58,6 +58,7 @@ const SYNC_PLATFORM_SHORT: Record<string, string> = {
   partnermatic: 'PM',
   linkhaitao: 'LH',
   linkbux: 'LB',
+  rewardoo: 'RW',
 };
 
 interface MerchantRow {
@@ -191,6 +192,7 @@ function inferPlatformFromAlias(alias: string): string {
   if (a.startsWith('lh')) return 'LinkHaitao';
   if (a.startsWith('pm')) return 'PartnerMatic';
   if (a.startsWith('lb')) return 'LinkBux';
+  if (a.startsWith('rw')) return 'Rewardoo';
   return '';
 }
 
@@ -380,7 +382,7 @@ export default function DashboardPage() {
 
     const picks: SyncAccountPick[] = [];
     for (const g of data.data) {
-      if (!['partnermatic', 'linkhaitao', 'linkbux'].includes(g.platformCode)) {
+      if (!['partnermatic', 'linkhaitao', 'linkbux', 'rewardoo'].includes(g.platformCode)) {
         continue;
       }
       for (const a of g.accounts) {
@@ -1173,12 +1175,12 @@ export default function DashboardPage() {
           />
         ) : (
           <Typography.Text type="secondary" className="sync-collect-hint" style={{ display: 'block' }}>
-            请先在「我的平台账号」添加并启用 PM / LH / LB 账号
+            请先在「我的平台账号」添加并启用 PM / LH / LB / RW 账号
           </Typography.Text>
         )}
 
         <p className="sync-collect-hint">
-          已接入 PM / LH / LB 订单与联盟点击。PM/LH 点击随订单区间采集；LB 点击仅采区间<strong>最后一天</strong>，更早日期请用「点击校准导入」。
+          已接入 PM / LH / LB / RW 订单；PM/LH 点击随订单区间采集；LB 点击仅采区间<strong>最后一天</strong>，更早日期请用「点击校准导入」。RW 暂无点击 API。
           {viewUserId
             ? ' Google Ads 广告费请在上方「导入 Sheet」或侧边栏「广告数据源」中代员工导入。'
             : ' Google Ads 请在「广告数据源」导入 Sheet。'}

@@ -109,6 +109,11 @@
   background: #ccfbf1;
 }
 
+.sync-platform-badge.rewardoo {
+  color: #c2410c;
+  background: #ffedd5;
+}
+
 .sync-account-name {
   font-size: 14px;
   font-weight: 600;

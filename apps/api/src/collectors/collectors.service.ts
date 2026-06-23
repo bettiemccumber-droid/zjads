@@ -23,6 +23,11 @@ import {
 } from './linkbux.collector';
 import { buildLbMcidToMidMap, fetchLinkBuxClicks } from './linkbux-clicks';
 import { fetchLinkHaitaoClicks, buildLhMcidToMidMap } from './linkhaitao-clicks';
+import {
+  fetchRewardooCommissions,
+  normalizeRewardooOrders,
+  summarizeRwCommissionApi,
+} from './rewardoo.collector';
 import { ensurePlatformStatusMappings } from '../common/platform-status-defaults.util';
 import {
   collectorNotReadyMessage,
@@ -48,6 +53,11 @@ export interface CollectResultWithPmMeta extends CollectResult {
     totalCommission: number;
   };
   lbApi?: {
+    apiListRows: number;
+    orderCount: number;
+    totalCommission: number;
+  };
+  rwApi?: {
     apiListRows: number;
     orderCount: number;
     totalCommission: number;
@@ -93,6 +103,7 @@ export class CollectorsService {
     let pmApi: CollectResultWithPmMeta['pmApi'];
     let lhApi: CollectResultWithPmMeta['lhApi'];
     let lbApi: CollectResultWithPmMeta['lbApi'];
+    let rwApi: CollectResultWithPmMeta['rwApi'];
     let pmClickTotal: number | undefined;
     let lhClickTotal: number | undefined;
     let lbClickTotal: number | undefined;
@@ -192,6 +203,19 @@ export class CollectorsService {
         }
         break;
       }
+      case 'rewardoo': {
+        const raw = await fetchRewardooCommissions(
+          apiToken,
+          startDate,
+          endDate,
+          async (chunkIndex, totalChunks) => {
+            await onProgress?.(`RW 佣金 ${chunkIndex}/${totalChunks} 段…`);
+          },
+        );
+        rwApi = summarizeRwCommissionApi(raw);
+        normalized = normalizeRewardooOrders(raw, mappings);
+        break;
+      }
       default:
         throw new BadRequestException(
           collectorNotReadyMessage(account.platform.name, account.platform.code),
@@ -207,6 +231,7 @@ export class CollectorsService {
       lhApi,
       lhClickTotal,
       lbApi,
+      rwApi,
       lbClickTotal,
       lbClickEstimatedDays,
       lbClickCollectDate,

@@ -31,6 +31,12 @@ const LB_DEFAULTS: StatusMapping[] = [
   { raw: 'REJECTED', norm: NormalizedStatus.rejected },
 ];
 
+const RW_DEFAULTS: StatusMapping[] = [
+  { raw: 'approved', norm: NormalizedStatus.approved },
+  { raw: 'Approved', norm: NormalizedStatus.approved },
+  { raw: 'APPROVED', norm: NormalizedStatus.approved },
+];
+
 /**
  * 各平台默认订单状态映射（与 prisma/seed 一致）
  */
@@ -42,6 +48,8 @@ export function defaultStatusMappingsForPlatform(platformCode: string): StatusMa
       return LH_DEFAULTS;
     case 'linkbux':
       return LB_DEFAULTS;
+    case 'rewardoo':
+      return RW_DEFAULTS;
     default:
       return PM_DEFAULTS.slice(0, 4);
   }

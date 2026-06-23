@@ -34,5 +34,6 @@ export function inferPlatformNameFromAlias(alias: string): string {
   if (a.startsWith('lh')) return 'LinkHaitao';
   if (a.startsWith('pm')) return 'PartnerMatic';
   if (a.startsWith('lb')) return 'LinkBux';
+  if (a.startsWith('rw')) return 'Rewardoo';
   return '';
 }

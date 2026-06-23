@@ -209,7 +209,7 @@ export class CollectorsService {
           startDate,
           endDate,
           async (chunkIndex, totalChunks) => {
-            await onProgress?.(`RW 佣金 ${chunkIndex}/${totalChunks} 段…`);
+            await onProgress?.(`RW 订单 ${chunkIndex}/${totalChunks} 段…`);
           },
         );
         rwApi = summarizeRwCommissionApi(raw);

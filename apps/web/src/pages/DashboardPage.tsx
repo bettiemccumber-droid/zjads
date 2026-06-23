@@ -1180,7 +1180,7 @@ export default function DashboardPage() {
         )}
 
         <p className="sync-collect-hint">
-          已接入 PM / LH / LB / RW 订单；PM/LH 点击随订单区间采集；LB 点击仅采区间<strong>最后一天</strong>，更早日期请用「点击校准导入」。RW 暂无点击 API。
+          已接入 PM / LH / LB / RW 订单；PM/LH 点击随订单区间采集；LB 点击仅采区间<strong>最后一天</strong>，更早日期请用「点击校准导入」。RW 按 TransactionDetails（交易日期）拉单，暂无点击 API。
           {viewUserId
             ? ' Google Ads 广告费请在上方「导入 Sheet」或侧边栏「广告数据源」中代员工导入。'
             : ' Google Ads 请在「广告数据源」导入 Sheet。'}

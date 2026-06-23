@@ -1,6 +1,8 @@
 export interface ParsedCampaignName {
   affiliateAlias: string;
   merchantId: string;
+  /** 系列名第三段，如 BODi */
+  merchantSlug: string;
 }
 
 /**
@@ -10,10 +12,11 @@ export interface ParsedCampaignName {
 export function parseCampaignName(name: string): ParsedCampaignName {
   const parts = name.split('-').map((p) => p.trim()).filter(Boolean);
   if (parts.length < 2) {
-    return { affiliateAlias: '', merchantId: '' };
+    return { affiliateAlias: '', merchantId: '', merchantSlug: '' };
   }
 
   const affiliateAlias = parts[1].toLowerCase();
+  const merchantSlug = parts.length >= 3 ? parts[2].toLowerCase() : '';
   let merchantId = '';
   for (let i = parts.length - 1; i >= 0; i -= 1) {
     const segment = parts[i];
@@ -23,7 +26,7 @@ export function parseCampaignName(name: string): ParsedCampaignName {
     }
   }
 
-  return { affiliateAlias, merchantId };
+  return { affiliateAlias, merchantId, merchantSlug };
 }
 
 /**

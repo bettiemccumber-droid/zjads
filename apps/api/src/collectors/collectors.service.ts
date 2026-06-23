@@ -63,6 +63,7 @@ export interface CollectResultWithPmMeta extends CollectResult {
     totalCommission: number;
     apiSource: string;
     triedSources?: string[];
+    sampleOrder?: { merchantId: string | null; orderDate: string; merchantName: string | null };
   };
   /** 区间内联盟后台点击汇总（刷量监控，不参与广告转化率） */
   pmClickTotal?: number;

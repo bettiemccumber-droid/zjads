@@ -43,6 +43,8 @@ type AffiliateMetrics = {
 type AffiliateMetricsIndex = {
   byKey: Map<string, AffiliateMetrics>;
   byMerchantId: Map<string, AffiliateMetrics>;
+  /** RW：mcid slug + alias */
+  bySlugKey: Map<string, AffiliateMetrics>;
 };
 
 const EMPTY_AFFILIATE: AffiliateMetrics = {
@@ -434,6 +436,7 @@ export class ReportsService {
           affiliateMetrics,
           r.merchantId,
           r.affiliateAlias,
+          parseCampaignName(r.campaignName).merchantSlug,
         );
         const cost = r.cost;
         const commission = affiliate.commission;
@@ -575,6 +578,7 @@ export class ReportsService {
             merchantId,
             alias,
             dateStr,
+            parsed.merchantSlug,
           );
           const cost = Number(ad.cost);
           const clicks = ad.clicks;
@@ -674,9 +678,10 @@ export class ReportsService {
   ): Promise<AffiliateMetricsIndex> {
     const byKey = new Map<string, AffiliateMetrics>();
     const byMerchantId = new Map<string, AffiliateMetrics>();
+    const bySlugKey = new Map<string, AffiliateMetrics>();
 
     if (!accountIds.length) {
-      return { byKey, byMerchantId };
+      return { byKey, byMerchantId, bySlugKey };
     }
 
     const ensure = (map: Map<string, AffiliateMetrics>, key: string) => {
@@ -697,21 +702,34 @@ export class ReportsService {
     for (const o of orders) {
       const merchantId = o.merchantId ?? '';
       const alias = (o.channelAccount.affiliateAlias || '').toLowerCase();
+      const slug = (o.merchantSlug || '').toLowerCase();
       const merchantKey = `${merchantId}|${alias}`;
+      const slugKey = slug ? `${slug}|${alias}` : '';
       const orderKey = `${o.channelAccountId}|${dedupeAffiliateOrderKey(o.externalOrderId)}`;
       const comm = Number(o.commission);
 
-      ensure(byKey, merchantKey).commission += comm;
-      ensure(byMerchantId, merchantId).commission += comm;
+      if (merchantId) {
+        ensure(byKey, merchantKey).commission += comm;
+        ensure(byMerchantId, merchantId).commission += comm;
+      }
+      if (slugKey) {
+        ensure(bySlugKey, slugKey).commission += comm;
+      }
 
-      if (!orderSeenByKey.has(orderKey)) {
+      if (merchantId && !orderSeenByKey.has(orderKey)) {
         orderSeenByKey.add(orderKey);
         ensure(byKey, merchantKey).orderCount += 1;
       }
-      const midOrderKey = `${merchantId}|${orderKey}`;
-      if (!orderSeenByMerchant.has(midOrderKey)) {
-        orderSeenByMerchant.add(midOrderKey);
-        ensure(byMerchantId, merchantId).orderCount += 1;
+      if (merchantId) {
+        const midOrderKey = `${merchantId}|${orderKey}`;
+        if (!orderSeenByMerchant.has(midOrderKey)) {
+          orderSeenByMerchant.add(midOrderKey);
+          ensure(byMerchantId, merchantId).orderCount += 1;
+        }
+      }
+      if (slugKey && !orderSeenByKey.has(`${slugKey}|${orderKey}`)) {
+        orderSeenByKey.add(`${slugKey}|${orderKey}`);
+        ensure(bySlugKey, slugKey).orderCount += 1;
       }
     }
 
@@ -732,12 +750,8 @@ export class ReportsService {
       ensure(byMerchantId, merchantId).affiliateClicks += c.clicks;
     }
 
-    return { byKey, byMerchantId };
+    return { byKey, byMerchantId, bySlugKey };
   }
-
-  /**
-   * 按商家+联盟序号+自然日汇总联盟订单与点击
-   */
   private async buildAffiliateMetricsByMerchantDay(
     accountIds: number[],
     startDate: string,
@@ -745,12 +759,14 @@ export class ReportsService {
   ): Promise<{
     byKey: Map<string, AffiliateMetrics>;
     byMerchantDay: Map<string, AffiliateMetrics>;
+    bySlugDay: Map<string, AffiliateMetrics>;
   }> {
     const byKey = new Map<string, AffiliateMetrics>();
     const byMerchantDay = new Map<string, AffiliateMetrics>();
+    const bySlugDay = new Map<string, AffiliateMetrics>();
 
     if (!accountIds.length) {
-      return { byKey, byMerchantDay };
+      return { byKey, byMerchantDay, bySlugDay };
     }
 
     const ensureKey = (map: Map<string, AffiliateMetrics>, key: string) => {
@@ -770,16 +786,21 @@ export class ReportsService {
     const orderSeenByMerchantDay = new Set<string>();
     for (const o of orders) {
       const merchantId = o.merchantId ?? '';
-      if (!merchantId) continue;
+      const slug = (o.merchantSlug || '').toLowerCase();
+      if (!merchantId && !slug) continue;
       const alias = (o.channelAccount.affiliateAlias || '').toLowerCase();
       const dateStr = o.orderDate.toISOString().slice(0, 10);
       const dayKey = `${merchantId}|${alias}|${dateStr}`;
       const merchantDayKey = `${merchantId}|${dateStr}`;
+      const slugDayKey = slug ? `${slug}|${alias}|${dateStr}` : '';
       const orderKey = `${o.channelAccountId}|${dedupeAffiliateOrderKey(o.externalOrderId)}`;
       const comm = Number(o.commission);
 
       ensureKey(byKey, dayKey).commission += comm;
       ensureKey(byMerchantDay, merchantDayKey).commission += comm;
+      if (slugDayKey) {
+        ensureKey(bySlugDay, slugDayKey).commission += comm;
+      }
 
       if (!orderSeenByKey.has(`${dayKey}|${orderKey}`)) {
         orderSeenByKey.add(`${dayKey}|${orderKey}`);
@@ -789,6 +810,10 @@ export class ReportsService {
       if (!orderSeenByMerchantDay.has(midOrderKey)) {
         orderSeenByMerchantDay.add(midOrderKey);
         ensureKey(byMerchantDay, merchantDayKey).orderCount += 1;
+      }
+      if (slugDayKey && !orderSeenByKey.has(`${slugDayKey}|${orderKey}`)) {
+        orderSeenByKey.add(`${slugDayKey}|${orderKey}`);
+        ensureKey(bySlugDay, slugDayKey).orderCount += 1;
       }
     }
 
@@ -811,28 +836,51 @@ export class ReportsService {
       ensureKey(byMerchantDay, merchantDayKey).affiliateClicks += c.clicks;
     }
 
-    return { byKey, byMerchantDay };
+    return { byKey, byMerchantDay, bySlugDay };
   }
 
   private lookupAffiliateMetricsForDay(
-    index: { byKey: Map<string, AffiliateMetrics>; byMerchantDay: Map<string, AffiliateMetrics> },
+    index: {
+      byKey: Map<string, AffiliateMetrics>;
+      byMerchantDay: Map<string, AffiliateMetrics>;
+      bySlugDay: Map<string, AffiliateMetrics>;
+    },
     merchantId: string,
     alias: string,
     dateStr: string,
+    merchantSlug = '',
   ): AffiliateMetrics {
-    if (!merchantId) return { ...EMPTY_AFFILIATE };
+    if (!merchantId && !merchantSlug) return { ...EMPTY_AFFILIATE };
     const campaignAlias = (alias || '').toLowerCase();
-    const exact = index.byKey.get(`${merchantId}|${campaignAlias}|${dateStr}`);
-    if (exact) return exact;
+    const slug = merchantSlug.toLowerCase();
 
-    /** PM/LB/LH/RW：精确 merchantId+alias 未命中时，回退到同商家合计（账号序号与系列序号可能不一致） */
+    if (merchantId) {
+      const exact = index.byKey.get(`${merchantId}|${campaignAlias}|${dateStr}`);
+      if (exact) return exact;
+    }
+
+    if (campaignAlias.startsWith('rw') && slug) {
+      const slugHit = index.bySlugDay.get(`${slug}|${campaignAlias}|${dateStr}`);
+      if (slugHit) return slugHit;
+    }
+
+    /** PM/LB/LH/RW：精确 merchantId+alias 未命中时，回退到同商家当日合计 */
     if (
-      campaignAlias.startsWith('pm') ||
-      campaignAlias.startsWith('lb') ||
-      campaignAlias.startsWith('lh') ||
-      campaignAlias.startsWith('rw')
+      merchantId &&
+      (campaignAlias.startsWith('pm') ||
+        campaignAlias.startsWith('lb') ||
+        campaignAlias.startsWith('lh') ||
+        campaignAlias.startsWith('rw'))
     ) {
       return index.byMerchantDay.get(`${merchantId}|${dateStr}`) ?? { ...EMPTY_AFFILIATE };
+    }
+
+    if (campaignAlias.startsWith('rw') && slug) {
+      for (const [key, metrics] of index.bySlugDay) {
+        if (key.endsWith(`|${campaignAlias}|${dateStr}`) && key.startsWith(`${slug}|`)) {
+          return metrics;
+        }
+      }
     }
 
     return { ...EMPTY_AFFILIATE };
@@ -883,6 +931,7 @@ export class ReportsService {
         merchantId,
         alias,
         dateStr,
+        parsed.merchantSlug,
       );
       const cost = Number(ad.cost);
       const clicks = ad.clicks;
@@ -1084,6 +1133,7 @@ export class ReportsService {
           meta.merchantId,
           meta.affiliateAlias,
           dateStr,
+          parseCampaignName(meta.campaignName).merchantSlug,
         );
         if (
           affiliate.orderCount <= 0 &&
@@ -1224,7 +1274,12 @@ export class ReportsService {
       }
       seen.add(physicalKey);
 
-      const affiliate = this.lookupAffiliateMetrics(affiliateMetrics, merchantId, alias);
+      const affiliate = this.lookupAffiliateMetrics(
+        affiliateMetrics,
+        merchantId,
+        alias,
+        parsed.merchantSlug,
+      );
       if (affiliate.orderCount === 0 && affiliate.commission === 0) continue;
 
       map.set(groupKey, {
@@ -1419,17 +1474,27 @@ export class ReportsService {
     index: AffiliateMetricsIndex,
     merchantId: string,
     alias: string,
+    merchantSlug = '',
   ): AffiliateMetrics {
-    if (!merchantId) return { ...EMPTY_AFFILIATE };
     const campaignAlias = (alias || '').toLowerCase();
-    const exact = index.byKey.get(`${merchantId}|${campaignAlias}`);
-    if (exact) return exact;
+    const slug = merchantSlug.toLowerCase();
+
+    if (merchantId) {
+      const exact = index.byKey.get(`${merchantId}|${campaignAlias}`);
+      if (exact) return exact;
+    }
+
+    if (campaignAlias.startsWith('rw') && slug) {
+      const slugHit = index.bySlugKey.get(`${slug}|${campaignAlias}`);
+      if (slugHit) return slugHit;
+    }
 
     if (
-      campaignAlias.startsWith('pm') ||
-      campaignAlias.startsWith('lb') ||
-      campaignAlias.startsWith('lh') ||
-      campaignAlias.startsWith('rw')
+      merchantId &&
+      (campaignAlias.startsWith('pm') ||
+        campaignAlias.startsWith('lb') ||
+        campaignAlias.startsWith('lh') ||
+        campaignAlias.startsWith('rw'))
     ) {
       return index.byMerchantId.get(merchantId) ?? { ...EMPTY_AFFILIATE };
     }

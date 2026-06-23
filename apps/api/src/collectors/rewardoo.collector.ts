@@ -1,5 +1,8 @@
 import { NormalizedStatus, PlatformStatusMapping } from '@prisma/client';
-import { parseAffiliateOrderDateUtc8 } from '../common/affiliate-order-date.util';
+import {
+  parseAffiliateOrderDateUtc,
+  parseAffiliateOrderDateUtc8,
+} from '../common/affiliate-order-date.util';
 import {
   fetchRewardooCommissionData,
   RwCommissionOp,
@@ -16,6 +19,9 @@ export interface RwCommissionRow {
   txn_id?: string | number;
   m_id?: string | number;
   mid?: string | number;
+  mcid?: string | number;
+  brand_id?: string | number;
+  norm_id?: string | number;
   merchant_id?: string | number;
   merchant_name?: string;
   advertiser_name?: string;
@@ -48,6 +54,8 @@ export interface RwCommissionTotals {
   orderCount: number;
   totalCommission: number;
   apiSource: string;
+  /** 首单诊断：入库 merchantId / orderDate */
+  sampleOrder?: { merchantId: string | null; orderDate: string; merchantName: string | null };
 }
 
 export interface RwFetchBundle {
@@ -122,6 +130,7 @@ export function normalizeRewardooOrders(
     mergeRwOrder(map, externalOrderId, {
       merchantId,
       merchantName,
+      merchantSlug: resolveRwMerchantSlug(row),
       orderAmount,
       commission,
       rawStatus,
@@ -142,11 +151,19 @@ export function summarizeRwCommissionApi(
 ): RwCommissionTotals {
   const normalized = normalizeRewardooOrders(rows, [], range);
   const totalCommission = normalized.reduce((s, o) => s + o.commission, 0);
+  const first = normalized[0];
   return {
     apiListRows: rows.length,
     orderCount: normalized.length,
     totalCommission: Math.round(totalCommission * 100) / 100,
     apiSource: source,
+    sampleOrder: first
+      ? {
+          merchantId: first.merchantId,
+          orderDate: first.orderDate.toISOString().slice(0, 10),
+          merchantName: first.merchantName,
+        }
+      : undefined,
   };
 }
 
@@ -174,6 +191,7 @@ function expandAggregateOrders(
     mergeRwOrder(map, externalOrderId, {
       merchantId,
       merchantName,
+      merchantSlug: resolveRwMerchantSlug(row),
       orderAmount: perAmount,
       commission: perComm,
       rawStatus,
@@ -187,7 +205,7 @@ function expandAggregateOrders(
 function mergeRwOrder(
   map: Map<string, NormalizedOrder>,
   externalOrderId: string,
-  next: Omit<NormalizedOrder, 'externalOrderId' | 'merchantSlug' | 'productId' | 'currency'>,
+  next: Omit<NormalizedOrder, 'externalOrderId' | 'productId' | 'currency'>,
 ) {
   const existing = map.get(externalOrderId);
   if (existing) {
@@ -211,7 +229,7 @@ function mergeRwOrder(
     externalOrderId,
     merchantId: next.merchantId,
     merchantName: next.merchantName,
-    merchantSlug: null,
+    merchantSlug: next.merchantSlug,
     productId: null,
     orderAmount: next.orderAmount,
     commission: next.commission,
@@ -255,11 +273,26 @@ function parseOrderCount(row: RwCommissionRow): number {
   return Number.isFinite(n) && n > 0 ? n : 1;
 }
 
-/** 解析 RW 商家 ID */
+/** 解析 RW 商家 ID（与 affiliate 现网一致：优先 mid / m_id） */
 function resolveRwMerchantId(row: RwCommissionRow): string | null {
-  const raw = row.m_id ?? row.mid ?? row.merchant_id;
-  if (raw == null || String(raw).trim() === '') return null;
-  return String(raw).trim();
+  for (const key of ['mid', 'm_id', 'merchant_id', 'brand_id', 'norm_id'] as const) {
+    const raw = row[key];
+    if (raw == null || String(raw).trim() === '') continue;
+    return String(raw).trim();
+  }
+  const mcid = row.mcid;
+  if (mcid != null && /^\d+$/.test(String(mcid).trim())) {
+    return String(mcid).trim();
+  }
+  return null;
+}
+
+/** RW 商家 slug（mcid，用于与广告系列名中段对齐） */
+function resolveRwMerchantSlug(row: RwCommissionRow): string | null {
+  const mcid = row.mcid;
+  if (mcid == null || String(mcid).trim() === '') return null;
+  const s = String(mcid).trim().toLowerCase();
+  return /^\d+$/.test(s) ? null : s;
 }
 
 /** RW 原始状态 → 可读字符串 */
@@ -274,27 +307,33 @@ function normalizeRwRawStatus(raw: string | number | undefined): string {
   return 'Pending';
 }
 
-/** 解析 RW 订单日期（优先交易日期字段） */
+/**
+ * 解析 RW 订单日期（与 affiliate transaction_details 一致）
+ * 1. 优先 YYYY-MM-DD 字符串
+ * 2. order_time 时间戳按 UTC 自然日（非 UTC+8）
+ */
 function parseRwOrderDate(row: RwCommissionRow, fallbackDate?: string): Date {
   for (const key of [
-    'order_time',
-    'transaction_time',
     'order_ymd',
     'transaction_date',
     'validation_date',
     'date',
     'ymd',
+    'payment_ymd',
   ] as const) {
     const v = row[key];
-    if (v != null && String(v).trim()) {
-      return parseAffiliateOrderDateUtc8(v);
-    }
+    if (v == null || String(v).trim() === '' || String(v) === 'null') continue;
+    return parseAffiliateOrderDateUtc(v);
   }
-  if (row.payment_ymd) {
-    return parseAffiliateOrderDateUtc8(row.payment_ymd);
+
+  for (const key of ['order_time', 'transaction_time'] as const) {
+    const v = row[key];
+    if (v == null || String(v).trim() === '') continue;
+    return parseAffiliateOrderDateUtc(v);
   }
+
   if (fallbackDate) {
-    return parseAffiliateOrderDateUtc8(fallbackDate);
+    return parseAffiliateOrderDateUtc(fallbackDate);
   }
   return new Date();
 }

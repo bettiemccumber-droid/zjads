@@ -399,6 +399,10 @@ export class SyncService implements OnModuleInit {
             ? ` · ${result.rwApi.apiSource}`
             : '';
         let rwMsg = `RW API ${result.rwApi.apiListRows} 行 → ${result.rwApi.orderCount} 单 / $${result.rwApi.totalCommission.toFixed(2)}${src}`;
+        if (result.rwApi.sampleOrder) {
+          const s = result.rwApi.sampleOrder;
+          rwMsg += `（首单 mid=${s.merchantId ?? '空'} 日期=${s.orderDate}${s.merchantName ? ` ${s.merchantName}` : ''}）`;
+        }
         if (result.rwApi.apiListRows === 0) {
           rwMsg +=
             '（全部接口为空，请核对 Token 是否为 Rewardoo 后台 Performance 有数据站点的 API Token，并确认 mod=medium/transaction_details 可用）';

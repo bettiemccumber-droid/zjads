@@ -825,12 +825,13 @@ export class ReportsService {
     const exact = index.byKey.get(`${merchantId}|${campaignAlias}|${dateStr}`);
     if (exact) return exact;
 
-    if (campaignAlias.startsWith('pm')) {
-      return index.byMerchantDay.get(`${merchantId}|${dateStr}`) ?? { ...EMPTY_AFFILIATE };
-    }
-
-    /** LB/LH 按天：同商家同序号精确匹配，否则回退到商家当日合计（与 PM 一致） */
-    if (campaignAlias.startsWith('lb') || campaignAlias.startsWith('lh')) {
+    /** PM/LB/LH/RW：精确 merchantId+alias 未命中时，回退到同商家合计（账号序号与系列序号可能不一致） */
+    if (
+      campaignAlias.startsWith('pm') ||
+      campaignAlias.startsWith('lb') ||
+      campaignAlias.startsWith('lh') ||
+      campaignAlias.startsWith('rw')
+    ) {
       return index.byMerchantDay.get(`${merchantId}|${dateStr}`) ?? { ...EMPTY_AFFILIATE };
     }
 
@@ -1424,11 +1425,12 @@ export class ReportsService {
     const exact = index.byKey.get(`${merchantId}|${campaignAlias}`);
     if (exact) return exact;
 
-    if (campaignAlias.startsWith('pm')) {
-      return index.byMerchantId.get(merchantId) ?? { ...EMPTY_AFFILIATE };
-    }
-
-    if (campaignAlias.startsWith('lb') || campaignAlias.startsWith('lh')) {
+    if (
+      campaignAlias.startsWith('pm') ||
+      campaignAlias.startsWith('lb') ||
+      campaignAlias.startsWith('lh') ||
+      campaignAlias.startsWith('rw')
+    ) {
       return index.byMerchantId.get(merchantId) ?? { ...EMPTY_AFFILIATE };
     }
 

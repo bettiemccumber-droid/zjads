@@ -6,8 +6,11 @@ export const RW_API_BASE = 'https://admin.rewardoo.com/api.php';
 /** 文档：单次查询跨度不得超过 62 天 */
 export const RW_MAX_DAYS_PER_REQUEST = 62;
 
-/** TransactionDetails 默认分页大小 */
-export const RW_PAGE_SIZE = 500;
+/** TransactionDetails 默认分页大小（与 affiliate 现网一致） */
+export const RW_PAGE_SIZE = 1000;
+
+/** 订单明细主接口（affiliate 现网 / Rewardoo API Documents） */
+export const RW_TRANSACTION_DETAILS_OP = 'transaction_details';
 
 /** 按优先级尝试的佣金数据源（commission 模块，payment_begin/end） */
 export const RW_COMMISSION_OPS = [
@@ -112,11 +115,14 @@ export function parseRwApiEnvelope(body: unknown): {
   rows: unknown[];
   offset: number | null;
   pageSize: number | null;
+  totalPages: number | null;
 } {
   const root = body as Record<string, unknown>;
   const statusRaw = root.status;
   let code = -1;
-  if (typeof statusRaw === 'number') {
+  if (root.code === 0 || root.code === '0') {
+    code = 0;
+  } else if (typeof statusRaw === 'number') {
     code = statusRaw === 200 ? 0 : statusRaw;
   } else if (statusRaw && typeof statusRaw === 'object') {
     const status = statusRaw as RwApiStatus;
@@ -143,7 +149,28 @@ export function parseRwApiEnvelope(body: unknown): {
     rows,
     offset: typeof root.offset === 'number' ? root.offset : null,
     pageSize: typeof root.pageSize === 'number' ? root.pageSize : null,
+    totalPages: extractRwTotalPages(body),
   };
+}
+
+/** 从 data.total_page 等字段解析分页总数 */
+function extractRwTotalPages(body: unknown): number | null {
+  const root = body as Record<string, unknown>;
+  if (root.total_page != null) {
+    const n = Number(root.total_page);
+    return Number.isFinite(n) && n > 0 ? n : null;
+  }
+
+  const data = root.data;
+  if (data && typeof data === 'object' && !Array.isArray(data)) {
+    const nested = data as Record<string, unknown>;
+    if (nested.total_page != null) {
+      const n = Number(nested.total_page);
+      return Number.isFinite(n) && n > 0 ? n : null;
+    }
+  }
+
+  return null;
 }
 
 /** 从多种 JSON 结构中提取 list 数组 */
@@ -194,9 +221,9 @@ export async function postRewardooApi(
   if (typeof data === 'string') {
     const msg = data.trim();
     if (/token error/i.test(msg)) {
-      return { code: 1001, message: msg, rows: [], offset: null, pageSize: null };
+      return { code: 1001, message: msg, rows: [], offset: null, pageSize: null, totalPages: null };
     }
-    return { code: -1, message: msg, rows: [], offset: null, pageSize: null };
+    return { code: -1, message: msg, rows: [], offset: null, pageSize: null, totalPages: null };
   }
 
   return parseRwApiEnvelope(data);
@@ -328,7 +355,78 @@ export async function fetchRewardooPerformancePages(
 }
 
 /**
- * 依次尝试 commission / performance 模块，返回首个非空数据源
+ * 拉取 Rewardoo 订单明细（mod=medium&op=transaction_details，与 affiliate 现网一致）
+ */
+export async function fetchRewardooTransactionDetailPages(
+  apiToken: string,
+  startDate: string,
+  endDate: string,
+  onProgress?: (chunkIndex: number, totalChunks: number) => void | Promise<void>,
+): Promise<unknown[]> {
+  const chunks = buildRwDateChunks(startDate, endDate);
+  const all: unknown[] = [];
+
+  for (let i = 0; i < chunks.length; i += 1) {
+    await onProgress?.(i + 1, chunks.length);
+    const chunk = chunks[i];
+    const rows = await fetchRewardooTransactionDetailChunk(
+      apiToken,
+      chunk.begin,
+      chunk.end,
+    );
+    all.push(...rows);
+  }
+
+  return all;
+}
+
+async function fetchRewardooTransactionDetailChunk(
+  apiToken: string,
+  beginDate: string,
+  endDate: string,
+): Promise<unknown[]> {
+  const all: unknown[] = [];
+  let page = 1;
+  let totalPages = 1;
+
+  while (page <= totalPages && page <= 1000) {
+    const parsed = await postRewardooApi('medium', RW_TRANSACTION_DETAILS_OP, {
+      token: apiToken,
+      begin_date: beginDate,
+      end_date: endDate,
+      page: String(page),
+      limit: String(RW_PAGE_SIZE),
+    });
+
+    if (parsed.code === 1002) {
+      await sleep(65000);
+      continue;
+    }
+
+    if (parsed.code !== 0) {
+      throw new Error(
+        `Rewardoo medium/${RW_TRANSACTION_DETAILS_OP} API 错误 ${parsed.code}${parsed.message ? `: ${parsed.message}` : ''}`,
+      );
+    }
+
+    const rows = parsed.rows;
+    all.push(...rows);
+
+    if (parsed.totalPages != null) {
+      totalPages = parsed.totalPages;
+    } else if (!rows.length || rows.length < RW_PAGE_SIZE) {
+      break;
+    }
+
+    if (page >= totalPages) break;
+    page += 1;
+  }
+
+  return all;
+}
+
+/**
+ * 依次尝试 medium/transaction_details，再回退 commission / performance 模块
  */
 export async function fetchRewardooCommissionData(
   apiToken: string,
@@ -337,6 +435,26 @@ export async function fetchRewardooCommissionData(
   onProgress?: (message: string) => void | Promise<void>,
 ): Promise<RwFetchResult> {
   const triedSources: string[] = [];
+
+  const primaryLabel = `medium/${RW_TRANSACTION_DETAILS_OP}`;
+  triedSources.push(primaryLabel);
+  await onProgress?.(`RW ${primaryLabel} 拉取中…`);
+  try {
+    const rows = await fetchRewardooTransactionDetailPages(
+      apiToken,
+      startDate,
+      endDate,
+      async (chunkIndex, totalChunks) => {
+        await onProgress?.(`RW ${primaryLabel} ${chunkIndex}/${totalChunks} 段…`);
+      },
+    );
+    if (rows.length) {
+      return { source: primaryLabel, rows, triedSources };
+    }
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    await onProgress?.(`RW ${primaryLabel} 跳过: ${msg.slice(0, 80)}`);
+  }
 
   for (const op of RW_COMMISSION_OPS) {
     const label = `commission/${op}`;

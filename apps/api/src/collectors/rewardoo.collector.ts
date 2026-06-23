@@ -10,6 +10,7 @@ import { normalizeStatus } from './status-normalizer';
 /** Rewardoo API 单行（订单明细或 Performance 商家汇总） */
 export interface RwCommissionRow {
   order_id?: string | number;
+  rewardoo_id?: string | number;
   transaction_id?: string | number;
   sign_id?: string | number;
   txn_id?: string | number;
@@ -22,6 +23,7 @@ export interface RwCommissionRow {
   amount?: string | number;
   order_amount?: string | number;
   sale?: string | number;
+  sale_comm?: string | number;
   commission?: string | number;
   comm?: string | number;
   cashback?: string | number;
@@ -30,6 +32,7 @@ export interface RwCommissionRow {
   transaction_time?: string | number;
   order_ymd?: string;
   transaction_date?: string;
+  validation_date?: string;
   payment_ymd?: string;
   date?: string;
   ymd?: string;
@@ -87,7 +90,9 @@ export function normalizeRewardooOrders(
     const orderAmount = parseMoney(
       row.sale_amount ?? row.order_amount ?? row.sale ?? row.amount,
     );
-    const commission = parseMoney(row.commission ?? row.comm ?? row.cashback);
+    const commission = parseMoney(
+      row.sale_comm ?? row.commission ?? row.comm ?? row.cashback,
+    );
     if (commission <= 0 && orderAmount <= 0) continue;
 
     const externalOrderId = resolveRwOrderId(row, range);
@@ -223,7 +228,7 @@ function resolveRwOrderId(
   row: RwCommissionRow,
   range?: { startDate: string; endDate: string },
 ): string {
-  for (const key of ['order_id', 'transaction_id', 'sign_id', 'txn_id'] as const) {
+  for (const key of ['order_id', 'rewardoo_id', 'transaction_id', 'sign_id', 'txn_id'] as const) {
     const v = row[key];
     if (v != null && String(v).trim()) return String(v).trim();
   }
@@ -276,6 +281,7 @@ function parseRwOrderDate(row: RwCommissionRow, fallbackDate?: string): Date {
     'transaction_time',
     'order_ymd',
     'transaction_date',
+    'validation_date',
     'date',
     'ymd',
   ] as const) {

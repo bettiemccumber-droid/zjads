@@ -8,9 +8,11 @@ import { PrismaClient } from '@prisma/client';
 import {
   RW_COMMISSION_OPS,
   RW_PERFORMANCE_OPS,
+  RW_TRANSACTION_DETAILS_OP,
   fetchRewardooCommissionData,
   fetchRewardooOpPages,
   fetchRewardooPerformancePages,
+  fetchRewardooTransactionDetailPages,
   postRewardooCommissionSummary,
 } from '../src/collectors/rewardoo-api.util';
 import {
@@ -62,6 +64,13 @@ async function main() {
 
   console.log(`账号: ${account.displayName} (${account.affiliateAlias}) id=${account.id}`);
   console.log(`区间: ${start} ~ ${end}\n`);
+
+  try {
+    const detailRows = await fetchRewardooTransactionDetailPages(apiToken, start, end);
+    logOp(`medium/${RW_TRANSACTION_DETAILS_OP}`, detailRows);
+  } catch (e) {
+    console.log(`[medium/${RW_TRANSACTION_DETAILS_OP}] ERROR`, e instanceof Error ? e.message : e);
+  }
 
   for (const op of RW_COMMISSION_OPS) {
     try {

@@ -868,6 +868,7 @@ export default function DashboardPage() {
       : campaignStatusMode === 'paused'
         ? '仅暂停系列'
         : '全部系列';
+  const campaignFilterActive = !!campaignSearch.trim() || campaignPlatform !== 'all';
   const authoritativeAdSpendHint = campaignFilterActive
     ? `${reportRangeLabel} · 筛选后系列明细`
     : `${reportRangeLabel} · ${statusLabel}明细合计`;
@@ -937,7 +938,6 @@ export default function DashboardPage() {
     return { ...totals, overallRoi };
   }, [filteredCampaignRows]);
 
-  const campaignFilterActive = !!campaignSearch.trim() || campaignPlatform !== 'all';
   const displayCampaignTotals = campaignFilterActive ? filteredCampaignTotals : ct;
 
   /** 商家汇总按平台全量（联盟 API 采集结果） */

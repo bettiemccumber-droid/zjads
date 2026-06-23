@@ -58,6 +58,7 @@ export interface RwDateChunk {
 export interface RwFetchResult {
   source: string;
   rows: unknown[];
+  triedSources: string[];
 }
 
 /**
@@ -335,8 +336,12 @@ export async function fetchRewardooCommissionData(
   endDate: string,
   onProgress?: (message: string) => void | Promise<void>,
 ): Promise<RwFetchResult> {
+  const triedSources: string[] = [];
+
   for (const op of RW_COMMISSION_OPS) {
-    await onProgress?.(`RW commission/${op} 拉取中…`);
+    const label = `commission/${op}`;
+    triedSources.push(label);
+    await onProgress?.(`RW ${label} 拉取中…`);
     try {
       const rows = await fetchRewardooOpPages(
         op,
@@ -344,20 +349,22 @@ export async function fetchRewardooCommissionData(
         startDate,
         endDate,
         async (chunkIndex, totalChunks) => {
-          await onProgress?.(`RW commission/${op} ${chunkIndex}/${totalChunks} 段…`);
+          await onProgress?.(`RW ${label} ${chunkIndex}/${totalChunks} 段…`);
         },
       );
       if (rows.length) {
-        return { source: `commission/${op}`, rows };
+        return { source: label, rows, triedSources };
       }
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
-      await onProgress?.(`RW commission/${op} 跳过: ${msg.slice(0, 80)}`);
+      await onProgress?.(`RW ${label} 跳过: ${msg.slice(0, 80)}`);
     }
   }
 
   for (const op of RW_PERFORMANCE_OPS) {
-    await onProgress?.(`RW performance/${op} 拉取中…`);
+    const label = `performance/${op}`;
+    triedSources.push(label);
+    await onProgress?.(`RW ${label} 拉取中…`);
     try {
       const rows = await fetchRewardooPerformancePages(
         op,
@@ -365,19 +372,19 @@ export async function fetchRewardooCommissionData(
         startDate,
         endDate,
         async (chunkIndex, totalChunks) => {
-          await onProgress?.(`RW performance/${op} ${chunkIndex}/${totalChunks} 段…`);
+          await onProgress?.(`RW ${label} ${chunkIndex}/${totalChunks} 段…`);
         },
       );
       if (rows.length) {
-        return { source: `performance/${op}`, rows };
+        return { source: label, rows, triedSources };
       }
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
-      await onProgress?.(`RW performance/${op} 跳过: ${msg.slice(0, 80)}`);
+      await onProgress?.(`RW ${label} 跳过: ${msg.slice(0, 80)}`);
     }
   }
 
-  return { source: 'none', rows: [] };
+  return { source: 'none', rows: [], triedSources };
 }
 
 /** @deprecated 使用 fetchRewardooOpChunk('transaction', ...) */

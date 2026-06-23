@@ -50,6 +50,7 @@ export interface RwCommissionTotals {
 export interface RwFetchBundle {
   rows: RwCommissionRow[];
   source: string;
+  triedSources: string[];
 }
 
 /**
@@ -61,13 +62,13 @@ export async function fetchRewardooCommissions(
   endDate: string,
   onProgress?: (message: string) => void | Promise<void>,
 ): Promise<RwFetchBundle> {
-  const { source, rows } = await fetchRewardooCommissionData(
+  const { source, rows, triedSources } = await fetchRewardooCommissionData(
     apiToken,
     startDate,
     endDate,
     onProgress,
   );
-  return { source, rows: rows as RwCommissionRow[] };
+  return { source, rows: rows as RwCommissionRow[], triedSources };
 }
 
 /**

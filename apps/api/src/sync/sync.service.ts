@@ -398,9 +398,12 @@ export class SyncService implements OnModuleInit {
           result.rwApi.apiSource && result.rwApi.apiSource !== 'none'
             ? ` · ${result.rwApi.apiSource}`
             : '';
-        parts.push(
-          `RW API ${result.rwApi.apiListRows} 行 → ${result.rwApi.orderCount} 单 / $${result.rwApi.totalCommission.toFixed(2)}${src}`,
-        );
+        let rwMsg = `RW API ${result.rwApi.apiListRows} 行 → ${result.rwApi.orderCount} 单 / $${result.rwApi.totalCommission.toFixed(2)}${src}`;
+        if (result.rwApi.apiListRows === 0) {
+          rwMsg +=
+            '（全部接口为空，请核对 Rewardoo API Documents 里 token 是否与 Performance 有数据的站点一致）';
+        }
+        parts.push(rwMsg);
       }
       if (result.pmClickTotal !== undefined) {
         parts.push(`PM 联盟点击 ${result.pmClickTotal}（${start}~${end}）`);

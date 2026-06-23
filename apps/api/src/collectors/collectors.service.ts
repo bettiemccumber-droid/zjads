@@ -62,6 +62,7 @@ export interface CollectResultWithPmMeta extends CollectResult {
     orderCount: number;
     totalCommission: number;
     apiSource: string;
+    triedSources?: string[];
   };
   /** 区间内联盟后台点击汇总（刷量监控，不参与广告转化率） */
   pmClickTotal?: number;
@@ -205,7 +206,7 @@ export class CollectorsService {
         break;
       }
       case 'rewardoo': {
-        const { rows, source } = await fetchRewardooCommissions(
+        const { rows, source, triedSources } = await fetchRewardooCommissions(
           apiToken,
           startDate,
           endDate,
@@ -214,7 +215,7 @@ export class CollectorsService {
           },
         );
         const range = { startDate, endDate };
-        rwApi = summarizeRwCommissionApi(rows, source, range);
+        rwApi = { ...summarizeRwCommissionApi(rows, source, range), triedSources };
         normalized = normalizeRewardooOrders(rows, mappings, range);
         break;
       }

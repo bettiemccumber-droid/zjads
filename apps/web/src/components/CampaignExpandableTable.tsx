@@ -329,6 +329,8 @@ function sumDailyRows(days: CampaignDailyRow[]) {
 interface CampaignExpandableTableProps {
   rows: CampaignSummaryRow[];
   loading?: boolean;
+  /** 查询区间自然日数，用于提示 MCC 日数据是否不完整 */
+  queryDayCount?: number;
   scroll?: { x?: number; y?: number };
   pagination?: false | {
     pageSize: number;
@@ -346,6 +348,7 @@ interface CampaignExpandableTableProps {
 export default function CampaignExpandableTable({
   rows,
   loading,
+  queryDayCount,
   scroll,
   pagination,
   rowClassName,
@@ -647,11 +650,28 @@ export default function CampaignExpandableTable({
           expandRowByClick: false,
           expandedRowRender: (r) => {
             const tot = sumDailyRows(r.daily);
+            const dailyCostGap =
+              r.cost > 0 && tot.cost + 0.05 < r.cost
+                ? Math.round((r.cost - tot.cost) * 100) / 100
+                : 0;
+            const likelyIncompleteMcc =
+              queryDayCount != null &&
+              queryDayCount > 1 &&
+              r.daily.length > 0 &&
+              r.daily.length < queryDayCount &&
+              (r.orderCount > 0 || r.cost > 0);
             return (
               <div className="campaign-daily-panel">
                 <div className="campaign-daily-panel-title">
                   按天详细数据（共 {r.daily.length} 天）
                 </div>
+                {likelyIncompleteMcc && (
+                  <Typography.Paragraph type="warning" style={{ margin: '0 0 8px', fontSize: 12 }}>
+                    MCC 日数据仅 {r.daily.length}/{queryDayCount} 天，与 Google 后台不一致时请在 Sheet
+                    脚本跑完回溯窗口后重新导入。
+                    {dailyCostGap > 0 ? ` 区间汇总比按天合计多约 $${dailyCostGap.toFixed(2)}。` : ''}
+                  </Typography.Paragraph>
+                )}
                 <div className="campaign-daily-scroll">
                   <Table<CampaignDailyRow>
                     className="campaign-daily-inner-table"

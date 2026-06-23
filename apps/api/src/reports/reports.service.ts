@@ -14,8 +14,11 @@ import { suggestOperation } from '../common/operation-suggest.util';
 import { AuthUser, resolveOwnerUserId } from '../common/ownership.util';
 import { isLbClickPseudoMerchant } from '../collectors/linkbux-clicks';
 import {
+  ACCOUNT_DAILY_COST_TAB,
   MONTHLY_ACCOUNT_COST_TAB,
+  applyAccountCostAdjustment,
   buildSheetCsvUrl,
+  parseAccountDailyCostCsv,
   parseAdSheetCsv,
   parseMonthlyAccountCostCsv,
   sumProratedMonthlyAccountCost,
@@ -274,14 +277,12 @@ export class ReportsService {
       { orderCount: 0, totalCommission: 0, totalAdSpend: 0, totalClicks: 0, totalAffiliateClicks: 0 },
     );
 
-    const authoritativeAdSpend = await this.resolveAuthoritativeAdSpend(
+    const campaignDetailSpend = totals.totalAdSpend;
+    const accountLevelAdSpend = await this.resolveAccountLevelAdSpend(
       ownerId,
       q.startDate,
       q.endDate,
     );
-    if (authoritativeAdSpend != null) {
-      totals.totalAdSpend = authoritativeAdSpend;
-    }
 
     const overallRoi =
       totals.totalAdSpend > 0
@@ -294,8 +295,9 @@ export class ReportsService {
         ...totals,
         overallRoi,
         profit: totals.totalCommission - totals.totalAdSpend,
-        campaignDetailSpend: summary.reduce((s, r) => s + r.totalCost, 0),
-        adSpendSource: authoritativeAdSpend != null ? 'monthly_account' : 'campaign_detail',
+        campaignDetailSpend,
+        accountLevelAdSpend,
+        adSpendSource: 'campaign_detail' as const,
       },
     };
   }
@@ -511,15 +513,12 @@ export class ReportsService {
       },
     );
 
-    const authoritativeAdSpend = await this.resolveAuthoritativeAdSpend(
+    const campaignDetailSpend = totals.cost;
+    const accountLevelAdSpend = await this.resolveAccountLevelAdSpend(
       ownerId,
       q.startDate,
       q.endDate,
     );
-    const campaignDetailSpend = totals.cost;
-    if (authoritativeAdSpend != null) {
-      totals.cost = authoritativeAdSpend;
-    }
 
     const overallRoi =
       totals.cost > 0 ? (totals.commission - totals.cost) / totals.cost : 0;
@@ -536,7 +535,8 @@ export class ReportsService {
         overallRoi,
         profit: totals.commission - totals.cost,
         campaignDetailSpend,
-        adSpendSource: authoritativeAdSpend != null ? 'monthly_account' : 'campaign_detail',
+        accountLevelAdSpend,
+        adSpendSource: 'campaign_detail' as const,
       },
     };
   }
@@ -1076,7 +1076,8 @@ export class ReportsService {
   }
 
   /**
-   * 换 Google 子账号空窗日：MCC 无花费，但联盟有点击/订单时补一行（广告费为 0）
+   * 停投后的空窗日：MCC 已无花费，但联盟仍有点击/订单时补一行（广告费为 0）。
+   * 仅补「最后一次 MCC 有数据日之后」的日期，避免 Sheet 缺历史日数据时误补大片 $0。
    */
   private supplementAffiliateOnlyDailyRows_<
     T extends {
@@ -1114,9 +1115,16 @@ export class ReportsService {
 
     const existing = new Set(rows.map((r) => `${r.campaignGroupKey}|${r.date}`));
     const groupMeta = new Map<string, T>();
+    const lastMccDateByGroup = new Map<string, string>();
     for (const row of rows) {
       if (!groupMeta.has(row.campaignGroupKey)) {
         groupMeta.set(row.campaignGroupKey, row);
+      }
+      if (row.cost > 0 || row.clicks > 0 || row.impressions > 0) {
+        const prev = lastMccDateByGroup.get(row.campaignGroupKey);
+        if (!prev || row.date > prev) {
+          lastMccDateByGroup.set(row.campaignGroupKey, row.date);
+        }
       }
     }
 
@@ -1124,9 +1132,14 @@ export class ReportsService {
     for (const meta of groupMeta.values()) {
       if (!meta.merchantId || !meta.affiliateAlias) continue;
 
+      const lastMccDate = lastMccDateByGroup.get(meta.campaignGroupKey);
+
       for (const dateStr of this.listDatesInRange_(startDate, endDate)) {
         const key = `${meta.campaignGroupKey}|${dateStr}`;
         if (existing.has(key)) continue;
+
+        /** Sheet 缺历史日数据时不在 lastMccDate 之前/当天补 $0，避免误导 */
+        if (lastMccDate && dateStr <= lastMccDate) continue;
 
         const affiliate = this.lookupAffiliateMetricsForDay(
           affiliateByDay,
@@ -1627,8 +1640,41 @@ export class ReportsService {
     };
   }
 
-  /** 月汇总账户花费（monthly_account_cost，与 Google 后台一致） */
-  private async resolveAuthoritativeAdSpend(
+  /** 账户级总广告费（raw_daily_account_cost / monthly 折算，仅作对账参考） */
+  private async resolveAccountLevelAdSpend(
+    ownerId: number,
+    startDate: string,
+    endDate: string,
+  ): Promise<number | null> {
+    const source = await this.prisma.adDataSource.findFirst({
+      where: { ownerUserId: ownerId, isActive: true },
+      orderBy: { updatedAt: 'desc' },
+    });
+    if (!source) return null;
+
+    try {
+      const csvUrl = buildSheetCsvUrl(source.sheetId, ACCOUNT_DAILY_COST_TAB);
+      const res = await axios.get<string>(csvUrl, {
+        timeout: 120000,
+        responseType: 'text',
+        headers: { 'User-Agent': 'ZJADS/1.0' },
+      });
+      const accountRows = parseAccountDailyCostCsv(res.data).filter(
+        (r) => r.date >= startDate && r.date <= endDate,
+      );
+      if (accountRows.length) {
+        const total = Math.round(accountRows.reduce((s, r) => s + r.cost, 0) * 100) / 100;
+        return total > 0 ? total : null;
+      }
+    } catch {
+      /* 无日账户表时尝试月汇总 */
+    }
+
+    return this.resolveMonthlyAdSpend(ownerId, startDate, endDate);
+  }
+
+  /** 月汇总账户花费折算（兜底对账口径） */
+  private async resolveMonthlyAdSpend(
     ownerId: number,
     startDate: string,
     endDate: string,
@@ -1658,11 +1704,30 @@ export class ReportsService {
       return total > 0 ? total : null;
     } catch (err) {
       console.warn(
-        '[reports] monthly_account_cost 拉取失败，回退系列明细合计:',
+        '[reports] monthly_account_cost 拉取失败:',
         err instanceof Error ? err.message : err,
       );
       return null;
     }
+  }
+
+  /** @deprecated 使用 resolveAccountLevelAdSpend；保留供 adSpendCoverage 等内部对账 */
+  private async resolveAuthoritativeAdSpend(
+    ownerId: number,
+    startDate: string,
+    endDate: string,
+  ): Promise<number | null> {
+    const dateRange = this.adDateRange(startDate, endDate);
+    const dbAgg = await this.prisma.adCampaignDaily.aggregate({
+      where: { ownerUserId: ownerId, date: dateRange },
+      _sum: { cost: true },
+    });
+    const campaignTotal = Math.round(Number(dbAgg._sum.cost ?? 0) * 100) / 100;
+    if (campaignTotal > 0) {
+      return campaignTotal;
+    }
+
+    return this.resolveAccountLevelAdSpend(ownerId, startDate, endDate);
   }
 
   /** 从库内月汇总表折算区间总广告费 */
@@ -1821,6 +1886,22 @@ export class ReportsService {
         let sheetRows = parseAdSheetCsv(res.data).filter(
           (r) => r.date >= q.startDate && r.date <= q.endDate,
         );
+        try {
+          const accountCsvUrl = buildSheetCsvUrl(sources[0].sheetId, ACCOUNT_DAILY_COST_TAB);
+          const accountRes = await axios.get<string>(accountCsvUrl, {
+            timeout: 120000,
+            responseType: 'text',
+            headers: { 'User-Agent': 'ZJADS/1.0' },
+          });
+          const accountRows = parseAccountDailyCostCsv(accountRes.data).filter(
+            (r) => r.date >= q.startDate && r.date <= q.endDate,
+          );
+          if (accountRows.length) {
+            sheetRows = applyAccountCostAdjustment(sheetRows, accountRows).rows;
+          }
+        } catch {
+          /* 无日账户表时保持系列明细原样 */
+        }
         sheetRowCount = sheetRows.length;
         sheetTotalCost = sheetRows.reduce((acc, r) => acc + r.cost, 0);
       } catch {

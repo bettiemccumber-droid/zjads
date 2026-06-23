@@ -5,9 +5,14 @@ import { AuthUser, isAdmin, resolveOwnerUserId } from '../common/ownership.util'
 import { buildOrderDateRangeFilter } from '../common/order-date-range.util';
 import { PrismaService } from '../prisma/prisma.service';
 import {
+  ACCOUNT_DAILY_COST_TAB,
   MONTHLY_ACCOUNT_COST_TAB,
+  ParsedAdDailyRow,
+  applyAccountCostAdjustment,
+  applyMonthlyCostAdjustment,
   buildSheetCsvUrl,
   extractSheetId,
+  parseAccountDailyCostCsv,
   parseAdSheetCsv,
   parseMonthlyAccountCostCsv,
 } from './sheet-parser.util';
@@ -197,6 +202,14 @@ export class AdSourcesService {
       throw new BadRequestException(`所选日期区间内无广告数据。${hint}`);
     }
 
+    const costAdjustment = await this.applyCostAdjustmentsFromSheet(
+      source.sheetId,
+      rows,
+      startDate,
+      endDate,
+    );
+    rows = costAdjustment.rows;
+
     /** 指定日期区间导入时先清空该区间，避免 upsert 残留旧系列/旧花费 */
     if (startDate && endDate) {
       const dateRange = buildOrderDateRangeFilter(startDate, endDate);
@@ -265,13 +278,88 @@ export class AdSourcesService {
     });
 
     const dates = rows.map((r) => r.date).sort();
+    const importedCost = Math.round(rows.reduce((sum, r) => sum + r.cost, 0) * 100) / 100;
     return {
       upserted,
       dateFrom: dates[0],
       dateTo: dates[dates.length - 1],
       campaignCount: new Set(rows.map((r) => r.campaignId)).size,
+      importedCost,
+      costAdjustmentApplied: costAdjustment.adjustmentApplied,
+      costAdjustmentSource: costAdjustment.adjustmentSource,
+      costAdjustmentDelta: costAdjustment.totalAdjustment,
       monthlyUpserted: monthlyImport.upserted,
       monthlyTotal: monthlyImport.totalCost,
+    };
+  }
+
+  /**
+   * 用账户级花费补齐系列明细与 Google 后台之间的差额（优先日账户表，兜底月汇总表）
+   */
+  private async applyCostAdjustmentsFromSheet(
+    sheetId: string,
+    campaignRows: ParsedAdDailyRow[],
+    startDate?: string,
+    endDate?: string,
+  ): Promise<{
+    rows: ParsedAdDailyRow[];
+    adjustmentApplied: boolean;
+    adjustmentSource: 'daily_account' | 'monthly_account' | 'none';
+    totalAdjustment: number;
+  }> {
+    try {
+      const csvUrl = buildSheetCsvUrl(sheetId, ACCOUNT_DAILY_COST_TAB);
+      const res = await axios.get<string>(csvUrl, {
+        timeout: 120000,
+        responseType: 'text',
+        headers: { 'User-Agent': 'ZJADS/1.0' },
+      });
+      let accountRows = parseAccountDailyCostCsv(res.data);
+      if (startDate) {
+        accountRows = accountRows.filter((r) => r.date >= startDate);
+      }
+      if (endDate) {
+        accountRows = accountRows.filter((r) => r.date <= endDate);
+      }
+      if (accountRows.length) {
+        const adj = applyAccountCostAdjustment(campaignRows, accountRows);
+        return {
+          rows: adj.rows,
+          adjustmentApplied: adj.adjustmentApplied,
+          adjustmentSource: 'daily_account',
+          totalAdjustment: adj.totalAdjustment,
+        };
+      }
+    } catch {
+      /* 无日账户表时尝试月汇总 */
+    }
+
+    try {
+      const csvUrl = buildSheetCsvUrl(sheetId, MONTHLY_ACCOUNT_COST_TAB);
+      const res = await axios.get<string>(csvUrl, {
+        timeout: 120000,
+        responseType: 'text',
+        headers: { 'User-Agent': 'ZJADS/1.0' },
+      });
+      const monthlyRows = parseMonthlyAccountCostCsv(res.data);
+      if (monthlyRows.length) {
+        const adj = applyMonthlyCostAdjustment(campaignRows, monthlyRows, startDate, endDate);
+        return {
+          rows: adj.rows,
+          adjustmentApplied: adj.adjustmentApplied,
+          adjustmentSource: 'monthly_account',
+          totalAdjustment: adj.totalAdjustment,
+        };
+      }
+    } catch {
+      /* 无月汇总表则保持系列明细原样 */
+    }
+
+    return {
+      rows: campaignRows,
+      adjustmentApplied: false,
+      adjustmentSource: 'none',
+      totalAdjustment: 0,
     };
   }
 

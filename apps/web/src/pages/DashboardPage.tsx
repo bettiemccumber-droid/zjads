@@ -159,7 +159,10 @@ interface CampaignTotals {
 
   campaignDetailSpend?: number;
 
-  adSpendSource?: 'monthly_account' | 'campaign_detail';
+  /** 账户级对账参考（Sheet raw_daily_account_cost），与卡片系列合计可能不同 */
+  accountLevelAdSpend?: number | null;
+
+  adSpendSource?: 'campaign_detail';
 
 }
 
@@ -359,6 +362,10 @@ export default function DashboardPage() {
     return viewUserId ? { ...base, userId: viewUserId } : base;
   }, [range, viewUserId]);
 
+  const queryDayCount = useMemo(
+    () => range[1].diff(range[0], 'day') + 1,
+    [range],
+  );
 
 
   const loadSyncAccounts = useCallback(async () => {
@@ -855,10 +862,19 @@ export default function DashboardPage() {
 
   const ct = campaignTotals;
   const reportRangeLabel = `${range[0].format('YYYY-MM-DD')} ~ ${range[1].format('YYYY-MM-DD')}`;
-  const authoritativeAdSpendHint =
-    ct.adSpendSource === 'monthly_account'
-      ? `${reportRangeLabel} · 月汇总账户口径（对齐 Google MCC）`
-      : `${reportRangeLabel} · 系列明细合计`;
+  const statusLabel =
+    campaignStatusMode === 'active'
+      ? '仅活跃系列'
+      : campaignStatusMode === 'paused'
+        ? '仅暂停系列'
+        : '全部系列';
+  const authoritativeAdSpendHint = campaignFilterActive
+    ? `${reportRangeLabel} · 筛选后系列明细`
+    : `${reportRangeLabel} · ${statusLabel}明细合计`;
+  const accountLevelGap =
+    ct.accountLevelAdSpend != null && ct.accountLevelAdSpend > 0
+      ? Math.round((ct.accountLevelAdSpend - ct.cost) * 100) / 100
+      : null;
 
   const campaignPlatformOptions = useMemo(() => {
     const names = [
@@ -1112,7 +1128,7 @@ export default function DashboardPage() {
                 <p style={{ margin: '0 0 8px', color: '#666' }}>
                   系列明细比月汇总账户花费少约{' '}
                   <strong>${(adSpendCoverage.monthlyDetailGap ?? 0).toFixed(2)}</strong>
-                  （已移除系列等历史花费，属原脚本预期差异）。总广告费以月汇总为准。
+                  （已移除系列等历史花费）。请重新导入以补齐差额。
                 </p>
               )}
               {adSpendCoverage.likelySheetStale && (
@@ -1384,6 +1400,25 @@ export default function DashboardPage() {
                     />
                   )}
 
+                  {accountLevelGap != null && Math.abs(accountLevelGap) > 1 && (
+                    <Alert
+                      type="info"
+                      showIcon
+                      style={{ marginBottom: 12 }}
+                      message="系列合计与 Google 账户级花费存在差异"
+                      description={
+                        <>
+                          当前筛选下系列广告费合计 <strong>${ct.cost.toFixed(2)}</strong>，
+                          Sheet 账户级日花费合计约{' '}
+                          <strong>${ct.accountLevelAdSpend!.toFixed(2)}</strong>
+                          （差额 ${accountLevelGap.toFixed(2)}）。
+                          差额多来自已移除系列的历史花费或 Sheet 尚未同步的账户。
+                          请确认 Google 脚本已跑完，并在「广告数据源」重新导入所选日期。
+                        </>
+                      }
+                    />
+                  )}
+
                   {campaignRows.length === 0 && !loading && !statusFilterSkipped && (
                     <Typography.Text type="secondary" style={{ display: 'block', marginBottom: 12 }}>
                       暂无数据，请先在「广告数据源」导入 Sheet
@@ -1394,6 +1429,7 @@ export default function DashboardPage() {
                     <CampaignExpandableTable
                       rows={campaignRowsWithDaily}
                       loading={loading}
+                      queryDayCount={queryDayCount}
                       scroll={tableScroll}
                       pagination={tablePagination(campaignPageSize, setCampaignPageSize)}
                       rowClassName={(r) => {

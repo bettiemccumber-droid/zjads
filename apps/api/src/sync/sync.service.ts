@@ -393,6 +393,15 @@ export class SyncService implements OnModuleInit {
           `订单 ${result.lbApi.orderCount} 单 / $${result.lbApi.totalCommission.toFixed(2)}`,
         );
       }
+      if (result.rwApi) {
+        const src =
+          result.rwApi.apiSource && result.rwApi.apiSource !== 'none'
+            ? ` · ${result.rwApi.apiSource}`
+            : '';
+        parts.push(
+          `RW API ${result.rwApi.apiListRows} 行 → ${result.rwApi.orderCount} 单 / $${result.rwApi.totalCommission.toFixed(2)}${src}`,
+        );
+      }
       if (result.pmClickTotal !== undefined) {
         parts.push(`PM 联盟点击 ${result.pmClickTotal}（${start}~${end}）`);
       }
@@ -407,7 +416,7 @@ export class SyncService implements OnModuleInit {
         }
         parts.push(lbClickMsg);
       }
-      const pmNote = parts.length ? parts.join('；') : undefined;
+      const pmNote = parts.length ? parts.join('；') : '采集完成（无订单数据）';
       await this.prisma.syncJobItem.update({
         where: { id: item.id },
         data: {

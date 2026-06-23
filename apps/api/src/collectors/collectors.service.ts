@@ -61,6 +61,7 @@ export interface CollectResultWithPmMeta extends CollectResult {
     apiListRows: number;
     orderCount: number;
     totalCommission: number;
+    apiSource: string;
   };
   /** 区间内联盟后台点击汇总（刷量监控，不参与广告转化率） */
   pmClickTotal?: number;
@@ -204,16 +205,17 @@ export class CollectorsService {
         break;
       }
       case 'rewardoo': {
-        const raw = await fetchRewardooCommissions(
+        const { rows, source } = await fetchRewardooCommissions(
           apiToken,
           startDate,
           endDate,
-          async (chunkIndex, totalChunks) => {
-            await onProgress?.(`RW 订单 ${chunkIndex}/${totalChunks} 段…`);
+          async (message) => {
+            await onProgress?.(message);
           },
         );
-        rwApi = summarizeRwCommissionApi(raw);
-        normalized = normalizeRewardooOrders(raw, mappings);
+        const range = { startDate, endDate };
+        rwApi = summarizeRwCommissionApi(rows, source, range);
+        normalized = normalizeRewardooOrders(rows, mappings, range);
         break;
       }
       default:

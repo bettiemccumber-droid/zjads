@@ -9,6 +9,17 @@ export const RW_MAX_DAYS_PER_REQUEST = 62;
 /** TransactionDetails 默认分页大小 */
 export const RW_PAGE_SIZE = 500;
 
+/** 按优先级尝试的佣金数据源（transaction 为空时回退 Performance 类接口） */
+export const RW_COMMISSION_OPS = [
+  'transaction',
+  'performance',
+  'merchant',
+  'report',
+  'list',
+] as const;
+
+export type RwCommissionOp = (typeof RW_COMMISSION_OPS)[number];
+
 /** 保守节流，避免 1002 调用频率过高 */
 const MIN_REQUEST_INTERVAL_MS = 2200;
 
@@ -24,12 +35,17 @@ export interface RwApiEnvelope {
   pageSize?: number | null;
   status?: RwApiStatus;
   list?: unknown[];
-  data?: unknown[];
+  data?: unknown[] | Record<string, unknown>;
 }
 
 export interface RwDateChunk {
   begin: string;
   end: string;
+}
+
+export interface RwFetchResult {
+  source: RwCommissionOp | 'none';
+  rows: unknown[];
 }
 
 /**
@@ -87,30 +103,40 @@ export function parseRwApiEnvelope(body: unknown): {
   const root = body as RwApiEnvelope;
   const code = root.status?.code ?? -1;
   const message = String(root.status?.msg ?? '').trim();
+  const rows = extractRwRows(body);
 
-  if (Array.isArray(root.list)) {
-    return {
-      code,
-      message,
-      rows: root.list,
-      offset: root.offset ?? null,
-      pageSize: root.pageSize ?? null,
-    };
-  }
-  if (Array.isArray(root.data)) {
-    return {
-      code,
-      message,
-      rows: root.data,
-      offset: root.offset ?? null,
-      pageSize: root.pageSize ?? null,
-    };
-  }
-  if (Array.isArray(body)) {
-    return { code, message, rows: body, offset: null, pageSize: null };
+  return {
+    code,
+    message,
+    rows,
+    offset: root.offset ?? null,
+    pageSize: root.pageSize ?? null,
+  };
+}
+
+/** 从多种 JSON 结构中提取 list 数组 */
+function extractRwRows(body: unknown): unknown[] {
+  if (Array.isArray(body)) return body;
+
+  const root = body as Record<string, unknown>;
+  if (Array.isArray(root.list)) return root.list;
+  if (Array.isArray(root.data)) return root.data;
+
+  const data = root.data;
+  if (data && typeof data === 'object' && !Array.isArray(data)) {
+    const nested = data as Record<string, unknown>;
+    if (Array.isArray(nested.list)) return nested.list;
+    if (Array.isArray(nested.rows)) return nested.rows;
+    if (Array.isArray(nested.items)) return nested.items;
   }
 
-  return { code, message, rows: [], offset: null, pageSize: null };
+  const result = root.result;
+  if (result && typeof result === 'object') {
+    const nested = result as Record<string, unknown>;
+    if (Array.isArray(nested.list)) return nested.list;
+  }
+
+  return [];
 }
 
 /**
@@ -136,35 +162,10 @@ export async function postRewardooApi(
 }
 
 /**
- * 调用 Rewardoo CommissionSummary API（结算/付款日期口径）
- * @see mod=commission&op=summary
+ * 拉取单段 Rewardoo 佣金数据（分页）
  */
-export async function postRewardooCommissionSummary(
-  apiToken: string,
-  paymentBegin: string,
-  paymentEnd: string,
-): Promise<unknown[]> {
-  const parsed = await postRewardooApi('summary', {
-    token: apiToken,
-    payment_begin: paymentBegin,
-    payment_end: paymentEnd,
-  });
-
-  if (parsed.code !== 0) {
-    throw new Error(
-      `Rewardoo Summary API 错误 ${parsed.code}${parsed.message ? `: ${parsed.message}` : ''}`,
-    );
-  }
-
-  return parsed.rows;
-}
-
-/**
- * 拉取单段 TransactionDetails（分页）
- * 参数名 payment_begin/end 为文档字段；与 Performance「Transaction Date」口径一致
- * @see mod=commission&op=transaction
- */
-export async function fetchRewardooTransactionChunk(
+export async function fetchRewardooOpChunk(
+  op: RwCommissionOp,
   apiToken: string,
   begin: string,
   end: string,
@@ -174,7 +175,7 @@ export async function fetchRewardooTransactionChunk(
   let offset = 0;
 
   for (let page = 0; page < 500; page += 1) {
-    const parsed = await postRewardooApi('transaction', {
+    const parsed = await postRewardooApi(op, {
       token: apiToken,
       payment_begin: begin,
       payment_end: end,
@@ -189,7 +190,7 @@ export async function fetchRewardooTransactionChunk(
 
     if (parsed.code !== 0) {
       throw new Error(
-        `Rewardoo Transaction API 错误 ${parsed.code}${parsed.message ? `: ${parsed.message}` : ''}`,
+        `Rewardoo ${op} API 错误 ${parsed.code}${parsed.message ? `: ${parsed.message}` : ''}`,
       );
     }
 
@@ -210,9 +211,10 @@ export async function fetchRewardooTransactionChunk(
 }
 
 /**
- * 按 62 天窗口拉取 TransactionDetails 全量行
+ * 按 62 天窗口拉取指定 op 全量行
  */
-export async function fetchRewardooTransactionPages(
+export async function fetchRewardooOpPages(
+  op: RwCommissionOp,
   apiToken: string,
   startDate: string,
   endDate: string,
@@ -224,15 +226,82 @@ export async function fetchRewardooTransactionPages(
   for (let i = 0; i < chunks.length; i += 1) {
     await onProgress?.(i + 1, chunks.length);
     const chunk = chunks[i];
-    const rows = await fetchRewardooTransactionChunk(
-      apiToken,
-      chunk.begin,
-      chunk.end,
-    );
+    const rows = await fetchRewardooOpChunk(op, apiToken, chunk.begin, chunk.end);
     all.push(...rows);
   }
 
   return all;
+}
+
+/**
+ * 依次尝试 transaction / performance / merchant 等，返回首个非空数据源
+ */
+export async function fetchRewardooCommissionData(
+  apiToken: string,
+  startDate: string,
+  endDate: string,
+  onProgress?: (message: string) => void | Promise<void>,
+): Promise<RwFetchResult> {
+  for (const op of RW_COMMISSION_OPS) {
+    await onProgress?.(`RW ${op} 拉取中…`);
+    const rows = await fetchRewardooOpPages(
+      op,
+      apiToken,
+      startDate,
+      endDate,
+      async (chunkIndex, totalChunks) => {
+        await onProgress?.(`RW ${op} ${chunkIndex}/${totalChunks} 段…`);
+      },
+    );
+    if (rows.length) {
+      return { source: op, rows };
+    }
+  }
+
+  return { source: 'none', rows: [] };
+}
+
+/** @deprecated 使用 fetchRewardooOpChunk('transaction', ...) */
+export async function fetchRewardooTransactionChunk(
+  apiToken: string,
+  begin: string,
+  end: string,
+  pageSize = RW_PAGE_SIZE,
+): Promise<unknown[]> {
+  return fetchRewardooOpChunk('transaction', apiToken, begin, end, pageSize);
+}
+
+/** @deprecated 使用 fetchRewardooOpPages('transaction', ...) */
+export async function fetchRewardooTransactionPages(
+  apiToken: string,
+  startDate: string,
+  endDate: string,
+  onProgress?: (chunkIndex: number, totalChunks: number) => void | Promise<void>,
+): Promise<unknown[]> {
+  return fetchRewardooOpPages('transaction', apiToken, startDate, endDate, onProgress);
+}
+
+/**
+ * 调用 Rewardoo CommissionSummary API（结算/付款日期口径）
+ */
+export async function postRewardooCommissionSummary(
+  apiToken: string,
+  paymentBegin: string,
+  paymentEnd: string,
+): Promise<unknown[]> {
+  const parsed = await postRewardooApi('summary', {
+    token: apiToken,
+    payment_begin: paymentBegin,
+    payment_end: paymentEnd,
+  });
+
+  if (parsed.code !== 0) {
+    throw new Error(
+      `Rewardoo Summary API 错误 ${parsed.code}${parsed.message ? `: ${parsed.message}` : ''}`,
+    );
+  }
+
+  return parsed.rows;
 }
 
 /**

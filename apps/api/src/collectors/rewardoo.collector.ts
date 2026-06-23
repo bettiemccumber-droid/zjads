@@ -44,12 +44,12 @@ export interface RwCommissionTotals {
   apiListRows: number;
   orderCount: number;
   totalCommission: number;
-  apiSource: RwCommissionOp | 'none';
+  apiSource: string;
 }
 
 export interface RwFetchBundle {
   rows: RwCommissionRow[];
-  source: RwCommissionOp | 'none';
+  source: string;
 }
 
 /**
@@ -131,7 +131,7 @@ export function normalizeRewardooOrders(
 /** 汇总 API 行数与佣金（对账用） */
 export function summarizeRwCommissionApi(
   rows: RwCommissionRow[],
-  source: RwCommissionOp | 'none',
+  source: string,
   range?: { startDate: string; endDate: string },
 ): RwCommissionTotals {
   const normalized = normalizeRewardooOrders(rows, [], range);

@@ -9,16 +9,28 @@ export const RW_MAX_DAYS_PER_REQUEST = 62;
 /** TransactionDetails 默认分页大小 */
 export const RW_PAGE_SIZE = 500;
 
-/** 按优先级尝试的佣金数据源（transaction 为空时回退 Performance 类接口） */
+/** 按优先级尝试的佣金数据源（commission 模块，payment_begin/end） */
 export const RW_COMMISSION_OPS = [
   'transaction',
   'performance',
   'merchant',
   'report',
   'list',
+  'cpc',
+  'cpc_performance',
 ] as const;
 
 export type RwCommissionOp = (typeof RW_COMMISSION_OPS)[number];
+
+/** performance 模块（begin/end，对齐后台 Performance 看板） */
+export const RW_PERFORMANCE_OPS = [
+  'report',
+  'merchant',
+  'summary',
+  'transaction',
+] as const;
+
+export type RwPerformanceOp = (typeof RW_PERFORMANCE_OPS)[number];
 
 /** 保守节流，避免 1002 调用频率过高 */
 const MIN_REQUEST_INTERVAL_MS = 2200;
@@ -44,7 +56,7 @@ export interface RwDateChunk {
 }
 
 export interface RwFetchResult {
-  source: RwCommissionOp | 'none';
+  source: string;
   rows: unknown[];
 }
 
@@ -100,17 +112,36 @@ export function parseRwApiEnvelope(body: unknown): {
   offset: number | null;
   pageSize: number | null;
 } {
-  const root = body as RwApiEnvelope;
-  const code = root.status?.code ?? -1;
-  const message = String(root.status?.msg ?? '').trim();
+  const root = body as Record<string, unknown>;
+  const statusRaw = root.status;
+  let code = -1;
+  if (typeof statusRaw === 'number') {
+    code = statusRaw === 200 ? 0 : statusRaw;
+  } else if (statusRaw && typeof statusRaw === 'object') {
+    const status = statusRaw as RwApiStatus;
+    code = status.code ?? -1;
+    if (code === 200) code = 0;
+  } else if (statusRaw === 0 || statusRaw === '0') {
+    code = 0;
+  }
+
+  const message = String(
+    (statusRaw && typeof statusRaw === 'object'
+      ? (statusRaw as RwApiStatus).msg
+      : '') ||
+      root.msg ||
+      root.info ||
+      '',
+  ).trim();
+
   const rows = extractRwRows(body);
 
   return {
     code,
     message,
     rows,
-    offset: root.offset ?? null,
-    pageSize: root.pageSize ?? null,
+    offset: typeof root.offset === 'number' ? root.offset : null,
+    pageSize: typeof root.pageSize === 'number' ? root.pageSize : null,
   };
 }
 
@@ -143,13 +174,14 @@ function extractRwRows(body: unknown): unknown[] {
  * 调用 Rewardoo API（POST x-www-form-urlencoded）
  */
 export async function postRewardooApi(
+  mod: string,
   op: string,
   params: Record<string, string>,
 ): Promise<ReturnType<typeof parseRwApiEnvelope>> {
   await throttleRwRequest();
 
-  const { data } = await axios.post<RwApiEnvelope>(
-    `${RW_API_BASE}?mod=commission&op=${encodeURIComponent(op)}`,
+  const { data } = await axios.post<RwApiEnvelope | string>(
+    `${RW_API_BASE}?mod=${encodeURIComponent(mod)}&op=${encodeURIComponent(op)}`,
     new URLSearchParams(params).toString(),
     {
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
@@ -158,11 +190,27 @@ export async function postRewardooApi(
     },
   );
 
+  if (typeof data === 'string') {
+    const msg = data.trim();
+    if (/token error/i.test(msg)) {
+      return { code: 1001, message: msg, rows: [], offset: null, pageSize: null };
+    }
+    return { code: -1, message: msg, rows: [], offset: null, pageSize: null };
+  }
+
   return parseRwApiEnvelope(data);
 }
 
+/** @deprecated 使用 postRewardooApi('commission', op, params) */
+export async function postRewardooCommissionApi(
+  op: string,
+  params: Record<string, string>,
+): Promise<ReturnType<typeof parseRwApiEnvelope>> {
+  return postRewardooApi('commission', op, params);
+}
+
 /**
- * 拉取单段 Rewardoo 佣金数据（分页）
+ * 拉取单段 Rewardoo commission 模块数据（payment_begin/end）
  */
 export async function fetchRewardooOpChunk(
   op: RwCommissionOp,
@@ -171,14 +219,36 @@ export async function fetchRewardooOpChunk(
   end: string,
   pageSize = RW_PAGE_SIZE,
 ): Promise<unknown[]> {
+  return fetchRewardooPaged('commission', op, apiToken, { payment_begin: begin, payment_end: end }, pageSize);
+}
+
+/**
+ * 拉取单段 Rewardoo performance 模块数据（begin/end）
+ */
+export async function fetchRewardooPerformanceChunk(
+  op: RwPerformanceOp,
+  apiToken: string,
+  begin: string,
+  end: string,
+  pageSize = RW_PAGE_SIZE,
+): Promise<unknown[]> {
+  return fetchRewardooPaged('performance', op, apiToken, { begin, end }, pageSize);
+}
+
+async function fetchRewardooPaged(
+  mod: string,
+  op: string,
+  apiToken: string,
+  dateParams: Record<string, string>,
+  pageSize: number,
+): Promise<unknown[]> {
   const all: unknown[] = [];
   let offset = 0;
 
   for (let page = 0; page < 500; page += 1) {
-    const parsed = await postRewardooApi(op, {
+    const parsed = await postRewardooApi(mod, op, {
       token: apiToken,
-      payment_begin: begin,
-      payment_end: end,
+      ...dateParams,
       offset: String(offset),
       pageSize: String(pageSize),
     });
@@ -190,7 +260,7 @@ export async function fetchRewardooOpChunk(
 
     if (parsed.code !== 0) {
       throw new Error(
-        `Rewardoo ${op} API 错误 ${parsed.code}${parsed.message ? `: ${parsed.message}` : ''}`,
+        `Rewardoo ${mod}/${op} API 错误 ${parsed.code}${parsed.message ? `: ${parsed.message}` : ''}`,
       );
     }
 
@@ -234,7 +304,30 @@ export async function fetchRewardooOpPages(
 }
 
 /**
- * 依次尝试 transaction / performance / merchant 等，返回首个非空数据源
+ * 按 62 天窗口拉取 performance 模块全量行
+ */
+export async function fetchRewardooPerformancePages(
+  op: RwPerformanceOp,
+  apiToken: string,
+  startDate: string,
+  endDate: string,
+  onProgress?: (chunkIndex: number, totalChunks: number) => void | Promise<void>,
+): Promise<unknown[]> {
+  const chunks = buildRwDateChunks(startDate, endDate);
+  const all: unknown[] = [];
+
+  for (let i = 0; i < chunks.length; i += 1) {
+    await onProgress?.(i + 1, chunks.length);
+    const chunk = chunks[i];
+    const rows = await fetchRewardooPerformanceChunk(op, apiToken, chunk.begin, chunk.end);
+    all.push(...rows);
+  }
+
+  return all;
+}
+
+/**
+ * 依次尝试 commission / performance 模块，返回首个非空数据源
  */
 export async function fetchRewardooCommissionData(
   apiToken: string,
@@ -243,18 +336,44 @@ export async function fetchRewardooCommissionData(
   onProgress?: (message: string) => void | Promise<void>,
 ): Promise<RwFetchResult> {
   for (const op of RW_COMMISSION_OPS) {
-    await onProgress?.(`RW ${op} 拉取中…`);
-    const rows = await fetchRewardooOpPages(
-      op,
-      apiToken,
-      startDate,
-      endDate,
-      async (chunkIndex, totalChunks) => {
-        await onProgress?.(`RW ${op} ${chunkIndex}/${totalChunks} 段…`);
-      },
-    );
-    if (rows.length) {
-      return { source: op, rows };
+    await onProgress?.(`RW commission/${op} 拉取中…`);
+    try {
+      const rows = await fetchRewardooOpPages(
+        op,
+        apiToken,
+        startDate,
+        endDate,
+        async (chunkIndex, totalChunks) => {
+          await onProgress?.(`RW commission/${op} ${chunkIndex}/${totalChunks} 段…`);
+        },
+      );
+      if (rows.length) {
+        return { source: `commission/${op}`, rows };
+      }
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      await onProgress?.(`RW commission/${op} 跳过: ${msg.slice(0, 80)}`);
+    }
+  }
+
+  for (const op of RW_PERFORMANCE_OPS) {
+    await onProgress?.(`RW performance/${op} 拉取中…`);
+    try {
+      const rows = await fetchRewardooPerformancePages(
+        op,
+        apiToken,
+        startDate,
+        endDate,
+        async (chunkIndex, totalChunks) => {
+          await onProgress?.(`RW performance/${op} ${chunkIndex}/${totalChunks} 段…`);
+        },
+      );
+      if (rows.length) {
+        return { source: `performance/${op}`, rows };
+      }
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      await onProgress?.(`RW performance/${op} 跳过: ${msg.slice(0, 80)}`);
     }
   }
 
@@ -289,7 +408,7 @@ export async function postRewardooCommissionSummary(
   paymentBegin: string,
   paymentEnd: string,
 ): Promise<unknown[]> {
-  const parsed = await postRewardooApi('summary', {
+  const parsed = await postRewardooApi('commission', 'summary', {
     token: apiToken,
     payment_begin: paymentBegin,
     payment_end: paymentEnd,

@@ -7,7 +7,10 @@ import * as dotenv from 'dotenv';
 import { PrismaClient } from '@prisma/client';
 import {
   RW_COMMISSION_OPS,
+  RW_PERFORMANCE_OPS,
+  fetchRewardooCommissionData,
   fetchRewardooOpPages,
+  fetchRewardooPerformancePages,
   postRewardooCommissionSummary,
 } from '../src/collectors/rewardoo-api.util';
 import {
@@ -63,16 +66,29 @@ async function main() {
   for (const op of RW_COMMISSION_OPS) {
     try {
       const rows = await fetchRewardooOpPages(op, apiToken, start, end);
-      const summary = summarizeRwCommissionApi(rows as never[], op, { startDate: start, endDate: end });
-      console.log(
-        `[${op}] apiRows=${summary.apiListRows} orders=${summary.orderCount} comm=$${summary.totalCommission}`,
-      );
-      if (rows[0]) {
-        console.log('  sample keys:', Object.keys(rows[0] as object).join(', '));
-        console.log('  sample:', JSON.stringify(rows[0]).slice(0, 300));
-      }
+      logOp(`commission/${op}`, rows);
     } catch (e) {
-      console.log(`[${op}] ERROR`, e instanceof Error ? e.message : e);
+      console.log(`[commission/${op}] ERROR`, e instanceof Error ? e.message : e);
+    }
+  }
+
+  for (const op of RW_PERFORMANCE_OPS) {
+    try {
+      const rows = await fetchRewardooPerformancePages(op, apiToken, start, end);
+      logOp(`performance/${op}`, rows);
+    } catch (e) {
+      console.log(`[performance/${op}] ERROR`, e instanceof Error ? e.message : e);
+    }
+  }
+
+  function logOp(label: string, rows: unknown[]) {
+    const summary = summarizeRwCommissionApi(rows as never[], label, { startDate: start, endDate: end });
+    console.log(
+      `[${label}] apiRows=${summary.apiListRows} orders=${summary.orderCount} comm=$${summary.totalCommission}`,
+    );
+    if (rows[0]) {
+      console.log('  sample keys:', Object.keys(rows[0] as object).join(', '));
+      console.log('  sample:', JSON.stringify(rows[0]).slice(0, 300));
     }
   }
 

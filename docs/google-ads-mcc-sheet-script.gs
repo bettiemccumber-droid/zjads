@@ -20,7 +20,7 @@
  *
  * 【通用特性】
  *   - 两阶段采集：先诊断（统计各账户 non-REMOVED campaign 数）→ 再采集（含全 PAUSED 账户的历史报告）。
- *   - 五张核心数据表：raw_daily_report、raw_daily_keywords、raw_daily_search_terms、campaign_budget_snapshots、raw_daily_account_cost。
+ *   - 四张数据表：raw_daily_report（广告级）、raw_daily_keywords（关键词级）、raw_daily_search_terms（搜索字词级）、campaign_budget_snapshots（预算快照级）。
  *   - 采集函数主查询失败直接抛错，不标记"已处理"，保留旧数据避免静默丢失。
  *   - 严格 28 分钟时间控制 + Sheet 断点续跑 + 全链路日志 + 邮件告警。
  *
@@ -34,24 +34,6 @@
  * 【v11.1 变更】
  *   - 诊断改为统计 campaign.status != REMOVED（不再仅数 ENABLED）。
  *   - 0 个 ENABLED 的子账户仍采集 collectReportRows_ 历史广告报告（修复 wherelight 类漏数）。
- *
- * 【v11.2 变更】
- *   - collectReportRows_ 增加 campaign 级兜底：ad_group_ad 无行但 campaign 有花费时仍写入 raw_daily_report。
- *
- * 【v11.3 变更】
- *   - 日常模式：仅当 ad_rows>0 / kw_rows>0 才覆写对应 Sheet 窗口，避免采空却删旧数据。
- *   - 日常/初始化均写入 raw_daily_account_cost（账户级日花费，与 Google 后台一致，供 ZJads 对账补齐）。
- *
- * 【v11.4 变更】
- *   - raw_daily_report 改为 campaign 级主查询（与 Google 系列按日视图一致）；
- *     ad_group_ad 仅在有真实花费时作广告明细，避免空占坑挡住 campaign 兜底（Harney 类漏采）。
- *
- * 【v11.5 变更】
- *   - campaign 按日指标优先使用 AdsApp.search（Google 推荐）；report 作回退并输出诊断计数。
- *     修复 v11.4 日志中「campaign级0行」但 Google 后台系列有花费的问题。
- *
- * 【v11.6 变更】
- *   - collectReportRows_ 改为 ad_group_ad 明细优先、campaign 级仅作兜底，避免 camp 分支覆盖 ad 明细。
  *
  *   4. 也可单独运行 runMonthlyCostSummary()，根据 lookback_days 自动切换模式：
  *      - lookback_days=0 → 初始化：从 2025-01-01 至今天全量按月汇总
@@ -78,7 +60,6 @@ var SHEET_REPORT = 'raw_daily_report';
 var SHEET_KEYWORDS = 'raw_daily_keywords';
 var SHEET_SEARCH_TERMS = 'raw_daily_search_terms';
 var SHEET_BUDGET_SNAPSHOTS = 'campaign_budget_snapshots';
-var SHEET_ACCOUNT_DAILY = 'raw_daily_account_cost';
 var SHEET_MONTHLY_COST = 'monthly_account_cost';
 var SHEET_MONTHLY_SUMMARY = 'monthly_account_cost_summary';
 var SHEET_MONTHLY_STATE = 'monthly_resume_state';
@@ -138,11 +119,6 @@ var BUDGET_SNAPSHOT_HEADERS = [
   'snapshot_date', 'customer_id', 'customer_name', 'mcc_id', 'currency',
   'campaign_id', 'campaign_name', 'campaign_status', 'channel_type', 'campaign_budget',
   'snapshot_time', 'updated_at'
-];
-
-var ACCOUNT_DAILY_HEADERS = [
-  'date', 'customer_id', 'customer_name', 'mcc_id', 'currency',
-  'cost', 'cost_micros', 'updated_at'
 ];
 
 var MONTHLY_COST_HEADERS = [
@@ -368,17 +344,6 @@ function main() {
           }
           kwRowsWritten += kwRows.length;
 
-          var acctDailyRows = buildAccountDailyRows_(
-            collectAccountDailyCosts_(state.startDate, state.endDate),
-            state.timezone
-          );
-          if (acctDailyRows.length > 0) {
-            removeAccountWindowRows_(
-              ss, SHEET_ACCOUNT_DAILY, ACCOUNT_DAILY_HEADERS, accountId, state.startDate, state.endDate
-            );
-            appendRowsToSheet_(ss, SHEET_ACCOUNT_DAILY, ACCOUNT_DAILY_HEADERS, acctDailyRows);
-          }
-
           if (useSt) {
             try {
               var stRows = collectSearchTermRows_(
@@ -445,10 +410,7 @@ function main() {
       var allKwRows = [];
       var allStRows = [];
       var allBudgetSnapshotRows = [];
-      var allAccountDailyRows = [];
-      var processedReportAccountIds = [];
-      var processedKwAccountIds = [];
-      var processedAccountDailyIds = [];
+      var processedAccountIds = [];
       var pausedSnapshotAccountIds = [];
       var collectCursor = state.cursor;
 
@@ -497,20 +459,8 @@ function main() {
           pushAll_(allBudgetSnapshotRows, budgetSnapshotRows);
           pushAll_(allAdRows, adRows);
           pushAll_(allKwRows, kwRows);
-          if (adRows.length > 0) {
-            processedReportAccountIds.push(accountId);
-            accountsWithData++;
-          }
-          if (useKw && kwRows.length > 0) {
-            processedKwAccountIds.push(accountId);
-          }
-
-          var acctDailyCached = collectAccountDailyCosts_(state.startDate, state.endDate);
-          var acctDailyRows = buildAccountDailyRows_(acctDailyCached, state.timezone);
-          if (acctDailyRows.length > 0) {
-            pushAll_(allAccountDailyRows, acctDailyRows);
-            processedAccountDailyIds.push(accountId);
-          }
+          processedAccountIds.push(accountId);
+          if (adRows.length > 0) { accountsWithData++; }
 
           if (useSt) {
             try {
@@ -576,7 +526,7 @@ function main() {
       }
 
       try {
-        var budgetSnapshotAccountIds = processedReportAccountIds.concat(pausedSnapshotAccountIds);
+        var budgetSnapshotAccountIds = processedAccountIds.concat(pausedSnapshotAccountIds);
         if (allBudgetSnapshotRows.length > 0 || budgetSnapshotAccountIds.length > 0) {
           detectBudgetChanges_(ss, allBudgetSnapshotRows, state.timezone);
           bulkWriteWindowData_(
@@ -589,41 +539,30 @@ function main() {
           console.log('  预算快照写入: ' + allBudgetSnapshotRows.length + ' 行');
         }
 
-        if (allAdRows.length > 0 || processedReportAccountIds.length > 0) {
+        if (allAdRows.length > 0 || processedAccountIds.length > 0) {
           backfillHistoricalCampaignBudgets_(
-            ss, allAdRows, processedReportAccountIds,
+            ss, allAdRows, processedAccountIds,
             state.startDate, state.endDate, state.timezone
           );
           adRowsWritten = bulkWriteWindowData_(
             ss, SHEET_REPORT, REPORT_HEADERS,
             state.startDate, state.endDate,
             state.retentionCutoff || '',
-            allAdRows, processedReportAccountIds
+            allAdRows, processedAccountIds
           );
           SpreadsheetApp.flush();
           console.log('  广告报告写入: ' + adRowsWritten + ' 行');
         }
 
-        if (useKw && (allKwRows.length > 0 || processedKwAccountIds.length > 0)) {
+        if (useKw && (allKwRows.length > 0 || processedAccountIds.length > 0)) {
           kwRowsWritten = bulkWriteWindowData_(
             ss, SHEET_KEYWORDS, KEYWORD_HEADERS,
             state.startDate, state.endDate,
             state.retentionCutoff || '',
-            allKwRows, processedKwAccountIds
+            allKwRows, processedAccountIds
           );
           SpreadsheetApp.flush();
           console.log('  关键词报告写入: ' + kwRowsWritten + ' 行');
-        }
-
-        if (allAccountDailyRows.length > 0 || processedAccountDailyIds.length > 0) {
-          var acctDailyWritten = bulkWriteWindowData_(
-            ss, SHEET_ACCOUNT_DAILY, ACCOUNT_DAILY_HEADERS,
-            state.startDate, state.endDate,
-            state.retentionCutoff || '',
-            allAccountDailyRows, processedAccountDailyIds
-          );
-          SpreadsheetApp.flush();
-          console.log('  账户日花费写入: ' + acctDailyWritten + ' 行');
         }
 
         if (useSt && (allStRows.length > 0 || isNewCycle)) {
@@ -634,7 +573,7 @@ function main() {
         }
 
         if (adRowsWritten === 0 && kwRowsWritten === 0 && stRowsWritten === 0 &&
-            processedReportAccountIds.length === 0) {
+            processedAccountIds.length === 0) {
           console.log('无新数据，无已处理账户');
         }
 
@@ -1004,14 +943,15 @@ function collectBudgetSnapshotRows_(timezone, accountId, accountName) {
 
 /**
  * 采集广告级日报数据（含广告系列级 SIS / Budget Lost IS / Rank Lost IS）。
- * v11.4 起以 campaign 级按日指标为主（对齐 Google 系列报告），ad_group_ad 仅作广告明细补充。
+ * 广告系列预算额外写入独立快照表；日报中的 budget 列仍保留兼容用途。
+ * SIS 查询失败为非致命（enrichment），主查询失败直接抛错。
  * @param {string} startDate 开始日期。
  * @param {string} endDate 结束日期。
  * @param {string} timezone 时区。
  * @param {string} accountId 账户 ID。
  * @param {string} accountName 账户名。
  * @return {!Array<!Array<*>>}
- * @throws {Error} campaign / ad_group_ad 查询失败时抛出。
+ * @throws {Error} 主 ad_group_ad 查询失败时抛出。
  */
 function collectReportRows_(startDate, endDate, timezone, accountId, accountName, budgetAmountMap) {
   var updatedAt = formatDateTime_(new Date(), timezone);
@@ -1103,17 +1043,8 @@ function collectReportRows_(startDate, endDate, timezone, accountId, accountName
     console.log('    ⚠️ 地理定向查询失败(非致命，target_country列将为空): ' + toErrMsg_(e));
   }
 
-  var campLoad = loadCampaignDailyMetrics_(startDate, endDate);
-  var campByKey = campLoad.map;
-  if (campLoad.source !== 'none' || campLoad.searchCount > 0 || campLoad.reportRaw > 0) {
-    console.log('    ℹ️ campaign指标: 源=' + campLoad.source +
-      ' search=' + campLoad.searchCount +
-      ' reportRaw=' + campLoad.reportRaw +
-      ' 有效keys=' + Object.keys(campByKey).length);
-  }
-
-  var adByKey = {};
-  var adQuery =
+  var out = [];
+  var query =
     'SELECT ' +
     'segments.date, customer.currency_code, ' +
     'campaign.id, campaign.name, campaign.status, campaign.advertising_channel_type, ' +
@@ -1124,272 +1055,51 @@ function collectReportRows_(startDate, endDate, timezone, accountId, accountName
     'metrics.ctr, metrics.average_cpc ' +
     'FROM ad_group_ad ' +
     "WHERE campaign.status != 'REMOVED' " +
+    "AND ad_group.status != 'REMOVED' " +
+    "AND ad_group_ad.status != 'REMOVED' " +
     "AND segments.date BETWEEN '" + startDate + "' AND '" + endDate + "'";
-  var adRows = AdsApp.report(adQuery).rows();
-  while (adRows.hasNext()) {
-    var r = adRows.next();
-    var adCampId = safeStr_(r['campaign.id']);
-    var adDateStr = safeStr_(r['segments.date']);
-    var adKey = adCampId + '_' + adDateStr;
-    if (!adByKey[adKey]) { adByKey[adKey] = []; }
-    adByKey[adKey].push(r);
-  }
 
-  var out = [];
-  var campUsed = 0;
-  var adDetailUsed = 0;
-  var keysSeen = {};
-
-  /**
-   * 将 ad_group_ad 行写入输出数组。
-   * @param {!Object} ar GAQL 行。
-   */
-  var pushAdReportRow_ = function(ar) {
-    var arCampId = safeStr_(ar['campaign.id']);
-    var arDateStr = safeStr_(ar['segments.date']);
-    var arSisKey = arCampId + '_' + arDateStr;
-    var arSisData = sisMap[arSisKey] || {};
+  var rows = AdsApp.report(query).rows();
+  while (rows.hasNext()) {
+    var r = rows.next();
+    var campId = safeStr_(r['campaign.id']);
+    var dateStr = safeStr_(r['segments.date']);
+    var sisKey = campId + '_' + dateStr;
+    var sisData = sisMap[sisKey] || {};
     out.push([
-      arDateStr,
+      dateStr,
       accountId,
       accountName,
       RUNTIME.mccId,
-      safeStr_(ar['customer.currency_code']),
-      arCampId,
-      safeStr_(ar['campaign.name']),
-      safeStr_(ar['campaign.status']),
-      safeStr_(ar['campaign.advertising_channel_type']),
-      budgetAmountMap[arCampId] !== undefined ? budgetAmountMap[arCampId] : '',
-      geoMap[arCampId] || '',
-      safeStr_(ar['ad_group.id']),
-      safeStr_(ar['ad_group.name']),
-      safeStr_(ar['ad_group_ad.ad.id']),
-      safeStr_(ar['ad_group_ad.ad.type']),
-      safeStr_(ar['ad_group_ad.status']),
-      safeStr_(ar['ad_group_ad.ad.final_urls']),
-      safeNum_(ar['metrics.impressions']),
-      safeNum_(ar['metrics.clicks']),
-      microsToCurrency_(ar['metrics.cost_micros']),
-      safeNum_(ar['metrics.cost_micros']),
-      safeNum_(ar['metrics.conversions']),
-      safeNum_(ar['metrics.conversions_value']),
-      safeNum_(ar['metrics.ctr']),
-      microsToCurrency_(ar['metrics.average_cpc']),
-      arSisData.sis !== undefined ? arSisData.sis : '',
-      arSisData.budgetLost !== undefined ? arSisData.budgetLost : '',
-      arSisData.rankLost !== undefined ? arSisData.rankLost : '',
+      safeStr_(r['customer.currency_code']),
+      campId,
+      safeStr_(r['campaign.name']),
+      safeStr_(r['campaign.status']),
+      safeStr_(r['campaign.advertising_channel_type']),
+      budgetAmountMap[campId] !== undefined ? budgetAmountMap[campId] : '',
+      geoMap[campId] || '',
+      safeStr_(r['ad_group.id']),
+      safeStr_(r['ad_group.name']),
+      safeStr_(r['ad_group_ad.ad.id']),
+      safeStr_(r['ad_group_ad.ad.type']),
+      safeStr_(r['ad_group_ad.status']),
+      safeStr_(r['ad_group_ad.ad.final_urls']),
+      safeNum_(r['metrics.impressions']),
+      safeNum_(r['metrics.clicks']),
+      microsToCurrency_(r['metrics.cost_micros']),
+      safeNum_(r['metrics.cost_micros']),
+      safeNum_(r['metrics.conversions']),
+      safeNum_(r['metrics.conversions_value']),
+      safeNum_(r['metrics.ctr']),
+      microsToCurrency_(r['metrics.average_cpc']),
+      sisData.sis !== undefined ? sisData.sis : '',
+      sisData.budgetLost !== undefined ? sisData.budgetLost : '',
+      sisData.rankLost !== undefined ? sisData.rankLost : '',
       updatedAt
     ]);
-    adDetailUsed += 1;
-  };
-
-  // Pass 1: ad 明细优先（与 Google 后台系列按日视图一致）
-  for (var ak in adByKey) {
-    var adList = adByKey[ak];
-    var emittedForKey = false;
-    for (var ai = 0; ai < adList.length; ai++) {
-      var ar = adList[ai];
-      var arImp = safeNum_(ar['metrics.impressions']);
-      var arClk = safeNum_(ar['metrics.clicks']);
-      var arCostMicros = safeNum_(ar['metrics.cost_micros']);
-      if (arImp === 0 && arClk === 0 && arCostMicros === 0) { continue; }
-      pushAdReportRow_(ar);
-      emittedForKey = true;
-    }
-    if (emittedForKey) { keysSeen[ak] = true; }
-  }
-
-  // Pass 2: campaign 级兜底（search 有指标、ad 明细未覆盖的 campaign×day）
-  for (var ck in campByKey) {
-    if (keysSeen[ck]) { continue; }
-    var camp = campByKey[ck];
-    var campSisKey = camp.campId + '_' + camp.dateStr;
-    var campSisData = sisMap[campSisKey] || {};
-    out.push([
-      camp.dateStr,
-      accountId,
-      accountName,
-      RUNTIME.mccId,
-      camp.currency,
-      camp.campId,
-      camp.campName,
-      camp.campStatus,
-      camp.channelType,
-      budgetAmountMap[camp.campId] !== undefined ? budgetAmountMap[camp.campId] : '',
-      geoMap[camp.campId] || '',
-      '',
-      '',
-      '',
-      '',
-      '',
-      '',
-      camp.impressions,
-      camp.clicks,
-      microsToCurrency_(camp.costMicros),
-      camp.costMicros,
-      camp.conversions,
-      camp.conversionsValue,
-      camp.ctr,
-      camp.avgCpc,
-      campSisData.sis !== undefined ? campSisData.sis : '',
-      campSisData.budgetLost !== undefined ? campSisData.budgetLost : '',
-      campSisData.rankLost !== undefined ? campSisData.rankLost : '',
-      updatedAt
-    ]);
-    campUsed += 1;
-    keysSeen[ck] = true;
-  }
-
-  if (campUsed > 0 || adDetailUsed > 0) {
-    console.log('    ℹ️ 报告来源: campaign级' + campUsed + '行 + ad级明细' + adDetailUsed + '行');
   }
 
   return out;
-}
-
-/**
- * 构造 campaign 按日 GAQL。
- * @param {string} startDate 起始日期 yyyy-MM-dd。
- * @param {string} endDate 结束日期 yyyy-MM-dd。
- * @return {string}
- */
-function buildCampaignDailyGaql_(startDate, endDate) {
-  return (
-    'SELECT segments.date, customer.currency_code, ' +
-    'campaign.id, campaign.name, campaign.status, campaign.advertising_channel_type, ' +
-    'metrics.impressions, metrics.clicks, metrics.cost_micros, ' +
-    'metrics.conversions, metrics.conversions_value, ' +
-    'metrics.ctr, metrics.average_cpc ' +
-    'FROM campaign ' +
-    "WHERE campaign.status != 'REMOVED' " +
-    "AND segments.date BETWEEN '" + startDate + "' AND '" + endDate + "'"
-  );
-}
-
-/**
- * 将 segments.date 规范为 yyyy-MM-dd。
- * @param {*} v search/report 返回的日期值。
- * @return {string}
- */
-function segmentDateToStr_(v) {
-  if (v == null || v === '') { return ''; }
-  return toDateStr_(v);
-}
-
-/**
- * 从 AdsApp.search 行写入 campaign×date 指标映射。
- * @param {!Object} map 目标映射 campId_date → 指标对象。
- * @param {!Object} row search 结果行。
- */
-function putCampaignMetricsFromSearchRow_(map, row) {
-  var camp = row.campaign || {};
-  var campId = camp.id != null ? safeStr_(camp.id) : '';
-  var dateStr = segmentDateToStr_(row.segments && row.segments.date);
-  if (!campId || !dateStr) { return; }
-
-  var m = row.metrics || {};
-  var imp = safeNum_(m.impressions);
-  var clk = safeNum_(m.clicks);
-  var costMicros = safeNum_(m.costMicros != null ? m.costMicros : m.cost_micros);
-  if (imp === 0 && clk === 0 && costMicros === 0) { return; }
-
-  var cust = row.customer || {};
-  map[campId + '_' + dateStr] = {
-    dateStr: dateStr,
-    currency: safeStr_(cust.currencyCode || cust.currency_code || ''),
-    campId: campId,
-    campName: safeStr_(camp.name),
-    campStatus: safeStr_(camp.status),
-    channelType: safeStr_(camp.advertisingChannelType || camp.advertising_channel_type || ''),
-    impressions: imp,
-    clicks: clk,
-    costMicros: costMicros,
-    conversions: safeNum_(m.conversions),
-    conversionsValue: safeNum_(m.conversionsValue != null ? m.conversionsValue : m.conversions_value),
-    ctr: safeNum_(m.ctr),
-    avgCpc: microsToCurrency_(m.averageCpc != null ? m.averageCpc : m.average_cpc)
-  };
-}
-
-/**
- * 从 AdsApp.report 字典行写入 campaign×date 指标映射。
- * @param {!Object} map 目标映射。
- * @param {!Object} cr report 行字典。
- */
-function putCampaignMetricsFromReportRow_(map, cr) {
-  var campId = safeStr_(cr['campaign.id']);
-  var dateStr = segmentDateToStr_(cr['segments.date']);
-  if (!campId || !dateStr) { return; }
-
-  var imp = safeNum_(cr['metrics.impressions']);
-  var clk = safeNum_(cr['metrics.clicks']);
-  var costMicros = safeNum_(cr['metrics.cost_micros']);
-  if (imp === 0 && clk === 0 && costMicros === 0) { return; }
-
-  map[campId + '_' + dateStr] = {
-    dateStr: dateStr,
-    currency: safeStr_(cr['customer.currency_code']),
-    campId: campId,
-    campName: safeStr_(cr['campaign.name']),
-    campStatus: safeStr_(cr['campaign.status']),
-    channelType: safeStr_(cr['campaign.advertising_channel_type']),
-    impressions: imp,
-    clicks: clk,
-    costMicros: costMicros,
-    conversions: safeNum_(cr['metrics.conversions']),
-    conversionsValue: safeNum_(cr['metrics.conversions_value']),
-    ctr: safeNum_(cr['metrics.ctr']),
-    avgCpc: microsToCurrency_(cr['metrics.average_cpc'])
-  };
-}
-
-/**
- * 加载 campaign×date 指标：优先 AdsApp.search，回退 AdsApp.report。
- * @param {string} startDate 起始日期。
- * @param {string} endDate 结束日期。
- * @return {{map:!Object, searchCount:number, reportRaw:number, source:string}}
- */
-function loadCampaignDailyMetrics_(startDate, endDate) {
-  var gaql = buildCampaignDailyGaql_(startDate, endDate);
-  var map = {};
-  var searchCount = 0;
-  var reportRaw = 0;
-  var source = 'none';
-
-  if (typeof AdsApp.search === 'function') {
-    try {
-      var iter = AdsApp.search(gaql);
-      while (iter.hasNext()) {
-        searchCount += 1;
-        putCampaignMetricsFromSearchRow_(map, iter.next());
-      }
-      if (Object.keys(map).length > 0) {
-        return { map: map, searchCount: searchCount, reportRaw: 0, source: 'search' };
-      }
-    } catch (e) {
-      console.log('    ⚠️ AdsApp.search(campaign) 失败: ' + toErrMsg_(e));
-    }
-  }
-
-  try {
-    var campRows = AdsApp.report(gaql).rows();
-    while (campRows.hasNext()) {
-      reportRaw += 1;
-      putCampaignMetricsFromReportRow_(map, campRows.next());
-    }
-    if (Object.keys(map).length > 0) {
-      source = 'report';
-    } else if (reportRaw > 0) {
-      console.log('    ⚠️ campaign report 返回 ' + reportRaw + ' 行但指标均为空');
-    }
-  } catch (e) {
-    console.log('    ⚠️ AdsApp.report(campaign) 失败: ' + toErrMsg_(e));
-  }
-
-  if (source === 'none' && Object.keys(map).length > 0) {
-    source = 'report';
-  }
-  return { map: map, searchCount: searchCount, reportRaw: reportRaw, source: source };
 }
 
 /**
@@ -1604,31 +1314,6 @@ function collectAccountDailyCosts_(startDate, endDate) {
   }
 
   return { baseInfo: baseInfo, dailyCosts: dailyCosts };
-}
-
-/**
- * 将 collectAccountDailyCosts_ 结果展开为 raw_daily_account_cost 表行。
- * @param {{baseInfo:{customerId:string,customerName:string,currency:string},dailyCosts:!Array<{date:string,costMicros:number}>}} cached 账户日花费。
- * @param {string} timezone 时区。
- * @return {!Array<!Array<*>>}
- */
-function buildAccountDailyRows_(cached, timezone) {
-  var updatedAt = formatDateTime_(new Date(), timezone);
-  var out = [];
-  for (var i = 0; i < cached.dailyCosts.length; i++) {
-    var dc = cached.dailyCosts[i];
-    out.push([
-      dc.date,
-      cached.baseInfo.customerId,
-      cached.baseInfo.customerName,
-      RUNTIME.mccId,
-      cached.baseInfo.currency,
-      microsToCurrency_(dc.costMicros),
-      dc.costMicros,
-      updatedAt
-    ]);
-  }
-  return out;
 }
 
 /**
@@ -2021,9 +1706,6 @@ function cleanupPendingInitRows_(ss, state, useKw, useSt) {
   removed += removeAccountWindowRows_(
     ss, SHEET_BUDGET_SNAPSHOTS, BUDGET_SNAPSHOT_HEADERS, pendingAccountId, endDate, endDate
   );
-  removed += removeAccountWindowRows_(
-    ss, SHEET_ACCOUNT_DAILY, ACCOUNT_DAILY_HEADERS, pendingAccountId, startDate, endDate
-  );
   console.log('  半成品清理完成: CID=' + pendingAccountId + ' removed=' + removed);
   return removed;
 }
@@ -2086,7 +1768,6 @@ function resetInitRawDataSheets_(ss) {
   rewriteSheetWithHeaders_(ss.getSheetByName(SHEET_KEYWORDS), KEYWORD_HEADERS);
   rewriteSheetWithHeaders_(ss.getSheetByName(SHEET_SEARCH_TERMS), SEARCH_TERM_HEADERS);
   rewriteSheetWithHeaders_(ss.getSheetByName(SHEET_BUDGET_SNAPSHOTS), BUDGET_SNAPSHOT_HEADERS);
-  rewriteSheetWithHeaders_(ss.getSheetByName(SHEET_ACCOUNT_DAILY), ACCOUNT_DAILY_HEADERS);
   console.log('  初始化模式新周期：已清空原始数据表，准备全量重建');
 }
 
@@ -2614,7 +2295,6 @@ function ensureSheets_(ss) {
   ensureSheet_(ss, SHEET_KEYWORDS, KEYWORD_HEADERS, forceClear);
   ensureSheet_(ss, SHEET_SEARCH_TERMS, SEARCH_TERM_HEADERS, forceClear);
   ensureSheet_(ss, SHEET_BUDGET_SNAPSHOTS, BUDGET_SNAPSHOT_HEADERS, false);
-  ensureSheet_(ss, SHEET_ACCOUNT_DAILY, ACCOUNT_DAILY_HEADERS, false);
   ensureSheet_(ss, SHEET_MONTHLY_COST, MONTHLY_COST_HEADERS, false);
   ensureSheet_(ss, SHEET_MONTHLY_SUMMARY, MONTHLY_SUMMARY_HEADERS, false);
   ensureSheet_(ss, SHEET_LOG, LOG_HEADERS, false);

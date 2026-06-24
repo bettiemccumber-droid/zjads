@@ -1,15 +1,10 @@
 import { Injectable } from '@nestjs/common';
 import axios from 'axios';
 import { dedupeAffiliateOrderKey } from '../common/order-dedupe.util';
-import { buildOrderDateRangeFilter } from '../common/order-date-range.util';
 import { resolveOrderCommissionBuckets } from '../common/order-commission-buckets.util';
 import {
   filterRowsByCampaignStatusMode,
   filterCampaignDailyByGroupStatus,
-  filterActiveCampaignRowsPerSubAccount,
-  isEnabledCampaignStatus,
-  PhysicalCampaignLatestMeta,
-  resolveActiveCampaignIdByCustomer,
   resolveCampaignStatusMode,
 } from '../common/campaign-status.util';
 import { parseCampaignName, inferPlatformNameFromAlias } from '../common/campaign-name.util';
@@ -17,22 +12,7 @@ import { resolveCampaignGroupKey } from '../common/campaign-group.util';
 import { suggestOperation } from '../common/operation-suggest.util';
 import { AuthUser, resolveOwnerUserId } from '../common/ownership.util';
 import { isLbClickPseudoMerchant } from '../collectors/linkbux-clicks';
-import {
-  ACCOUNT_DAILY_COST_TAB,
-  ACCOUNT_GAP_CAMPAIGN_ID,
-  BUDGET_SNAPSHOT_TAB,
-  MONTHLY_ACCOUNT_COST_TAB,
-  parseBudgetSnapshotCsv,
-  resolveEnabledCampaignsByCustomerFromSnapshots,
-  ParsedBudgetSnapshotRow,
-  applyAccountCostAdjustment,
-  buildSheetCsvUrl,
-  parseAccountDailyCostCsv,
-  parseAdSheetCsv,
-  parseMonthlyAccountCostCsv,
-  ParsedAccountDailyRow,
-  sumProratedMonthlyAccountCost,
-} from '../ad-sources/sheet-parser.util';
+import { buildSheetCsvUrl, parseAdSheetCsv } from '../ad-sources/sheet-parser.util';
 import { PrismaService } from '../prisma/prisma.service';
 
 export interface ReportDateQuery {
@@ -56,8 +36,6 @@ type AffiliateMetrics = {
 type AffiliateMetricsIndex = {
   byKey: Map<string, AffiliateMetrics>;
   byMerchantId: Map<string, AffiliateMetrics>;
-  /** RW：mcid slug + alias */
-  bySlugKey: Map<string, AffiliateMetrics>;
 };
 
 const EMPTY_AFFILIATE: AffiliateMetrics = {
@@ -171,7 +149,7 @@ export class ReportsService {
     const adRows = await this.prisma.adCampaignDaily.findMany({
       where: {
         ownerUserId: ownerId,
-        date: this.adDateRange(q.startDate, q.endDate),
+        date: { gte: new Date(q.startDate), lte: new Date(q.endDate) },
       },
     });
 
@@ -215,7 +193,7 @@ export class ReportsService {
     const affiliateClickRows = await this.prisma.affiliateMerchantClickDaily.findMany({
       where: {
         channelAccountId: { in: accountIds },
-        clickDate: this.adDateRange(q.startDate, q.endDate),
+        clickDate: { gte: new Date(q.startDate), lte: new Date(q.endDate) },
       },
       include: {
         channelAccount: { include: { platform: true } },
@@ -287,13 +265,6 @@ export class ReportsService {
       { orderCount: 0, totalCommission: 0, totalAdSpend: 0, totalClicks: 0, totalAffiliateClicks: 0 },
     );
 
-    const campaignDetailSpend = totals.totalAdSpend;
-    const accountLevelAdSpend = await this.resolveAccountLevelAdSpend(
-      ownerId,
-      q.startDate,
-      q.endDate,
-    );
-
     const overallRoi =
       totals.totalAdSpend > 0
         ? (totals.totalCommission - totals.totalAdSpend) / totals.totalAdSpend
@@ -305,9 +276,6 @@ export class ReportsService {
         ...totals,
         overallRoi,
         profit: totals.totalCommission - totals.totalAdSpend,
-        campaignDetailSpend,
-        accountLevelAdSpend,
-        adSpendSource: 'campaign_detail' as const,
       },
     };
   }
@@ -332,7 +300,7 @@ export class ReportsService {
     const adRows = await this.prisma.adCampaignDaily.findMany({
       where: {
         ownerUserId: ownerId,
-        date: this.adDateRange(q.startDate, q.endDate),
+        date: { gte: new Date(q.startDate), lte: new Date(q.endDate) },
       },
     });
 
@@ -430,28 +398,6 @@ export class ReportsService {
     await this.supplementCampaignsForAffiliateOrders_(ownerId, map, affiliateMetrics);
     await this.supplementOrphanMerchantCampaigns_(map, affiliateMetrics, accountIds, q.startDate, q.endDate);
 
-    const latestByPhysical = await this.loadLatestPhysicalCampaignMeta_(ownerId, q.endDate);
-    const budgetEnabled = await this.loadBudgetSnapshotEnabled_(ownerId, q.endDate);
-    const activeCampaignByCustomer =
-      budgetEnabled.activeByCustomer.size > 0
-        ? budgetEnabled.activeByCustomer
-        : resolveActiveCampaignIdByCustomer(latestByPhysical);
-    this.supplementActiveCampaignSnapshots_(
-      map,
-      activeCampaignByCustomer,
-      budgetEnabled.byCustomer,
-      latestByPhysical,
-    );
-    await this.allocateOrphanAccountSpendToActiveCampaigns_(
-      map,
-      adRows,
-      ownerId,
-      q.startDate,
-      q.endDate,
-      activeCampaignByCustomer,
-      budgetEnabled.byCustomer,
-    );
-
     const affiliateByDay = await this.buildAffiliateMetricsByMerchantDay(
       accountIds,
       q.startDate,
@@ -470,7 +416,6 @@ export class ReportsService {
           affiliateMetrics,
           r.merchantId,
           r.affiliateAlias,
-          parseCampaignName(r.campaignName).merchantSlug,
         );
         const cost = r.cost;
         const commission = affiliate.commission;
@@ -511,30 +456,11 @@ export class ReportsService {
     summary = this.dedupeAffiliateAttributionOnCampaigns(summary);
     summary.sort((a, b) => b.roi - a.roi || b.commission - a.commission || b.clicks - a.clicks);
 
-    summary = summary.map((row) => {
-      const activeId = activeCampaignByCustomer.get(row.customerId);
-      if (activeId && row.campaignId === activeId) {
-        return { ...row, campaignStatus: 'ENABLED' };
-      }
-      const physicalKey = `${row.customerId}|${row.campaignId}`;
-      const latest = latestByPhysical.get(physicalKey);
-      if (!latest) return row;
-      return {
-        ...row,
-        campaignStatus: latest.status || row.campaignStatus,
-        campaignName: latest.campaignName || row.campaignName,
-      };
-    });
-
     const countBeforeStatusFilter = summary.length;
     const hasStatusInRange = adRows.some((ad) => !!(ad.campaignStatus ?? '').trim());
 
     const statusMode = resolveCampaignStatusMode(q);
-    if (statusMode === 'active') {
-      summary = filterActiveCampaignRowsPerSubAccount(summary, activeCampaignByCustomer);
-    } else {
-      summary = filterRowsByCampaignStatusMode(summary, statusMode);
-    }
+    summary = filterRowsByCampaignStatusMode(summary, statusMode);
 
     const statusFilterSkipped =
       statusMode === 'active' &&
@@ -564,13 +490,6 @@ export class ReportsService {
       },
     );
 
-    const campaignDetailSpend = totals.cost;
-    const accountLevelAdSpend = await this.resolveAccountLevelAdSpend(
-      ownerId,
-      q.startDate,
-      q.endDate,
-    );
-
     const overallRoi =
       totals.cost > 0 ? (totals.commission - totals.cost) / totals.cost : 0;
 
@@ -581,14 +500,7 @@ export class ReportsService {
       enabledOnly: statusMode === 'active',
       statusFilterSkipped,
       totalBeforeStatusFilter: countBeforeStatusFilter,
-      totals: {
-        ...totals,
-        overallRoi,
-        profit: totals.commission - totals.cost,
-        campaignDetailSpend,
-        accountLevelAdSpend,
-        adSpendSource: 'campaign_detail' as const,
-      },
+      totals: { ...totals, overallRoi, profit: totals.commission - totals.cost },
     };
   }
 
@@ -612,7 +524,7 @@ export class ReportsService {
     const adRows = await this.prisma.adCampaignDaily.findMany({
       where: {
         ownerUserId: ownerId,
-        date: this.adDateRange(q.startDate, q.endDate),
+        date: { gte: new Date(q.startDate), lte: new Date(q.endDate) },
       },
       orderBy: [{ date: 'desc' }, { campaignName: 'asc' }],
     });
@@ -629,7 +541,6 @@ export class ReportsService {
             merchantId,
             alias,
             dateStr,
-            parsed.merchantSlug,
           );
           const cost = Number(ad.cost);
           const clicks = ad.clicks;
@@ -674,31 +585,6 @@ export class ReportsService {
       affiliateByDay,
       q.startDate,
       q.endDate,
-    );
-
-    rows = await this.supplementCampaignDailyFromAccountCost_(
-      rows,
-      ownerId,
-      q.startDate,
-      q.endDate,
-      affiliateByDay,
-    );
-
-    rows = await this.supplementSandwichedMissingCampaignDays_(
-      rows,
-      ownerId,
-      q.startDate,
-      q.endDate,
-      affiliateByDay,
-    );
-
-    /** 过滤导入/补齐产生的 0 展示 0 点击却有花费的幽灵行（仅保留真实 MCC 明细或 $0 联盟补行） */
-    rows = rows.filter(
-      (r) =>
-        r.campaignId === ACCOUNT_GAP_CAMPAIGN_ID ||
-        r.impressions > 0 ||
-        r.clicks > 0 ||
-        Number(r.cost) <= 0.005,
     );
 
     rows = this.dedupeAffiliateAttributionOnCampaignDaily(rows);
@@ -754,10 +640,9 @@ export class ReportsService {
   ): Promise<AffiliateMetricsIndex> {
     const byKey = new Map<string, AffiliateMetrics>();
     const byMerchantId = new Map<string, AffiliateMetrics>();
-    const bySlugKey = new Map<string, AffiliateMetrics>();
 
     if (!accountIds.length) {
-      return { byKey, byMerchantId, bySlugKey };
+      return { byKey, byMerchantId };
     }
 
     const ensure = (map: Map<string, AffiliateMetrics>, key: string) => {
@@ -778,41 +663,28 @@ export class ReportsService {
     for (const o of orders) {
       const merchantId = o.merchantId ?? '';
       const alias = (o.channelAccount.affiliateAlias || '').toLowerCase();
-      const slug = (o.merchantSlug || '').toLowerCase();
       const merchantKey = `${merchantId}|${alias}`;
-      const slugKey = slug ? `${slug}|${alias}` : '';
       const orderKey = `${o.channelAccountId}|${dedupeAffiliateOrderKey(o.externalOrderId)}`;
       const comm = Number(o.commission);
 
-      if (merchantId) {
-        ensure(byKey, merchantKey).commission += comm;
-        ensure(byMerchantId, merchantId).commission += comm;
-      }
-      if (slugKey) {
-        ensure(bySlugKey, slugKey).commission += comm;
-      }
+      ensure(byKey, merchantKey).commission += comm;
+      ensure(byMerchantId, merchantId).commission += comm;
 
-      if (merchantId && !orderSeenByKey.has(orderKey)) {
+      if (!orderSeenByKey.has(orderKey)) {
         orderSeenByKey.add(orderKey);
         ensure(byKey, merchantKey).orderCount += 1;
       }
-      if (merchantId) {
-        const midOrderKey = `${merchantId}|${orderKey}`;
-        if (!orderSeenByMerchant.has(midOrderKey)) {
-          orderSeenByMerchant.add(midOrderKey);
-          ensure(byMerchantId, merchantId).orderCount += 1;
-        }
-      }
-      if (slugKey && !orderSeenByKey.has(`${slugKey}|${orderKey}`)) {
-        orderSeenByKey.add(`${slugKey}|${orderKey}`);
-        ensure(bySlugKey, slugKey).orderCount += 1;
+      const midOrderKey = `${merchantId}|${orderKey}`;
+      if (!orderSeenByMerchant.has(midOrderKey)) {
+        orderSeenByMerchant.add(midOrderKey);
+        ensure(byMerchantId, merchantId).orderCount += 1;
       }
     }
 
     const clickRows = await this.prisma.affiliateMerchantClickDaily.findMany({
       where: {
         channelAccountId: { in: accountIds },
-        clickDate: this.adDateRange(startDate, endDate),
+        clickDate: { gte: new Date(startDate), lte: new Date(endDate) },
       },
       include: { channelAccount: true },
     });
@@ -826,8 +698,12 @@ export class ReportsService {
       ensure(byMerchantId, merchantId).affiliateClicks += c.clicks;
     }
 
-    return { byKey, byMerchantId, bySlugKey };
+    return { byKey, byMerchantId };
   }
+
+  /**
+   * 按商家+联盟序号+自然日汇总联盟订单与点击
+   */
   private async buildAffiliateMetricsByMerchantDay(
     accountIds: number[],
     startDate: string,
@@ -835,14 +711,12 @@ export class ReportsService {
   ): Promise<{
     byKey: Map<string, AffiliateMetrics>;
     byMerchantDay: Map<string, AffiliateMetrics>;
-    bySlugDay: Map<string, AffiliateMetrics>;
   }> {
     const byKey = new Map<string, AffiliateMetrics>();
     const byMerchantDay = new Map<string, AffiliateMetrics>();
-    const bySlugDay = new Map<string, AffiliateMetrics>();
 
     if (!accountIds.length) {
-      return { byKey, byMerchantDay, bySlugDay };
+      return { byKey, byMerchantDay };
     }
 
     const ensureKey = (map: Map<string, AffiliateMetrics>, key: string) => {
@@ -862,21 +736,16 @@ export class ReportsService {
     const orderSeenByMerchantDay = new Set<string>();
     for (const o of orders) {
       const merchantId = o.merchantId ?? '';
-      const slug = (o.merchantSlug || '').toLowerCase();
-      if (!merchantId && !slug) continue;
+      if (!merchantId) continue;
       const alias = (o.channelAccount.affiliateAlias || '').toLowerCase();
       const dateStr = o.orderDate.toISOString().slice(0, 10);
       const dayKey = `${merchantId}|${alias}|${dateStr}`;
       const merchantDayKey = `${merchantId}|${dateStr}`;
-      const slugDayKey = slug ? `${slug}|${alias}|${dateStr}` : '';
       const orderKey = `${o.channelAccountId}|${dedupeAffiliateOrderKey(o.externalOrderId)}`;
       const comm = Number(o.commission);
 
       ensureKey(byKey, dayKey).commission += comm;
       ensureKey(byMerchantDay, merchantDayKey).commission += comm;
-      if (slugDayKey) {
-        ensureKey(bySlugDay, slugDayKey).commission += comm;
-      }
 
       if (!orderSeenByKey.has(`${dayKey}|${orderKey}`)) {
         orderSeenByKey.add(`${dayKey}|${orderKey}`);
@@ -887,16 +756,12 @@ export class ReportsService {
         orderSeenByMerchantDay.add(midOrderKey);
         ensureKey(byMerchantDay, merchantDayKey).orderCount += 1;
       }
-      if (slugDayKey && !orderSeenByKey.has(`${slugDayKey}|${orderKey}`)) {
-        orderSeenByKey.add(`${slugDayKey}|${orderKey}`);
-        ensureKey(bySlugDay, slugDayKey).orderCount += 1;
-      }
     }
 
     const clickRows = await this.prisma.affiliateMerchantClickDaily.findMany({
       where: {
         channelAccountId: { in: accountIds },
-        clickDate: this.adDateRange(startDate, endDate),
+        clickDate: { gte: new Date(startDate), lte: new Date(endDate) },
       },
       include: { channelAccount: true },
     });
@@ -912,51 +777,27 @@ export class ReportsService {
       ensureKey(byMerchantDay, merchantDayKey).affiliateClicks += c.clicks;
     }
 
-    return { byKey, byMerchantDay, bySlugDay };
+    return { byKey, byMerchantDay };
   }
 
   private lookupAffiliateMetricsForDay(
-    index: {
-      byKey: Map<string, AffiliateMetrics>;
-      byMerchantDay: Map<string, AffiliateMetrics>;
-      bySlugDay: Map<string, AffiliateMetrics>;
-    },
+    index: { byKey: Map<string, AffiliateMetrics>; byMerchantDay: Map<string, AffiliateMetrics> },
     merchantId: string,
     alias: string,
     dateStr: string,
-    merchantSlug = '',
   ): AffiliateMetrics {
-    if (!merchantId && !merchantSlug) return { ...EMPTY_AFFILIATE };
+    if (!merchantId) return { ...EMPTY_AFFILIATE };
     const campaignAlias = (alias || '').toLowerCase();
-    const slug = merchantSlug.toLowerCase();
+    const exact = index.byKey.get(`${merchantId}|${campaignAlias}|${dateStr}`);
+    if (exact) return exact;
 
-    if (merchantId) {
-      const exact = index.byKey.get(`${merchantId}|${campaignAlias}|${dateStr}`);
-      if (exact) return exact;
-    }
-
-    if (campaignAlias.startsWith('rw') && slug) {
-      const slugHit = index.bySlugDay.get(`${slug}|${campaignAlias}|${dateStr}`);
-      if (slugHit) return slugHit;
-    }
-
-    /** PM/LB/LH/RW：精确 merchantId+alias 未命中时，回退到同商家当日合计 */
-    if (
-      merchantId &&
-      (campaignAlias.startsWith('pm') ||
-        campaignAlias.startsWith('lb') ||
-        campaignAlias.startsWith('lh') ||
-        campaignAlias.startsWith('rw'))
-    ) {
+    if (campaignAlias.startsWith('pm')) {
       return index.byMerchantDay.get(`${merchantId}|${dateStr}`) ?? { ...EMPTY_AFFILIATE };
     }
 
-    if (campaignAlias.startsWith('rw') && slug) {
-      for (const [key, metrics] of index.bySlugDay) {
-        if (key.endsWith(`|${campaignAlias}|${dateStr}`) && key.startsWith(`${slug}|`)) {
-          return metrics;
-        }
-      }
+    /** LB/LH 按天：同商家同序号精确匹配，否则回退到商家当日合计（与 PM 一致） */
+    if (campaignAlias.startsWith('lb') || campaignAlias.startsWith('lh')) {
+      return index.byMerchantDay.get(`${merchantId}|${dateStr}`) ?? { ...EMPTY_AFFILIATE };
     }
 
     return { ...EMPTY_AFFILIATE };
@@ -1007,7 +848,6 @@ export class ReportsService {
         merchantId,
         alias,
         dateStr,
-        parsed.merchantSlug,
       );
       const cost = Number(ad.cost);
       const clicks = ad.clicks;
@@ -1152,8 +992,7 @@ export class ReportsService {
   }
 
   /**
-   * 停投后的空窗日：MCC 已无花费，但联盟仍有点击/订单时补一行（广告费为 0）。
-   * 仅补「最后一次 MCC 有数据日之后」的日期，避免 Sheet 缺历史日数据时误补大片 $0。
+   * 换 Google 子账号空窗日：MCC 无花费，但联盟有点击/订单时补一行（广告费为 0）
    */
   private supplementAffiliateOnlyDailyRows_<
     T extends {
@@ -1191,16 +1030,9 @@ export class ReportsService {
 
     const existing = new Set(rows.map((r) => `${r.campaignGroupKey}|${r.date}`));
     const groupMeta = new Map<string, T>();
-    const lastMccDateByGroup = new Map<string, string>();
     for (const row of rows) {
       if (!groupMeta.has(row.campaignGroupKey)) {
         groupMeta.set(row.campaignGroupKey, row);
-      }
-      if (row.cost > 0 || row.clicks > 0 || row.impressions > 0) {
-        const prev = lastMccDateByGroup.get(row.campaignGroupKey);
-        if (!prev || row.date > prev) {
-          lastMccDateByGroup.set(row.campaignGroupKey, row.date);
-        }
       }
     }
 
@@ -1208,21 +1040,15 @@ export class ReportsService {
     for (const meta of groupMeta.values()) {
       if (!meta.merchantId || !meta.affiliateAlias) continue;
 
-      const lastMccDate = lastMccDateByGroup.get(meta.campaignGroupKey);
-
       for (const dateStr of this.listDatesInRange_(startDate, endDate)) {
         const key = `${meta.campaignGroupKey}|${dateStr}`;
         if (existing.has(key)) continue;
-
-        /** Sheet 缺历史日数据时不在 lastMccDate 之前/当天补 $0，避免误导 */
-        if (lastMccDate && dateStr <= lastMccDate) continue;
 
         const affiliate = this.lookupAffiliateMetricsForDay(
           affiliateByDay,
           meta.merchantId,
           meta.affiliateAlias,
           dateStr,
-          parseCampaignName(meta.campaignName).merchantSlug,
         );
         if (
           affiliate.orderCount <= 0 &&
@@ -1301,550 +1127,6 @@ export class ReportsService {
   }
 
   /**
-   * 子账号 + campaignId 截至 endDate 的最新快照（用于对齐 MCC 当前系列状态）
-   */
-  private async loadLatestPhysicalCampaignMeta_(
-    ownerId: number,
-    endDate: string,
-  ): Promise<Map<string, PhysicalCampaignLatestMeta>> {
-    const rows = await this.prisma.adCampaignDaily.findMany({
-      where: {
-        ownerUserId: ownerId,
-        date: { lte: new Date(endDate) },
-        campaignId: { not: ACCOUNT_GAP_CAMPAIGN_ID },
-      },
-      orderBy: { date: 'desc' },
-      select: {
-        customerId: true,
-        campaignId: true,
-        campaignName: true,
-        campaignStatus: true,
-        date: true,
-        affiliateAlias: true,
-        merchantId: true,
-        campaignBudget: true,
-        maxCpc: true,
-      },
-    });
-
-    const byPhysical = new Map<string, PhysicalCampaignLatestMeta>();
-    for (const r of rows) {
-      const key = `${r.customerId}|${r.campaignId}`;
-      if (byPhysical.has(key)) continue;
-      byPhysical.set(key, {
-        date: r.date.toISOString().slice(0, 10),
-        status: r.campaignStatus ?? '',
-        campaignName: r.campaignName,
-        affiliateAlias: r.affiliateAlias ?? '',
-        merchantId: r.merchantId ?? '',
-        campaignBudget: Number(r.campaignBudget),
-        maxCpc: Number(r.maxCpc),
-      });
-    }
-    return byPhysical;
-  }
-
-  /**
-   * 从 Sheet campaign_budget_snapshots 读取各子账号当前 ENABLED 系列（与 Google MCC 对齐）
-   */
-  private async loadBudgetSnapshotEnabled_(
-    ownerId: number,
-    endDate: string,
-  ): Promise<{
-    activeByCustomer: Map<string, string>;
-    byCustomer: Map<string, ParsedBudgetSnapshotRow>;
-  }> {
-    const empty = {
-      activeByCustomer: new Map<string, string>(),
-      byCustomer: new Map<string, ParsedBudgetSnapshotRow>(),
-    };
-    const source = await this.prisma.adDataSource.findFirst({
-      where: { ownerUserId: ownerId, isActive: true },
-      orderBy: { updatedAt: 'desc' },
-    });
-    if (!source) return empty;
-
-    try {
-      const csvUrl = buildSheetCsvUrl(source.sheetId, BUDGET_SNAPSHOT_TAB);
-      const res = await axios.get<string>(csvUrl, {
-        timeout: 120000,
-        responseType: 'text',
-        headers: { 'User-Agent': 'ZJADS/1.0' },
-      });
-      const rows = parseBudgetSnapshotCsv(res.data);
-      const byCustomer = resolveEnabledCampaignsByCustomerFromSnapshots(rows, endDate);
-      const activeByCustomer = new Map<string, string>(
-        [...byCustomer.entries()].map(([customerId, row]) => [customerId, row.campaignId]),
-      );
-      return { activeByCustomer, byCustomer };
-    } catch (err) {
-      console.warn(
-        '[reports] campaign_budget_snapshots 拉取失败:',
-        err instanceof Error ? err.message : err,
-      );
-      return empty;
-    }
-  }
-
-  /**
-   * 补齐各子账号当前 ENABLED 系列（区间内无花费时也占一行，与 MCC 系列列表对齐）
-   */
-  private supplementActiveCampaignSnapshots_(
-    map: Map<
-      string,
-      {
-        campaignGroupKey: string;
-        campaignId: string;
-        customerId: string;
-        campaignName: string;
-        campaignStatus: string;
-        latestStatusDate: string;
-        affiliateAlias: string;
-        merchantId: string;
-        linkedCustomerIds: string[];
-        dailyBudget: number;
-        impressions: number;
-        clicks: number;
-        cost: number;
-        searchBudgetLostIs: number;
-        searchRankLostIs: number;
-        maxCpc: number;
-      }
-    >,
-    activeCampaignByCustomer: Map<string, string>,
-    budgetByCustomer: Map<string, ParsedBudgetSnapshotRow>,
-    latestByPhysical: Map<string, PhysicalCampaignLatestMeta>,
-  ) {
-    for (const [customerId, campaignId] of activeCampaignByCustomer) {
-      const physicalKey = `${customerId}|${campaignId}`;
-      const snap = budgetByCustomer.get(customerId);
-      const meta = latestByPhysical.get(physicalKey);
-      const campaignName = snap?.campaignName || meta?.campaignName || '';
-      if (!campaignName) continue;
-      const status = snap?.campaignStatus || meta?.status || 'ENABLED';
-      if (!isEnabledCampaignStatus(status)) continue;
-
-      const parsed = parseCampaignName(campaignName);
-      const alias = (meta?.affiliateAlias || parsed.affiliateAlias || '').toLowerCase();
-      const merchantId = meta?.merchantId || parsed.merchantId;
-      const groupKey = resolveCampaignGroupKey({
-        campaignName,
-        merchantId,
-        affiliateAlias: alias,
-        customerId,
-        campaignId,
-      });
-      if (map.has(groupKey)) continue;
-
-      map.set(groupKey, {
-        campaignGroupKey: groupKey,
-        campaignId,
-        customerId,
-        campaignName,
-        campaignStatus: 'ENABLED',
-        latestStatusDate: snap?.snapshotDate || meta?.date || '',
-        affiliateAlias: alias,
-        merchantId,
-        linkedCustomerIds: [customerId],
-        dailyBudget: snap?.campaignBudget ?? meta?.campaignBudget ?? 0,
-        impressions: 0,
-        clicks: 0,
-        cost: 0,
-        searchBudgetLostIs: 0,
-        searchRankLostIs: 0,
-        maxCpc: meta?.maxCpc ?? 0,
-      });
-    }
-  }
-
-  /**
-   * Sheet 无系列明细时，将子账号账户级花费归到当前 ENABLED 系列（避免 COSMO/Bexley 等显示 $0）
-   */
-  private async allocateOrphanAccountSpendToActiveCampaigns_(
-    map: Map<
-      string,
-      {
-        campaignGroupKey: string;
-        campaignId: string;
-        customerId: string;
-        campaignName: string;
-        campaignStatus: string;
-        latestStatusDate: string;
-        affiliateAlias: string;
-        merchantId: string;
-        linkedCustomerIds: string[];
-        dailyBudget: number;
-        impressions: number;
-        clicks: number;
-        cost: number;
-        searchBudgetLostIs: number;
-        searchRankLostIs: number;
-        maxCpc: number;
-      }
-    >,
-    adRows: Array<{
-      customerId: string;
-      campaignId: string;
-      cost: unknown;
-    }>,
-    ownerId: number,
-    startDate: string,
-    endDate: string,
-    activeCampaignByCustomer: Map<string, string>,
-    budgetByCustomer: Map<string, ParsedBudgetSnapshotRow>,
-  ) {
-    const accountRows = await this.loadSheetAccountDaily_(ownerId, startDate, endDate);
-    if (!accountRows.length) return;
-
-    const cidKey = (id: string) => id.replace(/-/g, '').replace(/\s/g, '');
-    const accountByCustomer = new Map<string, number>();
-    for (const row of accountRows) {
-      const key = cidKey(row.customerId);
-      accountByCustomer.set(key, (accountByCustomer.get(key) ?? 0) + row.cost);
-    }
-
-    for (const [customerId, activeCampId] of activeCampaignByCustomer) {
-      const key = cidKey(customerId);
-      const accountTotal = accountByCustomer.get(key) ?? 0;
-      if (accountTotal <= 0) continue;
-
-      let spendOnActive = 0;
-      let spendOnOther = 0;
-      for (const ad of adRows) {
-        if (cidKey(ad.customerId) !== key) continue;
-        if (ad.campaignId === ACCOUNT_GAP_CAMPAIGN_ID) continue;
-        const cost = Number(ad.cost);
-        if (ad.campaignId === activeCampId) spendOnActive += cost;
-        else spendOnOther += cost;
-      }
-
-      const orphan = Math.round((accountTotal - spendOnActive - spendOnOther) * 100) / 100;
-      if (orphan <= 0.005) continue;
-
-      const snap = budgetByCustomer.get(customerId);
-      const meta = snap ?? {
-        campaignName: '',
-        campaignId: activeCampId,
-        campaignStatus: 'ENABLED',
-        campaignBudget: 0,
-        snapshotDate: endDate,
-        customerId,
-      };
-      const parsed = parseCampaignName(meta.campaignName || '');
-      const alias = (parsed.affiliateAlias || '').toLowerCase();
-      const merchantId = parsed.merchantId;
-      const groupKey = resolveCampaignGroupKey({
-        campaignName: meta.campaignName,
-        merchantId,
-        affiliateAlias: alias,
-        customerId,
-        campaignId: activeCampId,
-      });
-
-      if (!map.has(groupKey)) continue;
-      const row = map.get(groupKey)!;
-      row.cost = Math.round((row.cost + orphan) * 100) / 100;
-    }
-  }
-
-  private async loadSheetAccountDaily_(
-    ownerId: number,
-    startDate: string,
-    endDate: string,
-  ): Promise<ParsedAccountDailyRow[]> {
-    const source = await this.prisma.adDataSource.findFirst({
-      where: { ownerUserId: ownerId, isActive: true },
-      orderBy: { updatedAt: 'desc' },
-    });
-    if (!source) return [];
-
-    try {
-      const csvUrl = buildSheetCsvUrl(source.sheetId, ACCOUNT_DAILY_COST_TAB);
-      const res = await axios.get<string>(csvUrl, {
-        timeout: 120000,
-        responseType: 'text',
-        headers: { 'User-Agent': 'ZJADS/1.0' },
-      });
-      return parseAccountDailyCostCsv(res.data).filter(
-        (r) => r.date >= startDate && r.date <= endDate,
-      );
-    } catch {
-      return [];
-    }
-  }
-
-  /**
-   * Sheet/DB 无系列逐日明细时，将账户差额分摊到已有真实 MCC 行（不创建 0 点击/0 展示的幽灵行）
-   */
-  private async supplementCampaignDailyFromAccountCost_<
-    T extends {
-      date: string;
-      campaignGroupKey: string;
-      customerId: string;
-      campaignId: string;
-      campaignName: string;
-      campaignStatus: string;
-      affiliateAlias: string;
-      merchantId: string;
-      dailyBudget: number;
-      impressions: number;
-      clicks: number;
-      cost: number;
-      orderCount: number;
-      commission: number;
-      affiliateClicks: number;
-      searchBudgetLostIs: number;
-      searchRankLostIs: number;
-      avgCpc: number;
-      maxCpc: number;
-      epc: number;
-      roi: number;
-      profit: number;
-      operationSuggestion: string;
-    },
-  >(
-    rows: T[],
-    ownerId: number,
-    startDate: string,
-    endDate: string,
-    _affiliateByDay: Awaited<ReturnType<typeof this.buildAffiliateMetricsByMerchantDay>>,
-  ): Promise<T[]> {
-    const accountRows = await this.loadSheetAccountDaily_(ownerId, startDate, endDate);
-    if (!accountRows.length) return rows;
-
-    const budgetEnabled = await this.loadBudgetSnapshotEnabled_(ownerId, endDate);
-
-    const cidKey = (id: string) => id.replace(/-/g, '').replace(/\s/g, '');
-    const resolveSnap = (customerId: string) => {
-      const norm = cidKey(customerId);
-      if (budgetEnabled.byCustomer.has(customerId)) {
-        return { customerId, snap: budgetEnabled.byCustomer.get(customerId)! };
-      }
-      for (const [cid, snap] of budgetEnabled.byCustomer) {
-        if (cidKey(cid) === norm) return { customerId: cid, snap };
-      }
-      return null;
-    };
-
-    const groups = new Map<string, T[]>();
-    for (const row of rows) {
-      if (row.campaignId === ACCOUNT_GAP_CAMPAIGN_ID) continue;
-      const key = `${row.date}|${cidKey(row.customerId)}`;
-      const list = groups.get(key) ?? [];
-      list.push(row);
-      groups.set(key, list);
-    }
-
-    const supplemented = [...rows];
-
-    for (const accountRow of accountRows) {
-      const accountCost = accountRow.cost;
-      if (accountCost <= 0) continue;
-
-      const resolved = resolveSnap(accountRow.customerId);
-      if (!resolved) continue;
-
-      const { customerId } = resolved;
-      const key = `${accountRow.date}|${cidKey(customerId)}`;
-      const detailRows = groups.get(key) ?? [];
-      const detailSum = detailRows.reduce((sum, r) => sum + Number(r.cost), 0);
-      const delta = Math.round((accountCost - detailSum) * 100) / 100;
-      if (delta < 0.005) continue;
-
-      /** 仅向已有真实 MCC 指标的行补差额，不创建 0 点击/0 展示的账户级幽灵行 */
-      const realRows = detailRows.filter((r) => r.impressions > 0 || r.clicks > 0);
-      if (!realRows.length) continue;
-
-      const realSum = realRows.reduce((sum, r) => sum + Number(r.cost), 0);
-      if (realSum <= 0) {
-        realRows[0].cost = Math.round((realRows[0].cost + delta) * 100) / 100;
-        this.recalcDailyRowMetrics_(realRows[0]);
-        continue;
-      }
-
-      let allocated = 0;
-      for (let i = 0; i < realRows.length; i += 1) {
-        const row = realRows[i];
-        const share =
-          i === realRows.length - 1
-            ? Math.round((delta - allocated) * 100) / 100
-            : Math.round(((Number(row.cost) / realSum) * delta) * 100) / 100;
-        allocated += share;
-        row.cost = Math.round((row.cost + share) * 100) / 100;
-        row.avgCpc = row.clicks > 0 ? row.cost / row.clicks : row.avgCpc;
-        this.recalcDailyRowMetrics_(row);
-      }
-    }
-
-    return supplemented;
-  }
-
-  /**
-   * Sheet 漏采单日时：若前后相邻日均有真实 MCC 明细且账户日花费存在，补齐中间缺口（如 Etsy 6/20）。
-   * 点击/展示取前后日均值估算，广告费取账户级日花费。
-   */
-  private async supplementSandwichedMissingCampaignDays_<
-    T extends {
-      date: string;
-      campaignGroupKey: string;
-      customerId: string;
-      campaignId: string;
-      campaignName: string;
-      campaignStatus: string;
-      affiliateAlias: string;
-      merchantId: string;
-      dailyBudget: number;
-      impressions: number;
-      clicks: number;
-      cost: number;
-      orderCount: number;
-      commission: number;
-      affiliateClicks: number;
-      searchBudgetLostIs: number;
-      searchRankLostIs: number;
-      avgCpc: number;
-      maxCpc: number;
-      epc: number;
-      roi: number;
-      profit: number;
-      operationSuggestion: string;
-    },
-  >(
-    rows: T[],
-    ownerId: number,
-    startDate: string,
-    endDate: string,
-    affiliateByDay: Awaited<ReturnType<typeof this.buildAffiliateMetricsByMerchantDay>>,
-  ): Promise<T[]> {
-    const accountRows = await this.loadSheetAccountDaily_(ownerId, startDate, endDate);
-    if (!accountRows.length) return rows;
-
-    const cidKey = (id: string) => id.replace(/-/g, '').replace(/\s/g, '');
-    const accountByKey = new Map<string, number>();
-    for (const row of accountRows) {
-      accountByKey.set(
-        `${row.date}|${cidKey(row.customerId)}`,
-        row.cost,
-      );
-    }
-
-    const existing = new Set(rows.map((r) => `${r.campaignGroupKey}|${r.date}`));
-    const realDatesByGroup = new Map<string, Set<string>>();
-    const rowByGroupDate = new Map<string, T>();
-
-    for (const row of rows) {
-      rowByGroupDate.set(`${row.campaignGroupKey}|${row.date}`, row);
-      if (row.impressions > 0 || row.clicks > 0) {
-        if (!realDatesByGroup.has(row.campaignGroupKey)) {
-          realDatesByGroup.set(row.campaignGroupKey, new Set());
-        }
-        realDatesByGroup.get(row.campaignGroupKey)!.add(row.date);
-      }
-    }
-
-    const supplemented = [...rows];
-
-    for (const [groupKey, realDates] of realDatesByGroup) {
-      if (realDates.size < 2) continue;
-
-      const sample = [...rowByGroupDate.values()].find((r) => r.campaignGroupKey === groupKey);
-      if (!sample) continue;
-
-      const customerNorm = cidKey(sample.customerId);
-
-      for (const dateStr of this.listDatesInRange_(startDate, endDate)) {
-        if (realDates.has(dateStr) || existing.has(`${groupKey}|${dateStr}`)) continue;
-
-        const prevDate = this.shiftDateStr_(dateStr, -1);
-        const nextDate = this.shiftDateStr_(dateStr, 1);
-        if (!realDates.has(prevDate) || !realDates.has(nextDate)) continue;
-
-        const accountCost = accountByKey.get(`${dateStr}|${customerNorm}`) ?? 0;
-        if (accountCost <= 0) continue;
-
-        let customerRealCost = 0;
-        for (const r of rows) {
-          if (cidKey(r.customerId) !== customerNorm || r.date !== dateStr) continue;
-          if (r.impressions > 0 || r.clicks > 0) {
-            customerRealCost += Number(r.cost);
-          }
-        }
-        const fillCost = Math.round((accountCost - customerRealCost) * 100) / 100;
-        if (fillCost <= 0.005) continue;
-
-        const prevRow = rowByGroupDate.get(`${groupKey}|${prevDate}`);
-        const nextRow = rowByGroupDate.get(`${groupKey}|${nextDate}`);
-        if (!prevRow || !nextRow) continue;
-
-        const clicks = Math.round((prevRow.clicks + nextRow.clicks) / 2);
-        const impressions = Math.round((prevRow.impressions + nextRow.impressions) / 2);
-        const parsed = parseCampaignName(sample.campaignName);
-        const affiliate = this.lookupAffiliateMetricsForDay(
-          affiliateByDay,
-          sample.merchantId,
-          sample.affiliateAlias,
-          dateStr,
-          parsed.merchantSlug,
-        );
-        const cost = fillCost;
-        const roi = cost > 0 ? (affiliate.commission - cost) / cost : 0;
-
-        const filled = {
-          ...sample,
-          date: dateStr,
-          dailyBudget: Math.max(prevRow.dailyBudget, nextRow.dailyBudget),
-          impressions,
-          clicks,
-          cost,
-          orderCount: affiliate.orderCount,
-          commission: affiliate.commission,
-          affiliateClicks: affiliate.affiliateClicks,
-          searchBudgetLostIs: (prevRow.searchBudgetLostIs + nextRow.searchBudgetLostIs) / 2,
-          searchRankLostIs: (prevRow.searchRankLostIs + nextRow.searchRankLostIs) / 2,
-          avgCpc: clicks > 0 ? cost / clicks : 0,
-          maxCpc: Math.max(prevRow.maxCpc, nextRow.maxCpc),
-          epc: clicks > 0 ? affiliate.commission / clicks : 0,
-          roi,
-          profit: affiliate.commission - cost,
-          operationSuggestion: suggestOperation(roi, affiliate.orderCount, cost),
-        } as T;
-
-        supplemented.push(filled);
-        existing.add(`${groupKey}|${dateStr}`);
-        rowByGroupDate.set(`${groupKey}|${dateStr}`, filled);
-      }
-    }
-
-    return supplemented;
-  }
-
-  /** 自然日字符串偏移（UTC） */
-  private shiftDateStr_(dateStr: string, days: number): string {
-    const d = new Date(`${dateStr}T00:00:00.000Z`);
-    d.setUTCDate(d.getUTCDate() + days);
-    return d.toISOString().slice(0, 10);
-  }
-
-  /** 按天行花费变更后重算 ROI / 利润 / 操作建议 */
-  private recalcDailyRowMetrics_(row: {
-    cost: number;
-    clicks: number;
-    orderCount: number;
-    commission: number;
-    roi: number;
-    profit: number;
-    epc: number;
-    operationSuggestion: string;
-  }) {
-    const cost = Number(row.cost);
-    const commission = row.commission;
-    row.roi = cost > 0 ? (commission - cost) / cost : 0;
-    row.profit = commission - cost;
-    row.epc = row.clicks > 0 ? commission / row.clicks : 0;
-    row.operationSuggestion = suggestOperation(row.roi, row.orderCount, cost);
-  }
-
-  /**
    * 查询区间内有联盟订单/佣金，但区间内无 Google 花费的系列：用历史最近一条广告日数据补一行（花费为 0，订单仍归因）。
    * 解决「系列已停投、花费在区间外、订单在区间内」无法匹配的问题（如 Nina Shoes）。
    */
@@ -1907,12 +1189,7 @@ export class ReportsService {
       }
       seen.add(physicalKey);
 
-      const affiliate = this.lookupAffiliateMetrics(
-        affiliateMetrics,
-        merchantId,
-        alias,
-        parsed.merchantSlug,
-      );
+      const affiliate = this.lookupAffiliateMetrics(affiliateMetrics, merchantId, alias);
       if (affiliate.orderCount === 0 && affiliate.commission === 0) continue;
 
       map.set(groupKey, {
@@ -2107,28 +1384,17 @@ export class ReportsService {
     index: AffiliateMetricsIndex,
     merchantId: string,
     alias: string,
-    merchantSlug = '',
   ): AffiliateMetrics {
+    if (!merchantId) return { ...EMPTY_AFFILIATE };
     const campaignAlias = (alias || '').toLowerCase();
-    const slug = merchantSlug.toLowerCase();
+    const exact = index.byKey.get(`${merchantId}|${campaignAlias}`);
+    if (exact) return exact;
 
-    if (merchantId) {
-      const exact = index.byKey.get(`${merchantId}|${campaignAlias}`);
-      if (exact) return exact;
+    if (campaignAlias.startsWith('pm')) {
+      return index.byMerchantId.get(merchantId) ?? { ...EMPTY_AFFILIATE };
     }
 
-    if (campaignAlias.startsWith('rw') && slug) {
-      const slugHit = index.bySlugKey.get(`${slug}|${campaignAlias}`);
-      if (slugHit) return slugHit;
-    }
-
-    if (
-      merchantId &&
-      (campaignAlias.startsWith('pm') ||
-        campaignAlias.startsWith('lb') ||
-        campaignAlias.startsWith('lh') ||
-        campaignAlias.startsWith('rw'))
-    ) {
+    if (campaignAlias.startsWith('lb') || campaignAlias.startsWith('lh')) {
       return index.byMerchantId.get(merchantId) ?? { ...EMPTY_AFFILIATE };
     }
 
@@ -2260,167 +1526,6 @@ export class ReportsService {
     };
   }
 
-  /** 账户级总广告费（raw_daily_account_cost / monthly 折算，仅作对账参考） */
-  private async resolveAccountLevelAdSpend(
-    ownerId: number,
-    startDate: string,
-    endDate: string,
-  ): Promise<number | null> {
-    const source = await this.prisma.adDataSource.findFirst({
-      where: { ownerUserId: ownerId, isActive: true },
-      orderBy: { updatedAt: 'desc' },
-    });
-    if (!source) return null;
-
-    try {
-      const csvUrl = buildSheetCsvUrl(source.sheetId, ACCOUNT_DAILY_COST_TAB);
-      const res = await axios.get<string>(csvUrl, {
-        timeout: 120000,
-        responseType: 'text',
-        headers: { 'User-Agent': 'ZJADS/1.0' },
-      });
-      const accountRows = parseAccountDailyCostCsv(res.data).filter(
-        (r) => r.date >= startDate && r.date <= endDate,
-      );
-      if (accountRows.length) {
-        const total = Math.round(accountRows.reduce((s, r) => s + r.cost, 0) * 100) / 100;
-        return total > 0 ? total : null;
-      }
-    } catch {
-      /* 无日账户表时尝试月汇总 */
-    }
-
-    return this.resolveMonthlyAdSpend(ownerId, startDate, endDate);
-  }
-
-  /** 月汇总账户花费折算（兜底对账口径） */
-  private async resolveMonthlyAdSpend(
-    ownerId: number,
-    startDate: string,
-    endDate: string,
-  ): Promise<number | null> {
-    const fromDb = await this.sumMonthlyAdSpendFromDb(ownerId, startDate, endDate);
-    if (fromDb != null) return fromDb;
-
-    const source = await this.prisma.adDataSource.findFirst({
-      where: { ownerUserId: ownerId, isActive: true },
-      orderBy: { updatedAt: 'desc' },
-    });
-    if (!source) return null;
-
-    try {
-      const csvUrl = buildSheetCsvUrl(source.sheetId, MONTHLY_ACCOUNT_COST_TAB);
-      const res = await axios.get<string>(csvUrl, {
-        timeout: 120000,
-        responseType: 'text',
-        headers: { 'User-Agent': 'ZJADS/1.0' },
-      });
-      const monthlyRows = parseMonthlyAccountCostCsv(res.data);
-      if (!monthlyRows.length) return null;
-
-      await this.persistMonthlyRowsToDb(ownerId, monthlyRows);
-
-      const total = sumProratedMonthlyAccountCost(monthlyRows, startDate, endDate);
-      return total > 0 ? total : null;
-    } catch (err) {
-      console.warn(
-        '[reports] monthly_account_cost 拉取失败:',
-        err instanceof Error ? err.message : err,
-      );
-      return null;
-    }
-  }
-
-  /** @deprecated 使用 resolveAccountLevelAdSpend；保留供 adSpendCoverage 等内部对账 */
-  private async resolveAuthoritativeAdSpend(
-    ownerId: number,
-    startDate: string,
-    endDate: string,
-  ): Promise<number | null> {
-    const dateRange = this.adDateRange(startDate, endDate);
-    const dbAgg = await this.prisma.adCampaignDaily.aggregate({
-      where: { ownerUserId: ownerId, date: dateRange },
-      _sum: { cost: true },
-    });
-    const campaignTotal = Math.round(Number(dbAgg._sum.cost ?? 0) * 100) / 100;
-    if (campaignTotal > 0) {
-      return campaignTotal;
-    }
-
-    return this.resolveAccountLevelAdSpend(ownerId, startDate, endDate);
-  }
-
-  /** 从库内月汇总表折算区间总广告费 */
-  private async sumMonthlyAdSpendFromDb(
-    ownerId: number,
-    startDate: string,
-    endDate: string,
-  ): Promise<number | null> {
-    try {
-      const dbRows = await this.prisma.adAccountMonthly.findMany({
-        where: { ownerUserId: ownerId },
-      });
-      if (!dbRows.length) return null;
-
-      const monthlyRows = dbRows.map((r) => ({
-        month: r.month,
-        startDate: r.startDate.toISOString().slice(0, 10),
-        endDate: r.endDate.toISOString().slice(0, 10),
-        customerId: r.customerId,
-        customerName: r.customerName,
-        currency: r.currency,
-        cost: Number(r.cost),
-      }));
-      const total = sumProratedMonthlyAccountCost(monthlyRows, startDate, endDate);
-      return total > 0 ? total : null;
-    } catch {
-      return null;
-    }
-  }
-
-  /** 将 Sheet 月汇总写入库，供后续报表直接读取 */
-  private async persistMonthlyRowsToDb(
-    ownerId: number,
-    monthlyRows: Array<{
-      month: string;
-      startDate: string;
-      endDate: string;
-      customerId: string;
-      customerName: string;
-      currency: string;
-      cost: number;
-    }>,
-  ) {
-    for (const row of monthlyRows) {
-      await this.prisma.adAccountMonthly.upsert({
-        where: {
-          ownerUserId_month_customerId: {
-            ownerUserId: ownerId,
-            month: row.month,
-            customerId: row.customerId,
-          },
-        },
-        create: {
-          ownerUserId: ownerId,
-          month: row.month,
-          startDate: new Date(row.startDate),
-          endDate: new Date(row.endDate),
-          customerId: row.customerId,
-          customerName: row.customerName,
-          currency: row.currency,
-          cost: row.cost,
-        },
-        update: {
-          startDate: new Date(row.startDate),
-          endDate: new Date(row.endDate),
-          customerName: row.customerName,
-          currency: row.currency,
-          cost: row.cost,
-        },
-      });
-    }
-  }
-
   private emptyTotals() {
     return {
       orderCount: 0,
@@ -2433,18 +1538,16 @@ export class ReportsService {
     };
   }
 
-  /** 广告日数据日期范围（含结束日全天，与联盟订单一致） */
-  private adDateRange(startDate: string, endDate: string) {
-    return buildOrderDateRangeFilter(startDate, endDate)!;
-  }
-
   /** 报表日期范围（含结束日全天） */
-  private orderDateRange(startDate: string, endDate: string) {
-    return this.adDateRange(startDate, endDate);
+  private adDateRange(startDate: string, endDate: string) {
+    return {
+      gte: new Date(`${startDate}T00:00:00.000Z`),
+      lte: new Date(`${endDate}T23:59:59.999Z`),
+    };
   }
 
   /**
-   * 广告费导入覆盖情况：用于排查「近期能对上、拉长区间对不上」
+   * DB 与 Sheet 系列明细对账（不做账户级补齐，与导入口径一致）
    */
   async adSpendCoverage(user: AuthUser, q: ReportDateQuery) {
     const ownerId = resolveOwnerUserId(user, q.userId);
@@ -2456,12 +1559,6 @@ export class ReportsService {
       _sum: { cost: true, clicks: true },
       _count: { _all: true },
       orderBy: { date: 'asc' },
-    });
-
-    const bounds = await this.prisma.adCampaignDaily.aggregate({
-      where: { ownerUserId: ownerId },
-      _min: { date: true },
-      _max: { date: true },
     });
 
     const dailyMap = new Map(
@@ -2485,15 +1582,9 @@ export class ReportsService {
 
     const missingDates = daily.filter((d) => d.rowCount === 0).map((d) => d.date);
     const totalCost = daily.reduce((acc, d) => acc + d.cost, 0);
-    const authoritativeTotal =
-      (await this.resolveAuthoritativeAdSpend(ownerId, q.startDate, q.endDate)) ?? totalCost;
-    const firstDateWithData = daily.find((d) => d.rowCount > 0)?.date ?? null;
-    const lastDateWithData = [...daily].reverse().find((d) => d.rowCount > 0)?.date ?? null;
 
     let sheetTotalCost: number | null = null;
     let sheetRowCount = 0;
-    let monthlySheetTotal: number | null = null;
-    let hasMonthlyCostTab = false;
     const sources = await this.prisma.adDataSource.findMany({
       where: { ownerUserId: ownerId, isActive: true },
       orderBy: { updatedAt: 'desc' },
@@ -2507,90 +1598,33 @@ export class ReportsService {
           responseType: 'text',
           headers: { 'User-Agent': 'ZJADS/1.0' },
         });
-        let sheetRows = parseAdSheetCsv(res.data).filter(
+        const sheetRows = parseAdSheetCsv(res.data).filter(
           (r) => r.date >= q.startDate && r.date <= q.endDate,
         );
-        try {
-          const accountCsvUrl = buildSheetCsvUrl(sources[0].sheetId, ACCOUNT_DAILY_COST_TAB);
-          const accountRes = await axios.get<string>(accountCsvUrl, {
-            timeout: 120000,
-            responseType: 'text',
-            headers: { 'User-Agent': 'ZJADS/1.0' },
-          });
-          const accountRows = parseAccountDailyCostCsv(accountRes.data).filter(
-            (r) => r.date >= q.startDate && r.date <= q.endDate,
-          );
-          if (accountRows.length) {
-            sheetRows = applyAccountCostAdjustment(sheetRows, accountRows).rows;
-          }
-        } catch {
-          /* 无日账户表时保持系列明细原样 */
-        }
         sheetRowCount = sheetRows.length;
-        sheetTotalCost = sheetRows.reduce((acc, r) => acc + r.cost, 0);
+        sheetTotalCost = sheetRows.reduce((sum, r) => sum + r.cost, 0);
       } catch {
         sheetTotalCost = null;
       }
-
-      try {
-        const monthlyCsvUrl = buildSheetCsvUrl(sources[0].sheetId, MONTHLY_ACCOUNT_COST_TAB);
-        const monthlyRes = await axios.get<string>(monthlyCsvUrl, {
-          timeout: 120000,
-          responseType: 'text',
-          headers: { 'User-Agent': 'ZJADS/1.0' },
-        });
-        const monthlyRows = parseMonthlyAccountCostCsv(monthlyRes.data);
-        if (monthlyRows.length) {
-          hasMonthlyCostTab = true;
-          monthlySheetTotal = sumProratedMonthlyAccountCost(
-            monthlyRows,
-            q.startDate,
-            q.endDate,
-          );
-        }
-      } catch {
-        hasMonthlyCostTab = false;
-        monthlySheetTotal = null;
-      }
     }
-
-    const monthlyDetailGap =
-      monthlySheetTotal != null && sheetTotalCost != null
-        ? Math.round((monthlySheetTotal - sheetTotalCost) * 100) / 100
-        : null;
 
     return {
       startDate: q.startDate,
       endDate: q.endDate,
-      totalCost: authoritativeTotal,
-      campaignDetailTotal: totalCost,
-      monthlySheetTotal,
+      dbTotalCost: totalCost,
       sheetTotalCost,
       sheetRowCount,
-      hasMonthlyCostTab,
-      monthlyDetailGap,
-      sheetDbGap:
-        sheetTotalCost != null
-          ? Math.round((sheetTotalCost - authoritativeTotal) * 100) / 100
-          : null,
-      daily,
       missingDates,
-      missingDayCount: missingDates.length,
-      firstDateWithData,
-      lastDateWithData,
-      importedMinDate: bounds._min.date?.toISOString().slice(0, 10) ?? null,
-      importedMaxDate: bounds._max.date?.toISOString().slice(0, 10) ?? null,
-      hasLeadingGap: firstDateWithData != null && firstDateWithData > q.startDate,
-      hasTrailingGap: lastDateWithData != null && lastDateWithData < q.endDate,
-      /** 明细低于月汇总账户花费（已移除系列等），属原脚本预期差异 */
-      hasMonthlyDetailGap: monthlyDetailGap != null && monthlyDetailGap > 1,
-      /** Sheet 与库内一致但查询跨度较长时，提示重跑脚本补早期花费 */
-      likelySheetStale:
-        sheetTotalCost != null &&
-        Math.abs(sheetTotalCost - totalCost) < 0.05 &&
-        missingDates.length === 0 &&
-        allDates.length > 7 &&
-        !(monthlyDetailGap != null && monthlyDetailGap > 1),
+      daily,
+      adSpendSource: 'campaign_detail' as const,
+    };
+  }
+
+  /** 联盟订单日期范围（含结束日全天） */
+  private orderDateRange(startDate: string, endDate: string) {
+    return {
+      gte: new Date(`${startDate}T00:00:00.000Z`),
+      lte: new Date(`${endDate}T23:59:59.999Z`),
     };
   }
 }

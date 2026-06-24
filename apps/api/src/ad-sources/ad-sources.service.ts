@@ -5,20 +5,9 @@ import { AuthUser, isAdmin, resolveOwnerUserId } from '../common/ownership.util'
 import { buildOrderDateRangeFilter } from '../common/order-date-range.util';
 import { PrismaService } from '../prisma/prisma.service';
 import {
-  ACCOUNT_DAILY_COST_TAB,
-  BUDGET_SNAPSHOT_TAB,
-  MONTHLY_ACCOUNT_COST_TAB,
-  ParsedAdDailyRow,
-  ParsedBudgetSnapshotRow,
-  applyAccountCostAdjustment,
-  applyMonthlyCostAdjustment,
   buildSheetCsvUrl,
   extractSheetId,
-  parseAccountDailyCostCsv,
   parseAdSheetCsv,
-  parseBudgetSnapshotCsv,
-  parseMonthlyAccountCostCsv,
-  resolveEnabledCampaignsByCustomerFromSnapshots,
 } from './sheet-parser.util';
 
 export interface CreateAdDataSourceDto {
@@ -206,14 +195,6 @@ export class AdSourcesService {
       throw new BadRequestException(`所选日期区间内无广告数据。${hint}`);
     }
 
-    const costAdjustment = await this.applyCostAdjustmentsFromSheet(
-      source.sheetId,
-      rows,
-      startDate,
-      endDate,
-    );
-    rows = costAdjustment.rows;
-
     /** 指定日期区间导入时先清空该区间，避免 upsert 残留旧系列/旧花费 */
     if (startDate && endDate) {
       const dateRange = buildOrderDateRangeFilter(startDate, endDate);
@@ -271,175 +252,17 @@ export class AdSourcesService {
       upserted += 1;
     }
 
-    const monthlyImport = await this.importMonthlyAccountCostFromSheet(
-      source.sheetId,
-      ownerUserId,
-    );
-
     await this.prisma.adDataSource.update({
       where: { id: source.id },
       data: { updatedAt: new Date() },
     });
 
     const dates = rows.map((r) => r.date).sort();
-    const importedCost = Math.round(rows.reduce((sum, r) => sum + r.cost, 0) * 100) / 100;
     return {
       upserted,
       dateFrom: dates[0],
       dateTo: dates[dates.length - 1],
       campaignCount: new Set(rows.map((r) => r.campaignId)).size,
-      importedCost,
-      costAdjustmentApplied: costAdjustment.adjustmentApplied,
-      costAdjustmentSource: costAdjustment.adjustmentSource,
-      costAdjustmentDelta: costAdjustment.totalAdjustment,
-      monthlyUpserted: monthlyImport.upserted,
-      monthlyTotal: monthlyImport.totalCost,
     };
-  }
-
-  /**
-   * 用账户级花费补齐系列明细与 Google 后台之间的差额（优先日账户表，兜底月汇总表）
-   */
-  private async applyCostAdjustmentsFromSheet(
-    sheetId: string,
-    campaignRows: ParsedAdDailyRow[],
-    startDate?: string,
-    endDate?: string,
-  ): Promise<{
-    rows: ParsedAdDailyRow[];
-    adjustmentApplied: boolean;
-    adjustmentSource: 'daily_account' | 'monthly_account' | 'none';
-    totalAdjustment: number;
-  }> {
-    try {
-      const csvUrl = buildSheetCsvUrl(sheetId, ACCOUNT_DAILY_COST_TAB);
-      const res = await axios.get<string>(csvUrl, {
-        timeout: 120000,
-        responseType: 'text',
-        headers: { 'User-Agent': 'ZJADS/1.0' },
-      });
-      let accountRows = parseAccountDailyCostCsv(res.data);
-      if (startDate) {
-        accountRows = accountRows.filter((r) => r.date >= startDate);
-      }
-      if (endDate) {
-        accountRows = accountRows.filter((r) => r.date <= endDate);
-      }
-      if (accountRows.length) {
-        let snapshotByCustomer: Map<string, ParsedBudgetSnapshotRow> | undefined;
-        try {
-          const snapUrl = buildSheetCsvUrl(sheetId, BUDGET_SNAPSHOT_TAB);
-          const snapRes = await axios.get<string>(snapUrl, {
-            timeout: 120000,
-            responseType: 'text',
-            headers: { 'User-Agent': 'ZJADS/1.0' },
-          });
-          const snapRows = parseBudgetSnapshotCsv(snapRes.data);
-          snapshotByCustomer = resolveEnabledCampaignsByCustomerFromSnapshots(
-            snapRows,
-            endDate ?? accountRows[accountRows.length - 1]?.date ?? '',
-          );
-        } catch {
-          snapshotByCustomer = undefined;
-        }
-        const adj = applyAccountCostAdjustment(campaignRows, accountRows, snapshotByCustomer);
-        return {
-          rows: adj.rows,
-          adjustmentApplied: adj.adjustmentApplied,
-          adjustmentSource: 'daily_account',
-          totalAdjustment: adj.totalAdjustment,
-        };
-      }
-    } catch {
-      /* 无日账户表时尝试月汇总 */
-    }
-
-    try {
-      const csvUrl = buildSheetCsvUrl(sheetId, MONTHLY_ACCOUNT_COST_TAB);
-      const res = await axios.get<string>(csvUrl, {
-        timeout: 120000,
-        responseType: 'text',
-        headers: { 'User-Agent': 'ZJADS/1.0' },
-      });
-      const monthlyRows = parseMonthlyAccountCostCsv(res.data);
-      if (monthlyRows.length) {
-        const adj = applyMonthlyCostAdjustment(campaignRows, monthlyRows, startDate, endDate);
-        return {
-          rows: adj.rows,
-          adjustmentApplied: adj.adjustmentApplied,
-          adjustmentSource: 'monthly_account',
-          totalAdjustment: adj.totalAdjustment,
-        };
-      }
-    } catch {
-      /* 无月汇总表则保持系列明细原样 */
-    }
-
-    return {
-      rows: campaignRows,
-      adjustmentApplied: false,
-      adjustmentSource: 'none',
-      totalAdjustment: 0,
-    };
-  }
-
-  /**
-   * 从 monthly_account_cost 导入账户月花费（总广告费对账口径）
-   */
-  private async importMonthlyAccountCostFromSheet(
-    sheetId: string,
-    ownerUserId: number,
-  ): Promise<{ upserted: number; totalCost: number }> {
-    try {
-      const csvUrl = buildSheetCsvUrl(sheetId, MONTHLY_ACCOUNT_COST_TAB);
-      const res = await axios.get<string>(csvUrl, {
-        timeout: 120000,
-        responseType: 'text',
-        headers: { 'User-Agent': 'ZJADS/1.0' },
-      });
-      const monthlyRows = parseMonthlyAccountCostCsv(res.data);
-      if (!monthlyRows.length) {
-        return { upserted: 0, totalCost: 0 };
-      }
-
-      let upserted = 0;
-      for (const row of monthlyRows) {
-        await this.prisma.adAccountMonthly.upsert({
-          where: {
-            ownerUserId_month_customerId: {
-              ownerUserId,
-              month: row.month,
-              customerId: row.customerId,
-            },
-          },
-          create: {
-            ownerUserId,
-            month: row.month,
-            startDate: new Date(row.startDate),
-            endDate: new Date(row.endDate),
-            customerId: row.customerId,
-            customerName: row.customerName,
-            currency: row.currency,
-            cost: row.cost,
-          },
-          update: {
-            startDate: new Date(row.startDate),
-            endDate: new Date(row.endDate),
-            customerName: row.customerName,
-            currency: row.currency,
-            cost: row.cost,
-          },
-        });
-        upserted += 1;
-      }
-
-      const totalCost = monthlyRows.reduce((sum, r) => sum + r.cost, 0);
-      return {
-        upserted,
-        totalCost: Math.round(totalCost * 100) / 100,
-      };
-    } catch {
-      return { upserted: 0, totalCost: 0 };
-    }
   }
 }

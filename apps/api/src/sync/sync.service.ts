@@ -321,9 +321,6 @@ export class SyncService implements OnModuleInit {
         }
         console.log(
           `[sync] 任务 #${jobId} 已自动导入 Sheet：系列 ${r.upserted} 行` +
-            (r.monthlyTotal != null && r.monthlyTotal > 0
-              ? `，月汇总账户费已同步`
-              : '') +
             `（${syncStart}~${syncEnd}）`,
         );
       })

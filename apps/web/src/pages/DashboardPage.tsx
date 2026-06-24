@@ -58,7 +58,6 @@ const SYNC_PLATFORM_SHORT: Record<string, string> = {
   partnermatic: 'PM',
   linkhaitao: 'LH',
   linkbux: 'LB',
-  rewardoo: 'RW',
 };
 
 interface MerchantRow {
@@ -157,28 +156,6 @@ interface CampaignTotals {
 
   profit: number;
 
-  campaignDetailSpend?: number;
-
-  /** 账户级对账参考（Sheet raw_daily_account_cost），与卡片系列合计可能不同 */
-  accountLevelAdSpend?: number | null;
-
-  adSpendSource?: 'campaign_detail';
-
-}
-
-interface AdSpendCoverage {
-  totalCost: number;
-  sheetTotalCost: number | null;
-  monthlySheetTotal: number | null;
-  hasMonthlyCostTab: boolean;
-  monthlyDetailGap: number | null;
-  sheetDbGap: number | null;
-  missingDates: string[];
-  missingDayCount: number;
-  firstDateWithData: string | null;
-  hasLeadingGap: boolean;
-  likelySheetStale: boolean;
-  hasMonthlyDetailGap: boolean;
 }
 
 
@@ -195,7 +172,6 @@ function inferPlatformFromAlias(alias: string): string {
   if (a.startsWith('lh')) return 'LinkHaitao';
   if (a.startsWith('pm')) return 'PartnerMatic';
   if (a.startsWith('lb')) return 'LinkBux';
-  if (a.startsWith('rw')) return 'Rewardoo';
   return '';
 }
 
@@ -235,7 +211,6 @@ function ReportSummaryBar({
     label: string;
     value: React.ReactNode;
     variant?: 'cost' | 'commission' | 'roi' | 'orders';
-    hint?: string;
   }[];
 }) {
   return (
@@ -247,9 +222,6 @@ function ReportSummaryBar({
         >
           <span className="report-summary-label">{item.label}</span>
           <span className="report-summary-value">{item.value}</span>
-          {item.hint ? (
-            <span className="report-summary-hint">{item.hint}</span>
-          ) : null}
         </div>
       ))}
     </div>
@@ -273,8 +245,6 @@ export default function DashboardPage() {
     lastSheetName: string | null;
   } | null>(null);
   const [importingSheet, setImportingSheet] = useState(false);
-
-  const [adSpendCoverage, setAdSpendCoverage] = useState<AdSpendCoverage | null>(null);
 
   const [range, setRange] = useState<[Dayjs, Dayjs]>([
 
@@ -362,10 +332,6 @@ export default function DashboardPage() {
     return viewUserId ? { ...base, userId: viewUserId } : base;
   }, [range, viewUserId]);
 
-  const queryDayCount = useMemo(
-    () => range[1].diff(range[0], 'day') + 1,
-    [range],
-  );
 
 
   const loadSyncAccounts = useCallback(async () => {
@@ -389,7 +355,7 @@ export default function DashboardPage() {
 
     const picks: SyncAccountPick[] = [];
     for (const g of data.data) {
-      if (!['partnermatic', 'linkhaitao', 'linkbux', 'rewardoo'].includes(g.platformCode)) {
+      if (!['partnermatic', 'linkhaitao', 'linkbux'].includes(g.platformCode)) {
         continue;
       }
       for (const a of g.accounts) {
@@ -443,16 +409,6 @@ export default function DashboardPage() {
       }
     })();
   }, [viewUserId]);
-
-  useEffect(() => {
-    void (async () => {
-      const { data } = await api.get<ApiResult<AdSpendCoverage>>(
-        '/reports/ad-spend-coverage',
-        { params: dateParams },
-      );
-      if (data.success) setAdSpendCoverage(data.data);
-    })();
-  }, [dateParams]);
 
   const fetchSyncJob = useCallback(async (jobId: number) => {
     try {
@@ -545,7 +501,7 @@ export default function DashboardPage() {
 
     }
 
-  }, [range, campaignStatusMode, viewUserId, dateParams]);
+  }, [range, campaignStatusMode, viewUserId]);
 
   const importSheetForEmployee = useCallback(async () => {
     if (!viewUserId) return;
@@ -562,17 +518,6 @@ export default function DashboardPage() {
         if (data.data.success > 0) {
           message.success('Sheet 导入完成，正在刷新报表');
           void loadReport();
-          const covRes = await api.get<ApiResult<AdSpendCoverage>>(
-            '/reports/ad-spend-coverage',
-            {
-              params: {
-                startDate: range[0].format('YYYY-MM-DD'),
-                endDate: range[1].format('YYYY-MM-DD'),
-                userId: viewUserId,
-              },
-            },
-          );
-          if (covRes.data.success) setAdSpendCoverage(covRes.data.data);
         } else {
           message.error('Sheet 导入失败，请检查员工是否已配置 Sheet');
         }
@@ -624,26 +569,19 @@ export default function DashboardPage() {
 
           if (job.status === 'completed') {
 
-            message.success('采集已完成，已自动导入 Sheet 广告费并刷新报表');
+            message.success('采集已完成，报表已自动刷新');
 
           } else if (job.status === 'failed') {
 
-            message.error('联盟采集失败，请查看下方任务详情（Sheet 仍会尝试导入）');
+            message.error('采集失败，请查看下方任务详情');
 
           } else {
 
-            message.warning('部分账号采集失败，Sheet 广告费已尝试自动导入');
+            message.warning('部分账号采集失败，请查看任务详情');
 
           }
 
           void loadReport();
-          void (async () => {
-            const { data } = await api.get<ApiResult<AdSpendCoverage>>(
-              '/reports/ad-spend-coverage',
-              { params: dateParams },
-            );
-            if (data.success) setAdSpendCoverage(data.data);
-          })();
 
         }
 
@@ -651,7 +589,7 @@ export default function DashboardPage() {
 
     },
 
-    [fetchSyncJob, stopPolling, loadReport, dateParams],
+    [fetchSyncJob, stopPolling, loadReport],
 
   );
 
@@ -861,21 +799,6 @@ export default function DashboardPage() {
 
 
   const ct = campaignTotals;
-  const reportRangeLabel = `${range[0].format('YYYY-MM-DD')} ~ ${range[1].format('YYYY-MM-DD')}`;
-  const statusLabel =
-    campaignStatusMode === 'active'
-      ? '仅活跃系列'
-      : campaignStatusMode === 'paused'
-        ? '仅暂停系列'
-        : '全部系列';
-  const campaignFilterActive = !!campaignSearch.trim() || campaignPlatform !== 'all';
-  const authoritativeAdSpendHint = campaignFilterActive
-    ? `${reportRangeLabel} · 筛选后系列明细`
-    : `${reportRangeLabel} · ${statusLabel}明细合计`;
-  const accountLevelGap =
-    ct.accountLevelAdSpend != null && ct.accountLevelAdSpend > 0
-      ? Math.round((ct.accountLevelAdSpend - ct.cost) * 100) / 100
-      : null;
 
   const campaignPlatformOptions = useMemo(() => {
     const names = [
@@ -897,20 +820,6 @@ export default function DashboardPage() {
     }
     return rows;
   }, [campaignRows, campaignSearch, campaignPlatform]);
-
-  const campaignTablePagination = useMemo(
-    () => ({
-      pageSize: campaignPageSize,
-      showSizeChanger: true,
-      pageSizeOptions: [10, 20, 50, 100],
-      showTotal: (total: number) =>
-        campaignFilterActive
-          ? `共 ${total} 条（全部 ${campaignRows.length} 条）`
-          : `共 ${total} 条`,
-      onShowSizeChange: (_: number, size: number) => setCampaignPageSize(size),
-    }),
-    [campaignFilterActive, campaignRows.length, campaignPageSize],
-  );
 
   const filteredCampaignDailyRows = useMemo(() => {
     let rows = campaignDailyRows;
@@ -952,6 +861,7 @@ export default function DashboardPage() {
     return { ...totals, overallRoi };
   }, [filteredCampaignRows]);
 
+  const campaignFilterActive = !!campaignSearch.trim() || campaignPlatform !== 'all';
   const displayCampaignTotals = campaignFilterActive ? filteredCampaignTotals : ct;
 
   /** 商家汇总按平台全量（联盟 API 采集结果） */
@@ -1103,69 +1013,6 @@ export default function DashboardPage() {
         />
       )}
 
-      {adSpendCoverage &&
-        (adSpendCoverage.missingDayCount > 0 ||
-          adSpendCoverage.likelySheetStale ||
-          adSpendCoverage.hasMonthlyDetailGap) && (
-        <Alert
-          type="warning"
-          showIcon
-          style={{ marginBottom: 16 }}
-          message="广告费可能低于 Google Ads 后台"
-          description={
-            <div>
-              {adSpendCoverage.missingDayCount > 0 && (
-                <p style={{ margin: '0 0 8px' }}>
-                  查询区间内有 <strong>{adSpendCoverage.missingDayCount}</strong> 天无广告数据
-                  {adSpendCoverage.hasLeadingGap && adSpendCoverage.firstDateWithData
-                    ? `（最早有数据：${adSpendCoverage.firstDateWithData}）`
-                    : ''}
-                  。
-                </p>
-              )}
-              <p style={{ margin: '0 0 8px' }}>
-                平台总广告费 ${adSpendCoverage.totalCost.toFixed(2)}
-                {adSpendCoverage.sheetTotalCost != null && (
-                  <>
-                    ，明细 Sheet ${adSpendCoverage.sheetTotalCost.toFixed(2)}
-                    {Math.abs(adSpendCoverage.sheetDbGap ?? 0) < 0.05
-                      ? '（与库内系列明细一致）'
-                      : ''}
-                  </>
-                )}
-                {adSpendCoverage.monthlySheetTotal != null && (
-                  <>，月汇总 Sheet ${adSpendCoverage.monthlySheetTotal.toFixed(2)}（账户口径，接近 Google 后台）</>
-                )}
-                。
-              </p>
-              {adSpendCoverage.hasMonthlyDetailGap && (
-                <p style={{ margin: '0 0 8px', color: '#666' }}>
-                  系列明细比月汇总账户花费少约{' '}
-                  <strong>${(adSpendCoverage.monthlyDetailGap ?? 0).toFixed(2)}</strong>
-                  （已移除系列等历史花费）。请重新导入以补齐差额。
-                </p>
-              )}
-              {adSpendCoverage.likelySheetStale && (
-                <p style={{ margin: '0 0 8px', color: '#666' }}>
-                  明细 Sheet 数据可能不完整（常见：脚本 init 中途停止、或{' '}
-                  <code>max_retention_days</code> 删了早期行）。
-                  请：① 确认 <code>raw_daily_report</code> 区间 cost 求和；
-                  ② init 完成后改 <code>lookback_days=7</code> 日常跑；
-                  ③ 再导入。
-                </p>
-              )}
-              {adSpendCoverage.missingDayCount > 0 && (
-                <p style={{ margin: 0, color: '#666' }}>
-                  缺失日期：
-                  {adSpendCoverage.missingDates.slice(0, 8).join('、')}
-                  {adSpendCoverage.missingDates.length > 8 ? '…' : ''}
-                </p>
-              )}
-            </div>
-          }
-        />
-      )}
-
       <Card title={viewUserId ? `数据采集（${viewUsername}）` : '数据采集'} style={{ marginBottom: 16 }}>
 
         <div className="sync-collect-toolbar">
@@ -1192,9 +1039,6 @@ export default function DashboardPage() {
                 : ''}
             </Button>
           </div>
-          <p style={{ margin: '8px 0 0', color: '#888', fontSize: 12 }}>
-            一次操作：联盟订单采集 + 自动导入 Sheet 广告费（与上方日期区间一致）
-          </p>
         </div>
 
         {syncAccountOptions.length > 0 ? (
@@ -1205,12 +1049,12 @@ export default function DashboardPage() {
           />
         ) : (
           <Typography.Text type="secondary" className="sync-collect-hint" style={{ display: 'block' }}>
-            请先在「我的平台账号」添加并启用 PM / LH / LB / RW 账号
+            请先在「我的平台账号」添加并启用 PM / LH / LB 账号
           </Typography.Text>
         )}
 
         <p className="sync-collect-hint">
-          已接入 PM / LH / LB / RW 订单；PM/LH 点击随订单区间采集；LB 点击仅采区间<strong>最后一天</strong>，更早日期请用「点击校准导入」。RW 按 TransactionDetails（交易日期）拉单，暂无点击 API。
+          已接入 PM / LH / LB 订单与联盟点击。PM/LH 点击随订单区间采集；LB 点击仅采区间<strong>最后一天</strong>，更早日期请用「点击校准导入」。
           {viewUserId
             ? ' Google Ads 广告费请在上方「导入 Sheet」或侧边栏「广告数据源」中代员工导入。'
             : ' Google Ads 请在「广告数据源」导入 Sheet。'}
@@ -1347,9 +1191,6 @@ export default function DashboardPage() {
                         label: '总广告费',
                         variant: 'cost',
                         value: `$${displayCampaignTotals.cost.toFixed(2)}`,
-                        hint: campaignFilterActive
-                          ? `筛选后系列明细 · ${reportRangeLabel}`
-                          : authoritativeAdSpendHint,
                       },
                       {
                         label: '总订单数',
@@ -1414,25 +1255,6 @@ export default function DashboardPage() {
                     />
                   )}
 
-                  {accountLevelGap != null && Math.abs(accountLevelGap) > 1 && (
-                    <Alert
-                      type="info"
-                      showIcon
-                      style={{ marginBottom: 12 }}
-                      message="系列合计与 Google 账户级花费存在差异"
-                      description={
-                        <>
-                          当前筛选下系列广告费合计 <strong>${ct.cost.toFixed(2)}</strong>，
-                          Sheet 账户级日花费合计约{' '}
-                          <strong>${ct.accountLevelAdSpend!.toFixed(2)}</strong>
-                          （差额 ${accountLevelGap.toFixed(2)}）。
-                          差额多来自已移除系列的历史花费或 Sheet 尚未同步的账户。
-                          请确认 Google 脚本已跑完，并在「广告数据源」重新导入所选日期。
-                        </>
-                      }
-                    />
-                  )}
-
                   {campaignRows.length === 0 && !loading && !statusFilterSkipped && (
                     <Typography.Text type="secondary" style={{ display: 'block', marginBottom: 12 }}>
                       暂无数据，请先在「广告数据源」导入 Sheet
@@ -1443,9 +1265,8 @@ export default function DashboardPage() {
                     <CampaignExpandableTable
                       rows={campaignRowsWithDaily}
                       loading={loading}
-                      queryDayCount={queryDayCount}
                       scroll={tableScroll}
-                      pagination={campaignTablePagination}
+                      pagination={tablePagination(campaignPageSize, setCampaignPageSize)}
                       rowClassName={(r) => {
                         if (r.orderCount === 0 && r.cost > 0) return 'row-zero-orders-ad';
                         if (r.orderCount === 0 && r.affiliateClicks > 0) return 'row-affiliate-clicks-only';
@@ -1602,12 +1423,6 @@ export default function DashboardPage() {
             color: #0f172a;
             font-variant-numeric: tabular-nums;
             line-height: 1.2;
-          }
-          .report-summary-hint {
-            color: #64748b;
-            font-size: 11px;
-            line-height: 1.35;
-            margin-top: 2px;
           }
           .report-summary-item--cost {
             background: #fef2f2;

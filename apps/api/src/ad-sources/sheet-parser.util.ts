@@ -335,12 +335,10 @@ export function parseAccountDailyCostCsv(csvText: string): ParsedAccountDailyRow
 
 /**
  * 用账户级日花费补齐明细与 Google 后台之间的差额（按系列花费比例分摊）
- * @param snapshotByCustomer 无系列明细时，优先写入当前 ENABLED 系列（而非差额补记行）
  */
 export function applyAccountCostAdjustment(
   campaignRows: ParsedAdDailyRow[],
   accountRows: ParsedAccountDailyRow[],
-  snapshotByCustomer?: Map<string, ParsedBudgetSnapshotRow>,
 ): { rows: ParsedAdDailyRow[]; adjustmentApplied: boolean; totalAdjustment: number } {
   if (!accountRows.length) {
     return { rows: campaignRows, adjustmentApplied: false, totalAdjustment: 0 };

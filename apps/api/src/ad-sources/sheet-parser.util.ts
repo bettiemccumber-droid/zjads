@@ -381,47 +381,25 @@ export function applyAccountCostAdjustment(
     if (detailRows.length === 0) {
       if (accountCost <= 0) continue;
       const [date, customerId] = key.split('|');
-      const snap = snapshotByCustomer?.get(customerId);
-      if (snap) {
-        const parsed = parseCampaignName(snap.campaignName);
-        adjusted.push({
-          date,
-          customerId: formatCustomerId(customerId),
-          campaignId: snap.campaignId,
-          campaignName: snap.campaignName,
-          campaignStatus: snap.campaignStatus,
-          impressions: 0,
-          clicks: 0,
-          cost: accountCost,
-          campaignBudget: snap.campaignBudget,
-          searchBudgetLostIs: 0,
-          searchRankLostIs: 0,
-          avgCpc: 0,
-          maxCpc: 0,
-          currency: accountRow.currency || 'USD',
-          affiliateAlias: parsed.affiliateAlias,
-          merchantId: parsed.merchantId,
-        });
-      } else {
-        adjusted.push({
-          date,
-          customerId,
-          campaignId: ACCOUNT_GAP_CAMPAIGN_ID,
-          campaignName: '[账户级差额补记]',
-          campaignStatus: '',
-          impressions: 0,
-          clicks: 0,
-          cost: accountCost,
-          campaignBudget: 0,
-          searchBudgetLostIs: 0,
-          searchRankLostIs: 0,
-          avgCpc: 0,
-          maxCpc: 0,
-          currency: accountRow.currency || 'USD',
-          affiliateAlias: '',
-          merchantId: '',
-        });
-      }
+      /** 无系列明细时不写入当前 ENABLED 系列，避免把账户费错挂到新系列（如 Sandro 6/7 花费挂到 6/23 新建系列） */
+      adjusted.push({
+        date,
+        customerId: formatCustomerId(customerId),
+        campaignId: ACCOUNT_GAP_CAMPAIGN_ID,
+        campaignName: '[账户级差额补记]',
+        campaignStatus: '',
+        impressions: 0,
+        clicks: 0,
+        cost: accountCost,
+        campaignBudget: 0,
+        searchBudgetLostIs: 0,
+        searchRankLostIs: 0,
+        avgCpc: 0,
+        maxCpc: 0,
+        currency: accountRow.currency || 'USD',
+        affiliateAlias: '',
+        merchantId: '',
+      });
       continue;
     }
 

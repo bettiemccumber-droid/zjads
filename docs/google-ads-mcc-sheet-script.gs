@@ -50,6 +50,9 @@
  *   - campaign 按日指标优先使用 AdsApp.search（Google 推荐）；report 作回退并输出诊断计数。
  *     修复 v11.4 日志中「campaign级0行」但 Google 后台系列有花费的问题。
  *
+ * 【v11.6 变更】
+ *   - collectReportRows_ 改为 ad_group_ad 明细优先、campaign 级仅作兜底，避免 camp 分支覆盖 ad 明细。
+ *
  *   4. 也可单独运行 runMonthlyCostSummary()，根据 lookback_days 自动切换模式：
  *      - lookback_days=0 → 初始化：从 2025-01-01 至今天全量按月汇总
  *      - lookback_days>0 → 日常：回溯窗口所涉月份的广告费汇总
@@ -1137,136 +1140,104 @@ function collectReportRows_(startDate, endDate, timezone, accountId, accountName
   var adDetailUsed = 0;
   var keysSeen = {};
 
-  for (var ck in campByKey) {
-    keysSeen[ck] = true;
-    var camp = campByKey[ck];
-    var adList = adByKey[ck] || [];
-    var adCostMicros = 0;
-    var adClicks = 0;
+  /**
+   * 将 ad_group_ad 行写入输出数组。
+   * @param {!Object} ar GAQL 行。
+   */
+  var pushAdReportRow_ = function(ar) {
+    var arCampId = safeStr_(ar['campaign.id']);
+    var arDateStr = safeStr_(ar['segments.date']);
+    var arSisKey = arCampId + '_' + arDateStr;
+    var arSisData = sisMap[arSisKey] || {};
+    out.push([
+      arDateStr,
+      accountId,
+      accountName,
+      RUNTIME.mccId,
+      safeStr_(ar['customer.currency_code']),
+      arCampId,
+      safeStr_(ar['campaign.name']),
+      safeStr_(ar['campaign.status']),
+      safeStr_(ar['campaign.advertising_channel_type']),
+      budgetAmountMap[arCampId] !== undefined ? budgetAmountMap[arCampId] : '',
+      geoMap[arCampId] || '',
+      safeStr_(ar['ad_group.id']),
+      safeStr_(ar['ad_group.name']),
+      safeStr_(ar['ad_group_ad.ad.id']),
+      safeStr_(ar['ad_group_ad.ad.type']),
+      safeStr_(ar['ad_group_ad.status']),
+      safeStr_(ar['ad_group_ad.ad.final_urls']),
+      safeNum_(ar['metrics.impressions']),
+      safeNum_(ar['metrics.clicks']),
+      microsToCurrency_(ar['metrics.cost_micros']),
+      safeNum_(ar['metrics.cost_micros']),
+      safeNum_(ar['metrics.conversions']),
+      safeNum_(ar['metrics.conversions_value']),
+      safeNum_(ar['metrics.ctr']),
+      microsToCurrency_(ar['metrics.average_cpc']),
+      arSisData.sis !== undefined ? arSisData.sis : '',
+      arSisData.budgetLost !== undefined ? arSisData.budgetLost : '',
+      arSisData.rankLost !== undefined ? arSisData.rankLost : '',
+      updatedAt
+    ]);
+    adDetailUsed += 1;
+  };
+
+  // Pass 1: ad 明细优先（与 Google 后台系列按日视图一致）
+  for (var ak in adByKey) {
+    var adList = adByKey[ak];
+    var emittedForKey = false;
     for (var ai = 0; ai < adList.length; ai++) {
-      adCostMicros += safeNum_(adList[ai]['metrics.cost_micros']);
-      adClicks += safeNum_(adList[ai]['metrics.clicks']);
+      var ar = adList[ai];
+      var arImp = safeNum_(ar['metrics.impressions']);
+      var arClk = safeNum_(ar['metrics.clicks']);
+      var arCostMicros = safeNum_(ar['metrics.cost_micros']);
+      if (arImp === 0 && arClk === 0 && arCostMicros === 0) { continue; }
+      pushAdReportRow_(ar);
+      emittedForKey = true;
     }
-    if (adList.length > 0 && (adCostMicros > 0 || adClicks > 0)) {
-      for (var aj = 0; aj < adList.length; aj++) {
-        var ar = adList[aj];
-        var arCampId = safeStr_(ar['campaign.id']);
-        var arDateStr = safeStr_(ar['segments.date']);
-        var arSisKey = arCampId + '_' + arDateStr;
-        var arSisData = sisMap[arSisKey] || {};
-        out.push([
-          arDateStr,
-          accountId,
-          accountName,
-          RUNTIME.mccId,
-          safeStr_(ar['customer.currency_code']),
-          arCampId,
-          safeStr_(ar['campaign.name']),
-          safeStr_(ar['campaign.status']),
-          safeStr_(ar['campaign.advertising_channel_type']),
-          budgetAmountMap[arCampId] !== undefined ? budgetAmountMap[arCampId] : '',
-          geoMap[arCampId] || '',
-          safeStr_(ar['ad_group.id']),
-          safeStr_(ar['ad_group.name']),
-          safeStr_(ar['ad_group_ad.ad.id']),
-          safeStr_(ar['ad_group_ad.ad.type']),
-          safeStr_(ar['ad_group_ad.status']),
-          safeStr_(ar['ad_group_ad.ad.final_urls']),
-          safeNum_(ar['metrics.impressions']),
-          safeNum_(ar['metrics.clicks']),
-          microsToCurrency_(ar['metrics.cost_micros']),
-          safeNum_(ar['metrics.cost_micros']),
-          safeNum_(ar['metrics.conversions']),
-          safeNum_(ar['metrics.conversions_value']),
-          safeNum_(ar['metrics.ctr']),
-          microsToCurrency_(ar['metrics.average_cpc']),
-          arSisData.sis !== undefined ? arSisData.sis : '',
-          arSisData.budgetLost !== undefined ? arSisData.budgetLost : '',
-          arSisData.rankLost !== undefined ? arSisData.rankLost : '',
-          updatedAt
-        ]);
-        adDetailUsed += 1;
-      }
-    } else {
-      var campSisKey = camp.campId + '_' + camp.dateStr;
-      var campSisData = sisMap[campSisKey] || {};
-      out.push([
-        camp.dateStr,
-        accountId,
-        accountName,
-        RUNTIME.mccId,
-        camp.currency,
-        camp.campId,
-        camp.campName,
-        camp.campStatus,
-        camp.channelType,
-        budgetAmountMap[camp.campId] !== undefined ? budgetAmountMap[camp.campId] : '',
-        geoMap[camp.campId] || '',
-        '',
-        '',
-        '',
-        '',
-        '',
-        '',
-        camp.impressions,
-        camp.clicks,
-        microsToCurrency_(camp.costMicros),
-        camp.costMicros,
-        camp.conversions,
-        camp.conversionsValue,
-        camp.ctr,
-        camp.avgCpc,
-        campSisData.sis !== undefined ? campSisData.sis : '',
-        campSisData.budgetLost !== undefined ? campSisData.budgetLost : '',
-        campSisData.rankLost !== undefined ? campSisData.rankLost : '',
-        updatedAt
-      ]);
-      campUsed += 1;
-    }
+    if (emittedForKey) { keysSeen[ak] = true; }
   }
 
-  for (var ak in adByKey) {
-    if (keysSeen[ak]) { continue; }
-    var orphanAds = adByKey[ak];
-    for (var ok = 0; ok < orphanAds.length; ok++) {
-      var or = orphanAds[ok];
-      var orCampId = safeStr_(or['campaign.id']);
-      var orDateStr = safeStr_(or['segments.date']);
-      var orSisKey = orCampId + '_' + orDateStr;
-      var orSisData = sisMap[orSisKey] || {};
-      out.push([
-        orDateStr,
-        accountId,
-        accountName,
-        RUNTIME.mccId,
-        safeStr_(or['customer.currency_code']),
-        orCampId,
-        safeStr_(or['campaign.name']),
-        safeStr_(or['campaign.status']),
-        safeStr_(or['campaign.advertising_channel_type']),
-        budgetAmountMap[orCampId] !== undefined ? budgetAmountMap[orCampId] : '',
-        geoMap[orCampId] || '',
-        safeStr_(or['ad_group.id']),
-        safeStr_(or['ad_group.name']),
-        safeStr_(or['ad_group_ad.ad.id']),
-        safeStr_(or['ad_group_ad.ad.type']),
-        safeStr_(or['ad_group_ad.status']),
-        safeStr_(or['ad_group_ad.ad.final_urls']),
-        safeNum_(or['metrics.impressions']),
-        safeNum_(or['metrics.clicks']),
-        microsToCurrency_(or['metrics.cost_micros']),
-        safeNum_(or['metrics.cost_micros']),
-        safeNum_(or['metrics.conversions']),
-        safeNum_(or['metrics.conversions_value']),
-        safeNum_(or['metrics.ctr']),
-        microsToCurrency_(or['metrics.average_cpc']),
-        orSisData.sis !== undefined ? orSisData.sis : '',
-        orSisData.budgetLost !== undefined ? orSisData.budgetLost : '',
-        orSisData.rankLost !== undefined ? orSisData.rankLost : '',
-        updatedAt
-      ]);
-      adDetailUsed += 1;
-    }
+  // Pass 2: campaign 级兜底（search 有指标、ad 明细未覆盖的 campaign×day）
+  for (var ck in campByKey) {
+    if (keysSeen[ck]) { continue; }
+    var camp = campByKey[ck];
+    var campSisKey = camp.campId + '_' + camp.dateStr;
+    var campSisData = sisMap[campSisKey] || {};
+    out.push([
+      camp.dateStr,
+      accountId,
+      accountName,
+      RUNTIME.mccId,
+      camp.currency,
+      camp.campId,
+      camp.campName,
+      camp.campStatus,
+      camp.channelType,
+      budgetAmountMap[camp.campId] !== undefined ? budgetAmountMap[camp.campId] : '',
+      geoMap[camp.campId] || '',
+      '',
+      '',
+      '',
+      '',
+      '',
+      '',
+      camp.impressions,
+      camp.clicks,
+      microsToCurrency_(camp.costMicros),
+      camp.costMicros,
+      camp.conversions,
+      camp.conversionsValue,
+      camp.ctr,
+      camp.avgCpc,
+      campSisData.sis !== undefined ? campSisData.sis : '',
+      campSisData.budgetLost !== undefined ? campSisData.budgetLost : '',
+      campSisData.rankLost !== undefined ? campSisData.rankLost : '',
+      updatedAt
+    ]);
+    campUsed += 1;
+    keysSeen[ck] = true;
   }
 
   if (campUsed > 0 || adDetailUsed > 0) {

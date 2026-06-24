@@ -684,6 +684,23 @@ export class ReportsService {
       affiliateByDay,
     );
 
+    rows = await this.supplementSandwichedMissingCampaignDays_(
+      rows,
+      ownerId,
+      q.startDate,
+      q.endDate,
+      affiliateByDay,
+    );
+
+    /** 过滤导入/补齐产生的 0 展示 0 点击却有花费的幽灵行（仅保留真实 MCC 明细或 $0 联盟补行） */
+    rows = rows.filter(
+      (r) =>
+        r.campaignId === ACCOUNT_GAP_CAMPAIGN_ID ||
+        r.impressions > 0 ||
+        r.clicks > 0 ||
+        Number(r.cost) <= 0.005,
+    );
+
     rows = this.dedupeAffiliateAttributionOnCampaignDaily(rows);
 
     const statusMode = resolveCampaignStatusMode(q);
@@ -1557,9 +1574,116 @@ export class ReportsService {
   }
 
   /**
-   * Sheet/DB 无系列逐日明细时，用 raw_daily_account_cost 补齐按天行（与 campaignSummary 孤儿花费对齐，支持看板展开）
+   * Sheet/DB 无系列逐日明细时，将账户差额分摊到已有真实 MCC 行（不创建 0 点击/0 展示的幽灵行）
    */
   private async supplementCampaignDailyFromAccountCost_<
+    T extends {
+      date: string;
+      campaignGroupKey: string;
+      customerId: string;
+      campaignId: string;
+      campaignName: string;
+      campaignStatus: string;
+      affiliateAlias: string;
+      merchantId: string;
+      dailyBudget: number;
+      impressions: number;
+      clicks: number;
+      cost: number;
+      orderCount: number;
+      commission: number;
+      affiliateClicks: number;
+      searchBudgetLostIs: number;
+      searchRankLostIs: number;
+      avgCpc: number;
+      maxCpc: number;
+      epc: number;
+      roi: number;
+      profit: number;
+      operationSuggestion: string;
+    },
+  >(
+    rows: T[],
+    ownerId: number,
+    startDate: string,
+    endDate: string,
+    _affiliateByDay: Awaited<ReturnType<typeof this.buildAffiliateMetricsByMerchantDay>>,
+  ): Promise<T[]> {
+    const accountRows = await this.loadSheetAccountDaily_(ownerId, startDate, endDate);
+    if (!accountRows.length) return rows;
+
+    const budgetEnabled = await this.loadBudgetSnapshotEnabled_(ownerId, endDate);
+
+    const cidKey = (id: string) => id.replace(/-/g, '').replace(/\s/g, '');
+    const resolveSnap = (customerId: string) => {
+      const norm = cidKey(customerId);
+      if (budgetEnabled.byCustomer.has(customerId)) {
+        return { customerId, snap: budgetEnabled.byCustomer.get(customerId)! };
+      }
+      for (const [cid, snap] of budgetEnabled.byCustomer) {
+        if (cidKey(cid) === norm) return { customerId: cid, snap };
+      }
+      return null;
+    };
+
+    const groups = new Map<string, T[]>();
+    for (const row of rows) {
+      if (row.campaignId === ACCOUNT_GAP_CAMPAIGN_ID) continue;
+      const key = `${row.date}|${cidKey(row.customerId)}`;
+      const list = groups.get(key) ?? [];
+      list.push(row);
+      groups.set(key, list);
+    }
+
+    const supplemented = [...rows];
+
+    for (const accountRow of accountRows) {
+      const accountCost = accountRow.cost;
+      if (accountCost <= 0) continue;
+
+      const resolved = resolveSnap(accountRow.customerId);
+      if (!resolved) continue;
+
+      const { customerId } = resolved;
+      const key = `${accountRow.date}|${cidKey(customerId)}`;
+      const detailRows = groups.get(key) ?? [];
+      const detailSum = detailRows.reduce((sum, r) => sum + Number(r.cost), 0);
+      const delta = Math.round((accountCost - detailSum) * 100) / 100;
+      if (delta < 0.005) continue;
+
+      /** 仅向已有真实 MCC 指标的行补差额，不创建 0 点击/0 展示的账户级幽灵行 */
+      const realRows = detailRows.filter((r) => r.impressions > 0 || r.clicks > 0);
+      if (!realRows.length) continue;
+
+      const realSum = realRows.reduce((sum, r) => sum + Number(r.cost), 0);
+      if (realSum <= 0) {
+        realRows[0].cost = Math.round((realRows[0].cost + delta) * 100) / 100;
+        this.recalcDailyRowMetrics_(realRows[0]);
+        continue;
+      }
+
+      let allocated = 0;
+      for (let i = 0; i < realRows.length; i += 1) {
+        const row = realRows[i];
+        const share =
+          i === realRows.length - 1
+            ? Math.round((delta - allocated) * 100) / 100
+            : Math.round(((Number(row.cost) / realSum) * delta) * 100) / 100;
+        allocated += share;
+        row.cost = Math.round((row.cost + share) * 100) / 100;
+        row.avgCpc = row.clicks > 0 ? row.cost / row.clicks : row.avgCpc;
+        this.recalcDailyRowMetrics_(row);
+      }
+    }
+
+    return supplemented;
+  }
+
+  /**
+   * Sheet 漏采单日时：若前后相邻日均有真实 MCC 明细且账户日花费存在，补齐中间缺口（如 Etsy 6/20）。
+   * 点击/展示取前后日均值估算，广告费取账户级日花费。
+   */
+  private async supplementSandwichedMissingCampaignDays_<
     T extends {
       date: string;
       campaignGroupKey: string;
@@ -1595,130 +1719,110 @@ export class ReportsService {
     const accountRows = await this.loadSheetAccountDaily_(ownerId, startDate, endDate);
     if (!accountRows.length) return rows;
 
-    const budgetEnabled = await this.loadBudgetSnapshotEnabled_(ownerId, endDate);
-    const latestByPhysical = await this.loadLatestPhysicalCampaignMeta_(ownerId, endDate);
-    const activeByCustomer =
-      budgetEnabled.activeByCustomer.size > 0
-        ? budgetEnabled.activeByCustomer
-        : resolveActiveCampaignIdByCustomer(latestByPhysical);
-
     const cidKey = (id: string) => id.replace(/-/g, '').replace(/\s/g, '');
-    const resolveSnap = (customerId: string) => {
-      const norm = cidKey(customerId);
-      if (budgetEnabled.byCustomer.has(customerId)) {
-        return { customerId, snap: budgetEnabled.byCustomer.get(customerId)! };
-      }
-      for (const [cid, snap] of budgetEnabled.byCustomer) {
-        if (cidKey(cid) === norm) return { customerId: cid, snap };
-      }
-      return null;
-    };
-    const resolveActiveCampId = (customerId: string) => {
-      const norm = cidKey(customerId);
-      if (activeByCustomer.has(customerId)) return activeByCustomer.get(customerId)!;
-      for (const [cid, campId] of activeByCustomer) {
-        if (cidKey(cid) === norm) return campId;
-      }
-      return null;
-    };
+    const accountByKey = new Map<string, number>();
+    for (const row of accountRows) {
+      accountByKey.set(
+        `${row.date}|${cidKey(row.customerId)}`,
+        row.cost,
+      );
+    }
 
-    const groups = new Map<string, T[]>();
+    const existing = new Set(rows.map((r) => `${r.campaignGroupKey}|${r.date}`));
+    const realDatesByGroup = new Map<string, Set<string>>();
+    const rowByGroupDate = new Map<string, T>();
+
     for (const row of rows) {
-      if (row.campaignId === ACCOUNT_GAP_CAMPAIGN_ID) continue;
-      const key = `${row.date}|${cidKey(row.customerId)}`;
-      const list = groups.get(key) ?? [];
-      list.push(row);
-      groups.set(key, list);
+      rowByGroupDate.set(`${row.campaignGroupKey}|${row.date}`, row);
+      if (row.impressions > 0 || row.clicks > 0) {
+        if (!realDatesByGroup.has(row.campaignGroupKey)) {
+          realDatesByGroup.set(row.campaignGroupKey, new Set());
+        }
+        realDatesByGroup.get(row.campaignGroupKey)!.add(row.date);
+      }
     }
 
     const supplemented = [...rows];
 
-    for (const accountRow of accountRows) {
-      const accountCost = accountRow.cost;
-      if (accountCost <= 0) continue;
+    for (const [groupKey, realDates] of realDatesByGroup) {
+      if (realDates.size < 2) continue;
 
-      const resolved = resolveSnap(accountRow.customerId);
-      if (!resolved) continue;
+      const sample = [...rowByGroupDate.values()].find((r) => r.campaignGroupKey === groupKey);
+      if (!sample) continue;
 
-      const { customerId, snap } = resolved;
-      const activeCampId = resolveActiveCampId(customerId);
-      if (!activeCampId) continue;
+      const customerNorm = cidKey(sample.customerId);
 
-      const key = `${accountRow.date}|${cidKey(customerId)}`;
-      const detailRows = groups.get(key) ?? [];
-      const detailSum = detailRows.reduce((sum, r) => sum + Number(r.cost), 0);
-      const delta = Math.round((accountCost - detailSum) * 100) / 100;
-      if (delta < 0.005) continue;
+      for (const dateStr of this.listDatesInRange_(startDate, endDate)) {
+        if (realDates.has(dateStr) || existing.has(`${groupKey}|${dateStr}`)) continue;
 
-      const physicalKey = `${customerId}|${activeCampId}`;
-      const meta = latestByPhysical.get(physicalKey);
-      const campaignName = snap.campaignName || meta?.campaignName || '';
-      if (!campaignName) continue;
+        const prevDate = this.shiftDateStr_(dateStr, -1);
+        const nextDate = this.shiftDateStr_(dateStr, 1);
+        if (!realDates.has(prevDate) || !realDates.has(nextDate)) continue;
 
-      const parsed = parseCampaignName(campaignName);
-      const alias = (meta?.affiliateAlias || parsed.affiliateAlias || '').toLowerCase();
-      const merchantId = meta?.merchantId || parsed.merchantId;
-      const campaignGroupKey = resolveCampaignGroupKey({
-        campaignName,
-        merchantId,
-        affiliateAlias: alias,
-        customerId,
-        campaignId: activeCampId,
-      });
+        const accountCost = accountByKey.get(`${dateStr}|${customerNorm}`) ?? 0;
+        if (accountCost <= 0) continue;
 
-      const existingActive = detailRows.find(
-        (r) => r.campaignId === activeCampId && cidKey(r.customerId) === cidKey(customerId),
-      );
+        let customerRealCost = 0;
+        for (const r of rows) {
+          if (cidKey(r.customerId) !== customerNorm || r.date !== dateStr) continue;
+          if (r.impressions > 0 || r.clicks > 0) {
+            customerRealCost += Number(r.cost);
+          }
+        }
+        const fillCost = Math.round((accountCost - customerRealCost) * 100) / 100;
+        if (fillCost <= 0.005) continue;
 
-      if (existingActive) {
-        existingActive.cost = Math.round((existingActive.cost + delta) * 100) / 100;
-        this.recalcDailyRowMetrics_(existingActive);
-        continue;
+        const prevRow = rowByGroupDate.get(`${groupKey}|${prevDate}`);
+        const nextRow = rowByGroupDate.get(`${groupKey}|${nextDate}`);
+        if (!prevRow || !nextRow) continue;
+
+        const clicks = Math.round((prevRow.clicks + nextRow.clicks) / 2);
+        const impressions = Math.round((prevRow.impressions + nextRow.impressions) / 2);
+        const parsed = parseCampaignName(sample.campaignName);
+        const affiliate = this.lookupAffiliateMetricsForDay(
+          affiliateByDay,
+          sample.merchantId,
+          sample.affiliateAlias,
+          dateStr,
+          parsed.merchantSlug,
+        );
+        const cost = fillCost;
+        const roi = cost > 0 ? (affiliate.commission - cost) / cost : 0;
+
+        const filled = {
+          ...sample,
+          date: dateStr,
+          dailyBudget: Math.max(prevRow.dailyBudget, nextRow.dailyBudget),
+          impressions,
+          clicks,
+          cost,
+          orderCount: affiliate.orderCount,
+          commission: affiliate.commission,
+          affiliateClicks: affiliate.affiliateClicks,
+          searchBudgetLostIs: (prevRow.searchBudgetLostIs + nextRow.searchBudgetLostIs) / 2,
+          searchRankLostIs: (prevRow.searchRankLostIs + nextRow.searchRankLostIs) / 2,
+          avgCpc: clicks > 0 ? cost / clicks : 0,
+          maxCpc: Math.max(prevRow.maxCpc, nextRow.maxCpc),
+          epc: clicks > 0 ? affiliate.commission / clicks : 0,
+          roi,
+          profit: affiliate.commission - cost,
+          operationSuggestion: suggestOperation(roi, affiliate.orderCount, cost),
+        } as T;
+
+        supplemented.push(filled);
+        existing.add(`${groupKey}|${dateStr}`);
+        rowByGroupDate.set(`${groupKey}|${dateStr}`, filled);
       }
-
-      const costToAdd = detailRows.length === 0 ? accountCost : delta;
-      const affiliate = this.lookupAffiliateMetricsForDay(
-        affiliateByDay,
-        merchantId,
-        alias,
-        accountRow.date,
-        parsed.merchantSlug,
-      );
-      const cost = costToAdd;
-      const commission = affiliate.commission;
-      const roi = cost > 0 ? (commission - cost) / cost : 0;
-
-      const synthetic = {
-        date: accountRow.date,
-        campaignGroupKey,
-        customerId,
-        campaignId: activeCampId,
-        campaignName,
-        campaignStatus: snap.campaignStatus || meta?.status || 'ENABLED',
-        affiliateAlias: alias,
-        merchantId,
-        dailyBudget: snap.campaignBudget ?? meta?.campaignBudget ?? 0,
-        impressions: 0,
-        clicks: 0,
-        cost,
-        orderCount: affiliate.orderCount,
-        commission,
-        affiliateClicks: affiliate.affiliateClicks,
-        searchBudgetLostIs: 0,
-        searchRankLostIs: 0,
-        avgCpc: 0,
-        maxCpc: meta?.maxCpc ?? 0,
-        epc: 0,
-        roi,
-        profit: commission - cost,
-        operationSuggestion: suggestOperation(roi, affiliate.orderCount, cost),
-      } as T;
-
-      supplemented.push(synthetic);
-      groups.set(key, [...detailRows, synthetic]);
     }
 
     return supplemented;
+  }
+
+  /** 自然日字符串偏移（UTC） */
+  private shiftDateStr_(dateStr: string, days: number): string {
+    const d = new Date(`${dateStr}T00:00:00.000Z`);
+    d.setUTCDate(d.getUTCDate() + days);
+    return d.toISOString().slice(0, 10);
   }
 
   /** 按天行花费变更后重算 ROI / 利润 / 操作建议 */

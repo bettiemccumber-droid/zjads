@@ -335,10 +335,12 @@ export function parseAccountDailyCostCsv(csvText: string): ParsedAccountDailyRow
 
 /**
  * 用账户级日花费补齐明细与 Google 后台之间的差额（按系列花费比例分摊）
+ * @param snapshotByCustomer 无系列明细时，优先写入当前 ENABLED 系列（而非差额补记行）
  */
 export function applyAccountCostAdjustment(
   campaignRows: ParsedAdDailyRow[],
   accountRows: ParsedAccountDailyRow[],
+  snapshotByCustomer?: Map<string, ParsedBudgetSnapshotRow>,
 ): { rows: ParsedAdDailyRow[]; adjustmentApplied: boolean; totalAdjustment: number } {
   if (!accountRows.length) {
     return { rows: campaignRows, adjustmentApplied: false, totalAdjustment: 0 };
@@ -379,24 +381,47 @@ export function applyAccountCostAdjustment(
     if (detailRows.length === 0) {
       if (accountCost <= 0) continue;
       const [date, customerId] = key.split('|');
-      adjusted.push({
-        date,
-        customerId,
-        campaignId: ACCOUNT_GAP_CAMPAIGN_ID,
-        campaignName: '[账户级差额补记]',
-        campaignStatus: '',
-        impressions: 0,
-        clicks: 0,
-        cost: accountCost,
-        campaignBudget: 0,
-        searchBudgetLostIs: 0,
-        searchRankLostIs: 0,
-        avgCpc: 0,
-        maxCpc: 0,
-        currency: accountRow.currency || 'USD',
-        affiliateAlias: '',
-        merchantId: '',
-      });
+      const snap = snapshotByCustomer?.get(customerId);
+      if (snap) {
+        const parsed = parseCampaignName(snap.campaignName);
+        adjusted.push({
+          date,
+          customerId: formatCustomerId(customerId),
+          campaignId: snap.campaignId,
+          campaignName: snap.campaignName,
+          campaignStatus: snap.campaignStatus,
+          impressions: 0,
+          clicks: 0,
+          cost: accountCost,
+          campaignBudget: snap.campaignBudget,
+          searchBudgetLostIs: 0,
+          searchRankLostIs: 0,
+          avgCpc: 0,
+          maxCpc: 0,
+          currency: accountRow.currency || 'USD',
+          affiliateAlias: parsed.affiliateAlias,
+          merchantId: parsed.merchantId,
+        });
+      } else {
+        adjusted.push({
+          date,
+          customerId,
+          campaignId: ACCOUNT_GAP_CAMPAIGN_ID,
+          campaignName: '[账户级差额补记]',
+          campaignStatus: '',
+          impressions: 0,
+          clicks: 0,
+          cost: accountCost,
+          campaignBudget: 0,
+          searchBudgetLostIs: 0,
+          searchRankLostIs: 0,
+          avgCpc: 0,
+          maxCpc: 0,
+          currency: accountRow.currency || 'USD',
+          affiliateAlias: '',
+          merchantId: '',
+        });
+      }
       continue;
     }
 
@@ -770,4 +795,76 @@ export function extractSheetId(sheetUrl: string): string | null {
  */
 export function buildSheetCsvUrl(sheetId: string, tabName: string): string {
   return `https://docs.google.com/spreadsheets/d/${sheetId}/gviz/tq?tqx=out:csv&sheet=${encodeURIComponent(tabName)}`;
+}
+
+/** Google 脚本 campaign_budget_snapshots 表名 */
+export const BUDGET_SNAPSHOT_TAB = 'campaign_budget_snapshots';
+
+/** 广告系列预算快照行（与 MCC 当前 ENABLED 系列对齐） */
+export interface ParsedBudgetSnapshotRow {
+  snapshotDate: string;
+  customerId: string;
+  campaignId: string;
+  campaignName: string;
+  campaignStatus: string;
+  campaignBudget: number;
+}
+
+/**
+ * 解析 campaign_budget_snapshots CSV
+ */
+export function parseBudgetSnapshotCsv(csvText: string): ParsedBudgetSnapshotRow[] {
+  const lines = splitCsvLines(csvText.trim());
+  if (lines.length < 2) return [];
+
+  const headers = lines[0].map(normalizeHeader);
+  const dateIdx = headers.findIndex((h) =>
+    ['snapshot_date', 'snapshot date', '日期'].includes(h),
+  );
+  const customerIdIdx = headers.findIndex((h) => HEADER_ALIASES.customerId.includes(h));
+  const campaignIdIdx = headers.findIndex((h) => HEADER_ALIASES.campaignId.includes(h));
+  const nameIdx = headers.findIndex((h) => HEADER_ALIASES.campaignName.includes(h));
+  const statusIdx = headers.findIndex((h) => HEADER_ALIASES.campaignStatus.includes(h));
+  const budgetIdx = headers.findIndex((h) => HEADER_ALIASES.campaignBudget.includes(h));
+  if (dateIdx < 0 || customerIdIdx < 0 || campaignIdIdx < 0 || nameIdx < 0) return [];
+
+  const out: ParsedBudgetSnapshotRow[] = [];
+  for (let i = 1; i < lines.length; i += 1) {
+    const cells = lines[i];
+    if (!cells.length || cells.every((c) => !c.trim())) continue;
+    const snapshotDate = normalizeDate(getCell(cells, dateIdx));
+    if (!snapshotDate) continue;
+    const customerId = formatCustomerId(getCell(cells, customerIdIdx) || 'unknown');
+    const campaignId = getCell(cells, campaignIdIdx).trim();
+    const campaignName = getCell(cells, nameIdx).trim();
+    if (!campaignId || !campaignName) continue;
+    out.push({
+      snapshotDate,
+      customerId,
+      campaignId,
+      campaignName,
+      campaignStatus: normalizeCampaignStatus(getCell(cells, statusIdx)),
+      campaignBudget: parseMoney(getCell(cells, budgetIdx)),
+    });
+  }
+  return out;
+}
+
+/**
+ * 截至 endDate，每个子账号取最新 ENABLED 快照（对齐 Google MCC 系列列表）
+ */
+export function resolveEnabledCampaignsByCustomerFromSnapshots(
+  rows: ParsedBudgetSnapshotRow[],
+  endDate: string,
+): Map<string, ParsedBudgetSnapshotRow> {
+  const byCustomer = new Map<string, ParsedBudgetSnapshotRow>();
+  for (const row of rows) {
+    if (row.snapshotDate > endDate) continue;
+    if (row.campaignStatus !== 'ENABLED') continue;
+    const prev = byCustomer.get(row.customerId);
+    if (!prev || row.snapshotDate >= prev.snapshotDate) {
+      byCustomer.set(row.customerId, row);
+    }
+  }
+  return byCustomer;
 }

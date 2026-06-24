@@ -6,15 +6,19 @@ import { buildOrderDateRangeFilter } from '../common/order-date-range.util';
 import { PrismaService } from '../prisma/prisma.service';
 import {
   ACCOUNT_DAILY_COST_TAB,
+  BUDGET_SNAPSHOT_TAB,
   MONTHLY_ACCOUNT_COST_TAB,
   ParsedAdDailyRow,
+  ParsedBudgetSnapshotRow,
   applyAccountCostAdjustment,
   applyMonthlyCostAdjustment,
   buildSheetCsvUrl,
   extractSheetId,
   parseAccountDailyCostCsv,
   parseAdSheetCsv,
+  parseBudgetSnapshotCsv,
   parseMonthlyAccountCostCsv,
+  resolveEnabledCampaignsByCustomerFromSnapshots,
 } from './sheet-parser.util';
 
 export interface CreateAdDataSourceDto {
@@ -322,7 +326,23 @@ export class AdSourcesService {
         accountRows = accountRows.filter((r) => r.date <= endDate);
       }
       if (accountRows.length) {
-        const adj = applyAccountCostAdjustment(campaignRows, accountRows);
+        let snapshotByCustomer: Map<string, ParsedBudgetSnapshotRow> | undefined;
+        try {
+          const snapUrl = buildSheetCsvUrl(sheetId, BUDGET_SNAPSHOT_TAB);
+          const snapRes = await axios.get<string>(snapUrl, {
+            timeout: 120000,
+            responseType: 'text',
+            headers: { 'User-Agent': 'ZJADS/1.0' },
+          });
+          const snapRows = parseBudgetSnapshotCsv(snapRes.data);
+          snapshotByCustomer = resolveEnabledCampaignsByCustomerFromSnapshots(
+            snapRows,
+            endDate ?? accountRows[accountRows.length - 1]?.date ?? '',
+          );
+        } catch {
+          snapshotByCustomer = undefined;
+        }
+        const adj = applyAccountCostAdjustment(campaignRows, accountRows, snapshotByCustomer);
         return {
           rows: adj.rows,
           adjustmentApplied: adj.adjustmentApplied,

@@ -898,6 +898,20 @@ export default function DashboardPage() {
     return rows;
   }, [campaignRows, campaignSearch, campaignPlatform]);
 
+  const campaignTablePagination = useMemo(
+    () => ({
+      pageSize: campaignPageSize,
+      showSizeChanger: true,
+      pageSizeOptions: [10, 20, 50, 100],
+      showTotal: (total: number) =>
+        campaignFilterActive
+          ? `共 ${total} 条（全部 ${campaignRows.length} 条）`
+          : `共 ${total} 条`,
+      onShowSizeChange: (_: number, size: number) => setCampaignPageSize(size),
+    }),
+    [campaignFilterActive, campaignRows.length, campaignPageSize],
+  );
+
   const filteredCampaignDailyRows = useMemo(() => {
     let rows = campaignDailyRows;
     if (campaignPlatform !== 'all') {
@@ -1431,7 +1445,7 @@ export default function DashboardPage() {
                       loading={loading}
                       queryDayCount={queryDayCount}
                       scroll={tableScroll}
-                      pagination={tablePagination(campaignPageSize, setCampaignPageSize)}
+                      pagination={campaignTablePagination}
                       rowClassName={(r) => {
                         if (r.orderCount === 0 && r.cost > 0) return 'row-zero-orders-ad';
                         if (r.orderCount === 0 && r.affiliateClicks > 0) return 'row-affiliate-clicks-only';

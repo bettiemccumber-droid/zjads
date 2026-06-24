@@ -6,8 +6,8 @@ import { AdSourcesService } from '../src/ad-sources/ad-sources.service';
 import { PrismaService } from '../src/prisma/prisma.service';
 
 const OWNER_USER_ID = 2;
-const START = '2026-06-01';
-const END = '2026-06-17';
+const START = '2026-06-16';
+const END = '2026-06-22';
 
 async function main() {
   const prisma = new PrismaClient();

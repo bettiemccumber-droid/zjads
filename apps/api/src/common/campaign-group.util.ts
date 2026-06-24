@@ -1,6 +1,3 @@
-/**
- * 广告系列综合展示：同一商家+联盟序号下多个 Google 子账号合并为一条逻辑系列
- */
 export interface CampaignGroupKeyInput {
   campaignName: string;
   merchantId: string;
@@ -10,9 +7,17 @@ export interface CampaignGroupKeyInput {
 }
 
 /**
- * 解析广告系列合并键：优先 merchantId + affiliateAlias，其次系列名，最后 customer|campaign
+ * 解析广告系列展示键，与 Google MCC「按广告系列」视图对齐。
+ * 优先 `子账号 + campaignId`（换号、复用子账号各系列各占一行）；
+ * 无 Google 键时回退 `联盟序号|商家ID`（联盟补行等）。
  */
 export function resolveCampaignGroupKey(input: CampaignGroupKeyInput): string {
+  const cid = (input.customerId || '').trim();
+  const campId = (input.campaignId || '').trim();
+  if (cid && campId && !campId.startsWith('orphan|')) {
+    return `cid:${cid}|${campId}`;
+  }
+
   const mid = (input.merchantId || '').trim();
   const alias = (input.affiliateAlias || '').trim().toLowerCase();
   if (mid && alias) return `${alias}|${mid}`;
@@ -20,9 +25,7 @@ export function resolveCampaignGroupKey(input: CampaignGroupKeyInput): string {
   const name = (input.campaignName || '').trim().toLowerCase();
   if (name) return `name:${name}`;
 
-  const cid = (input.customerId || '').trim();
-  const campId = (input.campaignId || '').trim();
-  if (cid && campId) return `cid:${cid}|${campId}`;
+  if (campId) return `cid:${cid || 'unknown'}|${campId}`;
 
-  return `cid:${campId || 'unknown'}`;
+  return `cid:unknown|${campId || 'unknown'}`;
 }

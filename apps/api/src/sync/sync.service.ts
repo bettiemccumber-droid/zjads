@@ -412,6 +412,9 @@ export class SyncService implements OnModuleInit {
       if (result.pmClickTotal !== undefined) {
         parts.push(`PM 联盟点击 ${result.pmClickTotal}（${start}~${end}）`);
       }
+      if (result.pmClickError) {
+        parts.push(`PM 联盟点击失败: ${result.pmClickError}`);
+      }
       if (result.lhClickTotal !== undefined) {
         parts.push(`LH 联盟点击 ${result.lhClickTotal}（${start}~${end}）`);
       }

@@ -65,18 +65,7 @@ export async function fetchPartnerMaticClicks(
     let rateRetries = 0;
 
     while (page <= totalPages && page <= 100) {
-      const response = await axios.post(
-        PM_CLICK_API,
-        {
-          source: 'partnermatic',
-          token: apiToken,
-          beginDate: slot.begin,
-          endDate: slot.end,
-          curPage: page,
-          perPage: 500,
-        },
-        { headers: { 'Content-Type': 'application/json' }, timeout: 60000 },
-      );
+      const response = await postPmClickPage(apiToken, slot.begin, slot.end, page);
 
       if (response.data?.code === '1002') {
         rateRetries += 1;
@@ -132,4 +121,44 @@ export async function fetchPartnerMaticClicks(
 
 function sleep(ms: number) {
   return new Promise((r) => setTimeout(r, ms));
+}
+
+/** PM click_report 单次请求（与订单 API 一致 120s，超时自动重试） */
+async function postPmClickPage(
+  apiToken: string,
+  beginDate: string,
+  endDate: string,
+  page: number,
+  maxAttempts = 3,
+) {
+  let lastErr: unknown;
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    try {
+      return await axios.post(
+        PM_CLICK_API,
+        {
+          source: 'partnermatic',
+          token: apiToken,
+          beginDate,
+          endDate,
+          curPage: page,
+          perPage: 500,
+        },
+        { headers: { 'Content-Type': 'application/json' }, timeout: 120000 },
+      );
+    } catch (err) {
+      lastErr = err;
+      if (isPmClickTimeout(err) && attempt < maxAttempts) {
+        await sleep(2000 * attempt);
+        continue;
+      }
+      throw err;
+    }
+  }
+  throw lastErr;
+}
+
+function isPmClickTimeout(err: unknown): boolean {
+  if (!axios.isAxiosError(err)) return false;
+  return err.code === 'ECONNABORTED' || /timeout/i.test(String(err.message));
 }

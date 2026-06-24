@@ -73,6 +73,8 @@ export interface CollectResultWithPmMeta extends CollectResult {
   lbClickEstimatedDays?: number;
   /** LB 点击实际采集日（= endDate；PM/LH 随订单区间） */
   lbClickCollectDate?: string;
+  /** PM 联盟点击采集失败时的错误信息（订单仍会写入） */
+  pmClickError?: string;
 }
 
 @Injectable()
@@ -112,6 +114,7 @@ export class CollectorsService {
     let lbClickTotal: number | undefined;
     let lbClickEstimatedDays: number | undefined;
     let lbClickCollectDate: string | undefined;
+    let pmClickError: string | undefined;
 
     /** LB 点击只采区间最后一天；PM/LH API 分页正常，随订单全区间采集 */
     const lbClickDay = endDate;
@@ -124,13 +127,18 @@ export class CollectorsService {
 
         if (options.includeClicks) {
           await onProgress?.('订单已拉取，正在采集 PM 联盟点击…');
-          const clickAggs = await fetchPartnerMaticClicks(apiToken, startDate, endDate, async (p) => {
-            await onProgress?.(
-              `PM 联盟点击 ${p.slotIndex}/${p.totalSlots}，已汇总 ${p.clicksSoFar} 次`,
-            );
-          });
-          await this.replaceClicksInRange(account.id, startDate, endDate);
-          pmClickTotal = await this.persistClicks(account.id, clickAggs);
+          try {
+            const clickAggs = await fetchPartnerMaticClicks(apiToken, startDate, endDate, async (p) => {
+              await onProgress?.(
+                `PM 联盟点击 ${p.slotIndex}/${p.totalSlots}，已汇总 ${p.clicksSoFar} 次`,
+              );
+            });
+            await this.replaceClicksInRange(account.id, startDate, endDate);
+            pmClickTotal = await this.persistClicks(account.id, clickAggs);
+          } catch (clickErr) {
+            pmClickError = clickErr instanceof Error ? clickErr.message : String(clickErr);
+            await onProgress?.(`PM 联盟点击采集失败（订单仍会写入）: ${pmClickError}`);
+          }
         }
         break;
       }
@@ -239,6 +247,7 @@ export class CollectorsService {
       lbClickTotal,
       lbClickEstimatedDays,
       lbClickCollectDate,
+      pmClickError,
     };
   }
 

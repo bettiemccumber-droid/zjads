@@ -29,7 +29,13 @@ export function normalizeCampaignStatus(raw: string): string {
  * 按状态模式筛选广告系列行
  */
 export function filterRowsByCampaignStatusMode<
-  T extends { campaignStatus: string; orderCount?: number; commission?: number },
+  T extends {
+    customerId?: string;
+    campaignId?: string;
+    campaignStatus: string;
+    orderCount?: number;
+    commission?: number;
+  },
 >(rows: T[], mode: CampaignStatusMode): T[] {
   if (mode === 'active') {
     return rows.filter((r) => isEnabledCampaignStatus(r.campaignStatus));
@@ -38,6 +44,58 @@ export function filterRowsByCampaignStatusMode<
     return rows.filter((r) => isPausedCampaignStatus(r.campaignStatus));
   }
   return rows;
+}
+
+/** 子账号截至 endDate 的各 campaign 最新快照 */
+export type PhysicalCampaignLatestMeta = {
+  date: string;
+  status: string;
+  campaignName: string;
+  affiliateAlias: string;
+  merchantId: string;
+  campaignBudget: number;
+  maxCpc: number;
+};
+
+/**
+ * 每个子账号在 endDate 前最新一条 ENABLED 系列（对齐 MCC「当前在投」）
+ */
+export function resolveActiveCampaignIdByCustomer(
+  latestByPhysical: Map<string, PhysicalCampaignLatestMeta>,
+): Map<string, string> {
+  const enabledByCustomer = new Map<string, { campaignId: string; date: string }>();
+
+  for (const [key, meta] of latestByPhysical) {
+    if (!isEnabledCampaignStatus(meta.status)) continue;
+    const pipe = key.indexOf('|');
+    if (pipe < 0) continue;
+    const customerId = key.slice(0, pipe);
+    const campaignId = key.slice(pipe + 1);
+    const prev = enabledByCustomer.get(customerId);
+    if (!prev || meta.date > prev.date) {
+      enabledByCustomer.set(customerId, { campaignId, date: meta.date });
+    }
+  }
+
+  return new Map(
+    [...enabledByCustomer.entries()].map(([customerId, v]) => [customerId, v.campaignId]),
+  );
+}
+
+/**
+ * 「仅活跃」：每子账号只保留当前 ENABLED 系列，排除同号历史 PAUSED 系列（与 MCC 按系列视图一致）
+ */
+export function filterActiveCampaignRowsPerSubAccount<
+  T extends { customerId: string; campaignId: string; campaignStatus: string },
+>(rows: T[], activeCampaignByCustomer: Map<string, string>): T[] {
+  return rows.filter((row) => {
+    if (!isEnabledCampaignStatus(row.campaignStatus)) return false;
+    const customerId = (row.customerId || '').trim();
+    if (!customerId || customerId === 'unknown') return true;
+    const activeId = activeCampaignByCustomer.get(customerId);
+    if (!activeId) return true;
+    return row.campaignId === activeId;
+  });
 }
 
 /**

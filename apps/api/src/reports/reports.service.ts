@@ -788,6 +788,12 @@ export class ReportsService {
   ): AffiliateMetrics {
     if (!merchantId) return { ...EMPTY_AFFILIATE };
     const campaignAlias = (alias || '').toLowerCase();
+
+    /** RW 按商家+日（与 RW Performance Daily 一致），不用 alias 精确键避免漏单 */
+    if (campaignAlias.startsWith('rw')) {
+      return index.byMerchantDay.get(`${merchantId}|${dateStr}`) ?? { ...EMPTY_AFFILIATE };
+    }
+
     const exact = index.byKey.get(`${merchantId}|${campaignAlias}|${dateStr}`);
     if (exact) return exact;
 
@@ -797,11 +803,6 @@ export class ReportsService {
 
     /** LB/LH 按天：同商家同序号精确匹配，否则回退到商家当日合计（与 PM 一致） */
     if (campaignAlias.startsWith('lb') || campaignAlias.startsWith('lh')) {
-      return index.byMerchantDay.get(`${merchantId}|${dateStr}`) ?? { ...EMPTY_AFFILIATE };
-    }
-
-    /** RW 同 PM/LB：按商家+日汇总（与 RW 后台 Performance Daily 一致） */
-    if (campaignAlias.startsWith('rw')) {
       return index.byMerchantDay.get(`${merchantId}|${dateStr}`) ?? { ...EMPTY_AFFILIATE };
     }
 
@@ -861,6 +862,7 @@ export class ReportsService {
         date: dateStr,
         campaignId: ad.campaignId,
         customerId: ad.customerId,
+        campaignName: ad.campaignName,
         merchantId,
         affiliateAlias: alias,
         cost,
@@ -881,13 +883,13 @@ export class ReportsService {
           raw.map((r) => ({
             ...r,
             campaignGroupKey: resolveCampaignGroupKey({
-              campaignName: '',
+              campaignName: r.campaignName,
               merchantId: r.merchantId,
               affiliateAlias: r.affiliateAlias,
               customerId: r.customerId,
               campaignId: r.campaignId,
             }),
-            campaignName: '',
+            campaignName: r.campaignName,
             campaignStatus: '',
             dailyBudget: 0,
             impressions: 0,
@@ -1304,7 +1306,7 @@ export class ReportsService {
         ...row,
         orderCount: 0,
         commission: 0,
-        affiliateClicks: 0,
+        /** 联盟点击已在 computeAffiliateClicksByCampaignKey / 按天归因中去重，勿在此处清零 */
         roi: row.cost > 0 ? -1 : 0,
         profit: -row.cost,
         epc: 0,
@@ -1339,6 +1341,12 @@ export class ReportsService {
   ): AffiliateMetrics {
     if (!merchantId) return { ...EMPTY_AFFILIATE };
     const campaignAlias = (alias || '').toLowerCase();
+
+    /** RW 按商家汇总（与 RW 后台商家 Performance 一致） */
+    if (campaignAlias.startsWith('rw')) {
+      return index.byMerchantId.get(merchantId) ?? { ...EMPTY_AFFILIATE };
+    }
+
     const exact = index.byKey.get(`${merchantId}|${campaignAlias}`);
     if (exact) return exact;
 
@@ -1347,10 +1355,6 @@ export class ReportsService {
     }
 
     if (campaignAlias.startsWith('lb') || campaignAlias.startsWith('lh')) {
-      return index.byMerchantId.get(merchantId) ?? { ...EMPTY_AFFILIATE };
-    }
-
-    if (campaignAlias.startsWith('rw')) {
       return index.byMerchantId.get(merchantId) ?? { ...EMPTY_AFFILIATE };
     }
 

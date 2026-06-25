@@ -19,7 +19,7 @@ import { Link, useSearchParams } from 'react-router-dom';
 import { api, type ApiResult } from '../api/client';
 
 /** 与 Google Ads 脚本 lookback 对齐：默认回溯天数（含昨天） */
-const DEFAULT_LOOKBACK_DAYS = 14;
+const DEFAULT_LOOKBACK_DAYS = 7;
 
 interface AdDataSourceRow {
   id: number;

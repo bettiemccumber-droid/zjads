@@ -201,6 +201,23 @@ export class SyncService implements OnModuleInit {
     return list;
   }
 
+  /**
+   * 是否应在采集完成后自动导入 Sheet：仅「全平台/全账号」采集时触发。
+   * 只采 RW 等部分平台时不重导广告费，避免与联盟订单刷新错位。
+   */
+  private async shouldAutoImportSheet(
+    ownerUserId: number,
+    syncedAccountIds: number[],
+  ): Promise<boolean> {
+    const allAccounts = this.filterAccountsForSync(
+      await this.channelAccounts.listActiveForSync(ownerUserId),
+    );
+    if (!allAccounts.length) return false;
+    if (syncedAccountIds.length < allAccounts.length) return false;
+    const synced = new Set(syncedAccountIds);
+    return allAccounts.every((a) => synced.has(a.id));
+  }
+
   /** 最近采集任务（用于页面展示是否成功；管理员可指定员工 userId） */
   async listRecentJobs(user: AuthUser, limit = 5, ownerUserId?: number) {
     await this.recoverStaleJobs();
@@ -294,6 +311,37 @@ export class SyncService implements OnModuleInit {
           ? SyncJobStatus.failed
           : SyncJobStatus.partial;
 
+    const syncStart = job.startDate.toISOString().slice(0, 10);
+    const syncEnd = job.endDate.toISOString().slice(0, 10);
+    const syncedAccountIds = job.items.map((i) => i.channelAccountId);
+    const autoImportSheet = await this.shouldAutoImportSheet(job.ownerUserId, syncedAccountIds);
+
+    let sheetImportNote: string | null = null;
+    if (autoImportSheet) {
+      const r = await this.adSources.importForOwner(job.ownerUserId, syncStart, syncEnd);
+      if (r.skipped) {
+        if (r.reason === 'no_ad_source') {
+          sheetImportNote = '未配置广告数据源，已跳过 Sheet 导入';
+          console.log(`[sync] 任务 #${jobId} 跳过 Sheet 导入：未配置广告数据源`);
+        } else {
+          sheetImportNote = `Sheet 导入失败：${r.message ?? 'unknown'}`;
+          console.log(`[sync] 任务 #${jobId} Sheet 导入失败: ${r.message ?? 'unknown'}`);
+        }
+      } else {
+        sheetImportNote = `Sheet 已导入 ${r.upserted} 行（${syncStart}~${syncEnd}）`;
+        console.log(`[sync] 任务 #${jobId} 已自动导入 Sheet：系列 ${r.upserted} 行（${syncStart}~${syncEnd}）`);
+      }
+    } else {
+      const allCount = (
+        await this.filterAccountsForSync(
+          await this.channelAccounts.listActiveForSync(job.ownerUserId),
+        )
+      ).length;
+      console.log(
+        `[sync] 任务 #${jobId} 跳过 Sheet 导入：非全账号采集（${syncedAccountIds.length}/${allCount}）`,
+      );
+    }
+
     await this.prisma.syncJob.update({
       where: { id: jobId },
       data: {
@@ -301,30 +349,11 @@ export class SyncService implements OnModuleInit {
         completed,
         failed,
         completedAt: new Date(),
+        ...(autoImportSheet && sheetImportNote ? { errorMessage: sheetImportNote } : {}),
       },
     });
 
     console.log(`[sync] 任务 #${jobId} 结束: ${status}（成功 ${completed} / 失败 ${failed}）`);
-    const syncStart = job.startDate.toISOString().slice(0, 10);
-    const syncEnd = job.endDate.toISOString().slice(0, 10);
-
-    this.adSources
-      .importForOwner(job.ownerUserId, syncStart, syncEnd)
-      .then((r) => {
-        if (r.skipped) {
-          if (r.reason === 'no_ad_source') {
-            console.log(`[sync] 任务 #${jobId} 跳过 Sheet 导入：未配置广告数据源`);
-          } else if (r.reason === 'import_failed') {
-            console.log(`[sync] 任务 #${jobId} Sheet 导入失败: ${r.message ?? 'unknown'}`);
-          }
-          return;
-        }
-        console.log(
-          `[sync] 任务 #${jobId} 已自动导入 Sheet：系列 ${r.upserted} 行` +
-            `（${syncStart}~${syncEnd}）`,
-        );
-      })
-      .catch(console.error);
 
     this.alerts
       .runCheckAfterSync(job.ownerUserId, syncStart, syncEnd)

@@ -7,23 +7,32 @@ export interface CampaignGroupKeyInput {
 }
 
 /**
- * 解析广告系列展示键，与 Google MCC「按广告系列」视图对齐。
- * 优先 `子账号 + campaignId`（换号、复用子账号各系列各占一行）；
- * 无 Google 键时回退 `联盟序号|商家ID`（联盟补行等）。
+ * 逻辑系列键：同一广告系列名合并为一行（换 Google 子账号后仍视为同一广告）。
+ * 无系列名时回退 联盟序号|商家ID 或 cid|campaignId。
  */
 export function resolveCampaignGroupKey(input: CampaignGroupKeyInput): string {
-  const cid = (input.customerId || '').trim();
   const campId = (input.campaignId || '').trim();
-  if (cid && campId && !campId.startsWith('orphan|')) {
+
+  if (campId.startsWith('orphan|')) {
+    const mid = (input.merchantId || '').trim();
+    const alias = (input.affiliateAlias || '').trim().toLowerCase();
+    if (mid && alias) return `${alias}|${mid}`;
+    return campId;
+  }
+
+  const name = (input.campaignName || '').trim().toLowerCase();
+  if (name && !name.includes('无 sheet')) {
+    return `name:${name}`;
+  }
+
+  const cid = (input.customerId || '').trim();
+  if (cid && campId) {
     return `cid:${cid}|${campId}`;
   }
 
   const mid = (input.merchantId || '').trim();
   const alias = (input.affiliateAlias || '').trim().toLowerCase();
   if (mid && alias) return `${alias}|${mid}`;
-
-  const name = (input.campaignName || '').trim().toLowerCase();
-  if (name) return `name:${name}`;
 
   if (campId) return `cid:${cid || 'unknown'}|${campId}`;
 

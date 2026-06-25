@@ -314,6 +314,8 @@ export default function DashboardPage() {
   const [syncAccountOptions, setSyncAccountOptions] = useState<SyncAccountPick[]>([]);
   const [selectedSyncAccountIds, setSelectedSyncAccountIds] = useState<number[]>([]);
   const pollTimer = useRef<ReturnType<typeof setInterval> | null>(null);
+  /** 最近一次采集涉及的平台名（用于采集完成后自动筛选报表） */
+  const lastSyncPlatformNamesRef = useRef<string[]>([]);
 
 
 
@@ -560,15 +562,31 @@ export default function DashboardPage() {
           stopPolling();
 
           if (job.status === 'completed') {
-
-            message.success('采集已完成，报表已自动刷新');
-
+            const syncedPlatforms = lastSyncPlatformNamesRef.current;
+            const sheetNote = job.errorMessage?.includes('Sheet') ? job.errorMessage : null;
+            if (syncedPlatforms.length === 1) {
+              setCampaignPlatform(syncedPlatforms[0]);
+              setMerchantPlatform(syncedPlatforms[0]);
+              setActiveTab('campaign');
+              message.success(
+                `采集已完成（未重导 Sheet），报表已刷新并筛选 ${syncedPlatforms[0]}`,
+              );
+            } else if (sheetNote) {
+              message.success(`采集已完成，${sheetNote}，报表已刷新`);
+            } else {
+              message.success('采集已完成，报表已自动刷新');
+            }
           } else if (job.status === 'failed') {
 
             message.error('采集失败，请查看下方任务详情');
 
           } else {
-
+            const syncedPlatforms = lastSyncPlatformNamesRef.current;
+            if (syncedPlatforms.length === 1) {
+              setCampaignPlatform(syncedPlatforms[0]);
+              setMerchantPlatform(syncedPlatforms[0]);
+              setActiveTab('campaign');
+            }
             message.warning('部分账号采集失败，请查看任务详情');
 
           }
@@ -654,6 +672,14 @@ export default function DashboardPage() {
     }
 
     setSyncing(true);
+
+    lastSyncPlatformNamesRef.current = [
+      ...new Set(
+        syncAccountOptions
+          .filter((a) => selectedSyncAccountIds.includes(a.id))
+          .map((a) => a.platformName),
+      ),
+    ];
 
     try {
 
@@ -1047,9 +1073,10 @@ export default function DashboardPage() {
 
         <p className="sync-collect-hint">
           已接入 PM / LH / LB / RW 订单；PM/LH/LB 联盟点击随订单区间采集（LB 点击仅采区间<strong>最后一天</strong>，更早日期请用「点击校准导入」）。RW 暂无点击 API。
+          仅选部分平台采集时<strong>不会</strong>重导 Google Sheet；全选采集后会自动同步 Sheet 广告费，再刷新报表。
           {viewUserId
-            ? ' Google Ads 广告费请在上方「导入 Sheet」或侧边栏「广告数据源」中代员工导入。'
-            : ' Google Ads 请在「广告数据源」导入 Sheet。'}
+            ? ' 也可在上方「导入 Sheet」或侧边栏「广告数据源」手动导入。'
+            : ' 也可在侧边栏「广告数据源」手动导入 Sheet。'}
         </p>
 
         <SyncJobStatus

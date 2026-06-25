@@ -831,6 +831,7 @@ export class ReportsService {
       date: string;
       campaignId: string;
       customerId: string;
+      campaignName: string;
       merchantId: string;
       affiliateAlias: string;
       cost: number;

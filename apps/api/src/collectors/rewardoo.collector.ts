@@ -1,8 +1,5 @@
 import { NormalizedStatus, PlatformStatusMapping } from '@prisma/client';
-import {
-  parseAffiliateOrderDateUtc,
-  parseAffiliateOrderDateUtc8,
-} from '../common/affiliate-order-date.util';
+import { parseAffiliateOrderDateUtc } from '../common/affiliate-order-date.util';
 import {
   fetchRewardooCommissionData,
   RwCommissionOp,
@@ -38,6 +35,7 @@ export interface RwCommissionRow {
   transaction_time?: string | number;
   order_ymd?: string;
   transaction_date?: string;
+  order_date?: string;
   validation_date?: string;
   payment_ymd?: string;
   date?: string;
@@ -241,12 +239,12 @@ function mergeRwOrder(
   });
 }
 
-/** 解析 RW 订单号；Performance 汇总行生成 synthetic id */
+/** 解析 RW 订单号；优先 sign_id/transaction_id，避免同一 order_id 多笔交易被误合并 */
 function resolveRwOrderId(
   row: RwCommissionRow,
   range?: { startDate: string; endDate: string },
 ): string {
-  for (const key of ['order_id', 'rewardoo_id', 'transaction_id', 'sign_id', 'txn_id'] as const) {
+  for (const key of ['sign_id', 'txn_id', 'transaction_id', 'rewardoo_id', 'order_id'] as const) {
     const v = row[key];
     if (v != null && String(v).trim()) return String(v).trim();
   }
@@ -262,8 +260,16 @@ function resolveRwOrderId(
     row.click != null;
   if (!hasAggregate) return '';
 
-  const dateKey = row.order_ymd ?? row.date ?? row.ymd ?? range?.endDate ?? 'range';
-  return `rw_perf_${merchantId}_${dateKey}`;
+  const dateKey =
+    row.transaction_date ??
+    row.order_ymd ??
+    row.date ??
+    row.ymd ??
+    range?.endDate ??
+    'range';
+  const comm = parseMoney(row.sale_comm ?? row.commission ?? row.comm ?? row.cashback);
+  const orders = parseOrderCount(row);
+  return `rw_perf_${merchantId}_${String(dateKey).slice(0, 10)}_${orders}_${comm}`;
 }
 
 function parseOrderCount(row: RwCommissionRow): number {
@@ -308,18 +314,18 @@ function normalizeRwRawStatus(raw: string | number | undefined): string {
 }
 
 /**
- * 解析 RW 订单日期（与 affiliate transaction_details 一致）
- * 1. 优先 YYYY-MM-DD 字符串
- * 2. order_time 时间戳按 UTC 自然日（非 UTC+8）
+ * 解析 RW 订单日期（与 Rewardoo Performance Daily / transaction_details 一致）
+ * 1. 优先交易发生日（transaction_date / order_ymd / date）
+ * 2. order_time 时间戳按 UTC 自然日
+ * 3. validation_date / payment_ymd 仅作兜底（结算日≠交易日）
  */
 function parseRwOrderDate(row: RwCommissionRow, fallbackDate?: string): Date {
   for (const key of [
-    'order_ymd',
     'transaction_date',
-    'validation_date',
+    'order_ymd',
+    'order_date',
     'date',
     'ymd',
-    'payment_ymd',
   ] as const) {
     const v = row[key];
     if (v == null || String(v).trim() === '' || String(v) === 'null') continue;
@@ -329,6 +335,12 @@ function parseRwOrderDate(row: RwCommissionRow, fallbackDate?: string): Date {
   for (const key of ['order_time', 'transaction_time'] as const) {
     const v = row[key];
     if (v == null || String(v).trim() === '') continue;
+    return parseAffiliateOrderDateUtc(v);
+  }
+
+  for (const key of ['validation_date', 'payment_ymd'] as const) {
+    const v = row[key];
+    if (v == null || String(v).trim() === '' || String(v) === 'null') continue;
     return parseAffiliateOrderDateUtc(v);
   }
 

@@ -800,6 +800,11 @@ export class ReportsService {
       return index.byMerchantDay.get(`${merchantId}|${dateStr}`) ?? { ...EMPTY_AFFILIATE };
     }
 
+    /** RW 同 PM/LB：按商家+日汇总（与 RW 后台 Performance Daily 一致） */
+    if (campaignAlias.startsWith('rw')) {
+      return index.byMerchantDay.get(`${merchantId}|${dateStr}`) ?? { ...EMPTY_AFFILIATE };
+    }
+
     return { ...EMPTY_AFFILIATE };
   }
 
@@ -1026,62 +1031,8 @@ export class ReportsService {
     startDate: string,
     endDate: string,
   ): T[] {
-    if (!rows.length) return rows;
-
-    const existing = new Set(rows.map((r) => `${r.campaignGroupKey}|${r.date}`));
-    const groupMeta = new Map<string, T>();
-    for (const row of rows) {
-      if (!groupMeta.has(row.campaignGroupKey)) {
-        groupMeta.set(row.campaignGroupKey, row);
-      }
-    }
-
-    const supplemented = [...rows];
-    for (const meta of groupMeta.values()) {
-      if (!meta.merchantId || !meta.affiliateAlias) continue;
-
-      for (const dateStr of this.listDatesInRange_(startDate, endDate)) {
-        const key = `${meta.campaignGroupKey}|${dateStr}`;
-        if (existing.has(key)) continue;
-
-        const affiliate = this.lookupAffiliateMetricsForDay(
-          affiliateByDay,
-          meta.merchantId,
-          meta.affiliateAlias,
-          dateStr,
-        );
-        if (
-          affiliate.orderCount <= 0 &&
-          affiliate.commission <= 0 &&
-          affiliate.affiliateClicks <= 0
-        ) {
-          continue;
-        }
-
-        supplemented.push({
-          ...meta,
-          date: dateStr,
-          dailyBudget: 0,
-          impressions: 0,
-          clicks: 0,
-          cost: 0,
-          orderCount: affiliate.orderCount,
-          commission: affiliate.commission,
-          affiliateClicks: affiliate.affiliateClicks,
-          searchBudgetLostIs: 0,
-          searchRankLostIs: 0,
-          avgCpc: 0,
-          maxCpc: 0,
-          epc: 0,
-          roi: 0,
-          profit: affiliate.commission,
-          operationSuggestion: suggestOperation(0, affiliate.orderCount, 0),
-        });
-        existing.add(key);
-      }
-    }
-
-    return supplemented;
+    // 不为缺广告数据的日期补 0 花费行，避免看板出现「有佣金无广告费」的误导行
+    return rows;
   }
 
   /** 生成闭区间内的 YYYY-MM-DD 日期列表 */
@@ -1367,6 +1318,7 @@ export class ReportsService {
     if (!merchantId) return '';
     const a = (alias || '').toLowerCase();
     if (a.startsWith('pm')) return `pm:${merchantId}`;
+    if (a.startsWith('rw')) return `rw:${merchantId}`;
     return `${merchantId}|${a}`;
   }
 
@@ -1395,6 +1347,10 @@ export class ReportsService {
     }
 
     if (campaignAlias.startsWith('lb') || campaignAlias.startsWith('lh')) {
+      return index.byMerchantId.get(merchantId) ?? { ...EMPTY_AFFILIATE };
+    }
+
+    if (campaignAlias.startsWith('rw')) {
       return index.byMerchantId.get(merchantId) ?? { ...EMPTY_AFFILIATE };
     }
 

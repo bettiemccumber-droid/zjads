@@ -152,7 +152,7 @@ export default function ChannelAccountsPage() {
               type="info"
               showIcon
               style={{ marginBottom: 12 }}
-              message={`${p.name} 订单采集开发中，账号可先保存；当前采集仅支持 PartnerMatic、LinkHaitao、LinkBux`}
+              message={`${p.name} 订单采集开发中，账号可先保存；当前采集仅支持 PartnerMatic、LinkHaitao、LinkBux、Rewardoo`}
             />
           ) : null}
           {p.code === 'linkbux' ? (

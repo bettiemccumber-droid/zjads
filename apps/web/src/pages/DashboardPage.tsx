@@ -49,6 +49,7 @@ import CampaignReportToolbar, {
   type CampaignStatusMode,
 } from '../components/CampaignReportToolbar';
 import '../components/CampaignReportToolbar.css';
+import { inferPlatformNameFromAlias } from '../utils/campaign-name.util';
 
 
 
@@ -165,15 +166,6 @@ function roiColor(v: number) {
   if (v >= 1) return '#16a34a';
   if (v >= 0) return '#ea580c';
   return '#dc2626';
-}
-
-/** 从联盟序号推断平台名（与后端 campaign-name.util 一致） */
-function inferPlatformFromAlias(alias: string): string {
-  const a = (alias || '').toLowerCase();
-  if (a.startsWith('lh')) return 'LinkHaitao';
-  if (a.startsWith('pm')) return 'PartnerMatic';
-  if (a.startsWith('lb')) return 'LinkBux';
-  return '';
 }
 
 /** 金额指标 */
@@ -803,7 +795,7 @@ export default function DashboardPage() {
   const campaignPlatformOptions = useMemo(() => {
     const names = [
       ...new Set(
-        campaignRows.map((r) => inferPlatformFromAlias(r.affiliateAlias)).filter(Boolean),
+        campaignRows.map((r) => inferPlatformNameFromAlias(r.affiliateAlias)).filter(Boolean),
       ),
     ].sort();
     return [{ value: 'all', label: '全部平台' }, ...names.map((n) => ({ value: n, label: n }))];
@@ -812,7 +804,7 @@ export default function DashboardPage() {
   const filteredCampaignRows = useMemo(() => {
     let rows = campaignRows;
     if (campaignPlatform !== 'all') {
-      rows = rows.filter((r) => inferPlatformFromAlias(r.affiliateAlias) === campaignPlatform);
+      rows = rows.filter((r) => inferPlatformNameFromAlias(r.affiliateAlias) === campaignPlatform);
     }
     const q = campaignSearch.trim().toLowerCase();
     if (q) {
@@ -824,7 +816,7 @@ export default function DashboardPage() {
   const filteredCampaignDailyRows = useMemo(() => {
     let rows = campaignDailyRows;
     if (campaignPlatform !== 'all') {
-      rows = rows.filter((r) => inferPlatformFromAlias(r.affiliateAlias) === campaignPlatform);
+      rows = rows.filter((r) => inferPlatformNameFromAlias(r.affiliateAlias) === campaignPlatform);
     }
     const q = campaignSearch.trim().toLowerCase();
     if (q) {
@@ -842,7 +834,7 @@ export default function DashboardPage() {
   const platformCampaignRows = useMemo(() => {
     if (campaignPlatform === 'all') return campaignRows;
     return campaignRows.filter(
-      (r) => inferPlatformFromAlias(r.affiliateAlias) === campaignPlatform,
+      (r) => inferPlatformNameFromAlias(r.affiliateAlias) === campaignPlatform,
     );
   }, [campaignRows, campaignPlatform]);
 
@@ -871,7 +863,7 @@ export default function DashboardPage() {
       { orderCount: number; commission: number; affiliateClicks: number }
     >();
     for (const r of merchantRows) {
-      const platform = r.platformName || inferPlatformFromAlias(r.affiliateAlias);
+      const platform = r.platformName || inferPlatformNameFromAlias(r.affiliateAlias);
       if (!platform) continue;
       const cur = map.get(platform) ?? { orderCount: 0, commission: 0, affiliateClicks: 0 };
       cur.orderCount += r.orderCount;

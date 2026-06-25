@@ -5,6 +5,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
+import { isCollectorImplemented } from '../collectors/collectors.registry';
 import { CryptoService } from '../common/crypto.service';
 import { AuthUser, isAdmin } from '../common/ownership.util';
 import { PrismaService } from '../prisma/prisma.service';
@@ -86,6 +87,7 @@ export class ChannelAccountsService {
     return Array.from(map.entries()).map(([code, accounts]) => ({
       platformCode: code,
       platformName: accounts[0]?.platformName ?? code,
+      collectorImplemented: isCollectorImplemented(code),
       accounts,
     }));
   }

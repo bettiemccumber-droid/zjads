@@ -243,7 +243,7 @@ export class CollectorsService {
               endDate,
               async (p) => {
                 await onProgress?.(
-                  `RW 联盟点击 ${p.slotIndex}/${p.totalSlots}，已汇总 ${p.clicksSoFar} 次`,
+                  `RW 联盟点击 ${p.slotIndex}/${p.totalSlots} 天，已汇总 ${p.clicksSoFar} 次`,
                 );
               },
             );

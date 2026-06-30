@@ -293,9 +293,10 @@ export class SyncService implements OnModuleInit {
     const end = job.endDate.toISOString().slice(0, 10);
     const includeClicks = job.includeClicks;
 
-    const results = await Promise.all(
-      job.items.map((item) => this.runJobItem(jobId, job.ownerUserId, item, start, end, includeClicks)),
-    );
+    const results: ('completed' | 'failed')[] = [];
+    for (const item of job.items) {
+      results.push(await this.runJobItem(jobId, job.ownerUserId, item, start, end, includeClicks));
+    }
 
     let completed = 0;
     let failed = 0;
@@ -371,7 +372,7 @@ export class SyncService implements OnModuleInit {
   }
 
   /**
-   * 单账号采集（多账号并行）
+   * 单账号采集（多账号串行，降低内存峰值）
    */
   private async runJobItem(
     jobId: number,

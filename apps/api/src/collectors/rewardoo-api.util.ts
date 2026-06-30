@@ -282,39 +282,35 @@ export async function fetchRewardooPerformanceChunk(
 }
 
 /**
- * 按页遍历 commission 模块数据，不累积全量 rows。
- * @param dateKey payment=payment_begin/end（结算日）；range=begin/end（Performance 交易日）
+ * 按页遍历 commission 模块数据（payment_begin/end + offset/pageSize），不累积全量 rows。
+ * 1003/1004 视为参数/区间无效，静默跳过（由调用方尝试下一数据源）。
  */
 export async function forEachRewardooCommissionPage(
   op: RwCommissionOp,
   apiToken: string,
-  rangeBegin: string,
-  rangeEnd: string,
+  paymentBegin: string,
+  paymentEnd: string,
   onPage: (rows: unknown[], pageIndex: number) => void | Promise<void>,
   pageSize = RW_PAGE_SIZE,
-  dateKey: 'payment' | 'range' = 'payment',
 ): Promise<void> {
   let offset = 0;
 
   for (let pageIndex = 0; pageIndex < 500; pageIndex += 1) {
-    const params: Record<string, string> = {
+    const parsed = await postRewardooApi('commission', op, {
       token: apiToken,
+      payment_begin: paymentBegin,
+      payment_end: paymentEnd,
       offset: String(offset),
       pageSize: String(pageSize),
-    };
-    if (dateKey === 'payment') {
-      params.payment_begin = rangeBegin;
-      params.payment_end = rangeEnd;
-    } else {
-      params.begin = rangeBegin;
-      params.end = rangeEnd;
-    }
-
-    const parsed = await postRewardooApi('commission', op, params);
+    });
 
     if (parsed.code === 1002) {
       await sleep(65000);
       continue;
+    }
+
+    if (parsed.code === 1003 || parsed.code === 1004) {
+      return;
     }
 
     if (parsed.code !== 0) {
@@ -364,6 +360,10 @@ export async function forEachRewardooPerformancePage(
     if (parsed.code === 1002) {
       await sleep(65000);
       continue;
+    }
+
+    if (parsed.code === 1003 || parsed.code === 1004) {
+      return;
     }
 
     if (parsed.code !== 0) {

@@ -1,9 +1,11 @@
 import axios from 'axios';
 import {
   forEachRewardooCommissionPage,
+  forEachRewardooPerformancePage,
   parseRwApiEnvelope,
   RW_API_BASE,
   type RwCommissionOp,
+  type RwPerformanceOp,
 } from './rewardoo-api.util';
 import type { PmMerchantClickAgg } from './partnermatic-clicks';
 
@@ -26,8 +28,11 @@ interface RwClickRow {
   click_ref?: string;
 }
 
-/** commission 汇总（与 RW 后台 Performance 一致，优先） */
+/** commission 汇总（payment_begin/end，与订单 commission 模块一致） */
 const RW_CLICK_COMMISSION_OPS: RwCommissionOp[] = ['merchant', 'performance', 'report'];
+
+/** performance 模块（begin/end，部分账号可用） */
+const RW_CLICK_PERF_OPS: RwPerformanceOp[] = ['merchant', 'report', 'summary'];
 
 /** ClickDetails：60 秒内最多 15 次（文档错误码 1006） */
 const RW_CLICK_MIN_INTERVAL_MS = 4100;
@@ -58,9 +63,108 @@ export async function fetchRewardooClicks(
 
   const agg = new Map<string, RwMerchantClickAgg>();
 
+  if (
+    await tryCommissionClickAgg_(
+      apiToken,
+      startDate,
+      endDate,
+      agg,
+      onProgress,
+    )
+  ) {
+    return Array.from(agg.values());
+  }
+
+  if (
+    await tryPerformanceClickAgg_(
+      apiToken,
+      startDate,
+      endDate,
+      agg,
+      onProgress,
+    )
+  ) {
+    return Array.from(agg.values());
+  }
+
+  await fetchClickDetailsAggs_(apiToken, startDate, endDate, agg, onProgress);
+  return Array.from(agg.values());
+}
+
+/** commission/payment_begin~end：与 RW 订单 commission 模块相同参数 */
+async function tryCommissionClickAgg_(
+  apiToken: string,
+  startDate: string,
+  endDate: string,
+  agg: Map<string, RwMerchantClickAgg>,
+  onProgress?: (p: RwClickFetchProgress) => void | Promise<void>,
+): Promise<boolean> {
   for (const op of RW_CLICK_COMMISSION_OPS) {
-    for (const dateKey of ['range', 'payment'] as const) {
+    await forEachRewardooCommissionPage(
+      op,
+      apiToken,
+      startDate,
+      endDate,
+      (rows) => {
+        for (const raw of rows) {
+          mergeCommissionClickRow_(raw as Record<string, unknown>, agg, startDate, endDate);
+        }
+      },
+      RW_CLICK_PAGE_SIZE,
+    );
+
+    const clicksSoFar = sumAggClicks_(agg);
+    if (onProgress) {
+      await onProgress({
+        phase: 'commission',
+        slotIndex: 1,
+        totalSlots: 1,
+        clicksSoFar,
+        source: `commission/${op}`,
+      });
+    }
+    if (clicksSoFar > 0) return true;
+  }
+
+  const dates = listInclusiveDates_(startDate, endDate);
+  for (const dateStr of dates) {
+    for (const op of RW_CLICK_COMMISSION_OPS) {
       await forEachRewardooCommissionPage(
+        op,
+        apiToken,
+        dateStr,
+        dateStr,
+        (rows) => {
+          for (const raw of rows) {
+            mergeCommissionClickRow_(
+              raw as Record<string, unknown>,
+              agg,
+              startDate,
+              endDate,
+              dateStr,
+            );
+          }
+        },
+        RW_CLICK_PAGE_SIZE,
+      );
+      if (sumAggClicks_(agg) > 0) return true;
+    }
+  }
+
+  return false;
+}
+
+/** performance/begin~end：对齐 RW 后台 Performance 交易日（失败则跳过） */
+async function tryPerformanceClickAgg_(
+  apiToken: string,
+  startDate: string,
+  endDate: string,
+  agg: Map<string, RwMerchantClickAgg>,
+  onProgress?: (p: RwClickFetchProgress) => void | Promise<void>,
+): Promise<boolean> {
+  for (const op of RW_CLICK_PERF_OPS) {
+    try {
+      await forEachRewardooPerformancePage(
         op,
         apiToken,
         startDate,
@@ -71,59 +175,25 @@ export async function fetchRewardooClicks(
           }
         },
         RW_CLICK_PAGE_SIZE,
-        dateKey,
       );
-
-      const clicksSoFar = sumAggClicks_(agg);
-      if (onProgress) {
-        await onProgress({
-          phase: 'commission',
-          slotIndex: 1,
-          totalSlots: 1,
-          clicksSoFar,
-          source: `commission/${op}${dateKey === 'range' ? ' (交易日)' : ''}`,
-        });
-      }
-
-      if (clicksSoFar > 0) {
-        return Array.from(agg.values());
-      }
+    } catch {
+      continue;
     }
+
+    const clicksSoFar = sumAggClicks_(agg);
+    if (onProgress && clicksSoFar > 0) {
+      await onProgress({
+        phase: 'commission',
+        slotIndex: 1,
+        totalSlots: 1,
+        clicksSoFar,
+        source: `performance/${op}`,
+      });
+    }
+    if (clicksSoFar > 0) return true;
   }
 
-  /** 按自然日逐日拉 commission（部分站点区间查询无 clicks 字段，按日有） */
-  const dates = listInclusiveDates_(startDate, endDate);
-  for (const dateStr of dates) {
-    for (const op of RW_CLICK_COMMISSION_OPS) {
-      for (const dateKey of ['range', 'payment'] as const) {
-        await forEachRewardooCommissionPage(
-          op,
-          apiToken,
-          dateStr,
-          dateStr,
-          (rows) => {
-            for (const raw of rows) {
-              mergeCommissionClickRow_(
-                raw as Record<string, unknown>,
-                agg,
-                startDate,
-                endDate,
-                dateStr,
-              );
-            }
-          },
-          RW_CLICK_PAGE_SIZE,
-          dateKey,
-        );
-        if (sumAggClicks_(agg) > 0) {
-          return Array.from(agg.values());
-        }
-      }
-    }
-  }
-
-  await fetchClickDetailsAggs_(apiToken, startDate, endDate, agg, onProgress);
-  return Array.from(agg.values());
+  return false;
 }
 
 /** commission 行：clicks 字段为当日汇总次数（非逐条点击） */

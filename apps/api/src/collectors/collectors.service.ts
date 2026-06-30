@@ -239,16 +239,16 @@ export class CollectorsService {
         rwBundle.rows.length = 0;
 
         if (options.includeClicks) {
-          await onProgress?.('订单已拉取，正在采集 RW 联盟点击（Performance 汇总）…');
+          await onProgress?.('订单已拉取，正在采集 RW 联盟点击（Performance 汇总 API）…');
           try {
             const clickAggs = await fetchRewardooClicks(
               apiToken,
               startDate,
               endDate,
               async (p) => {
-                if (p.phase === 'commission') {
+                if (p.phase === 'summary') {
                   await onProgress?.(
-                    `RW 联盟点击 ${p.source} ${p.slotIndex}/${p.totalSlots}，已汇总 ${p.clicksSoFar} 次`,
+                    `RW 联盟点击 ${p.source}，已汇总 ${p.clicksSoFar} 次`,
                   );
                 } else {
                   await onProgress?.(

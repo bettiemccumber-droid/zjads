@@ -282,6 +282,58 @@ export async function fetchRewardooPerformanceChunk(
 }
 
 /**
+ * 按 page/limit 分页遍历任意 RW 模块（与 transaction_details / click_details 一致）。
+ * 1003/1004 视为参数不兼容，返回 skipped=true。
+ */
+export async function forEachRewardooPageLimit(
+  mod: string,
+  op: string,
+  apiToken: string,
+  extraParams: Record<string, string>,
+  onPage: (rows: unknown[], page: number) => void | Promise<void>,
+  pageSize = RW_PAGE_SIZE,
+): Promise<{ rowCount: number; skipped: boolean }> {
+  let page = 1;
+  let totalPages = 1;
+  let rowCount = 0;
+
+  for (; page <= totalPages && page <= 500; page += 1) {
+    const parsed = await postRewardooApi(mod, op, {
+      token: apiToken,
+      ...extraParams,
+      page: String(page),
+      limit: String(pageSize),
+    });
+
+    if (parsed.code === 1002) {
+      await sleep(65000);
+      page -= 1;
+      continue;
+    }
+
+    if (parsed.code === 1003 || parsed.code === 1004) {
+      return { rowCount: 0, skipped: true };
+    }
+
+    if (parsed.code !== 0) {
+      throw new Error(
+        `Rewardoo ${mod}/${op} API 错误 ${parsed.code}${parsed.message ? `: ${parsed.message}` : ''}`,
+      );
+    }
+
+    if (parsed.rows.length) {
+      await onPage(parsed.rows, page);
+      rowCount += parsed.rows.length;
+    }
+
+    totalPages = parsed.totalPages ?? 1;
+    if (parsed.rows.length < pageSize) break;
+  }
+
+  return { rowCount, skipped: false };
+}
+
+/**
  * 按页遍历 commission 模块数据（payment_begin/end + offset/pageSize），不累积全量 rows。
  * 1003/1004 视为参数/区间无效，静默跳过（由调用方尝试下一数据源）。
  */

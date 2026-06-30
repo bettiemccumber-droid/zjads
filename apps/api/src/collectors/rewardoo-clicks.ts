@@ -26,7 +26,10 @@ interface RwClickRow {
 /** Rewardoo ClickDetails：60 秒内最多 15 次（文档错误码 1006） */
 const RW_CLICK_MIN_INTERVAL_MS = 4100;
 
-const RW_CLICK_PAGE_SIZE = 1000;
+const RW_CLICK_PAGE_SIZE = 500;
+
+/** click_details 仅作兜底且区间不宜过长，避免 7 天 × 24 小时撑爆内存 */
+const RW_CLICK_DETAILS_MAX_DAYS = 3;
 
 let lastRwClickRequestAt = 0;
 
@@ -58,9 +61,14 @@ export function buildRwClickHourlySlots(
   return slots;
 }
 
+function countDaysInclusive_(startDate: string, endDate: string): number {
+  return listUtc8Dates_(startDate, endDate).length;
+}
+
 /**
- * 采集 Rewardoo 联盟点击（mod=medium&op=click_details），按商家+自然日汇总。
- * click_details 为空时回退 performance 商家日报中的 clicks 字段。
+ * 采集 Rewardoo 联盟点击，按商家+自然日汇总。
+ * 优先 performance 商家日报（与 RW 后台 Performance 一致，请求少、内存低）；
+ * 仅当 performance 无点击且区间 ≤3 天时，才回退 click_details。
  */
 export async function fetchRewardooClicks(
   apiToken: string,
@@ -68,18 +76,21 @@ export async function fetchRewardooClicks(
   endDate: string,
   onProgress?: (p: RwClickFetchProgress) => void | Promise<void>,
 ): Promise<RwMerchantClickAgg[]> {
-  const detailAggs = await fetchRewardooClickDetails_(
-    apiToken,
-    startDate,
-    endDate,
-    onProgress,
-  );
-  const detailTotal = detailAggs.reduce((s, r) => s + r.clicks, 0);
-  if (detailTotal > 0) {
-    return detailAggs;
+  await onProgress?.({ slotIndex: 0, totalSlots: 1, clicksSoFar: 0 });
+
+  const perfAggs = await fetchRewardooPerformanceClickAggs_(apiToken, startDate, endDate);
+  const perfTotal = perfAggs.reduce((s, r) => s + r.clicks, 0);
+  if (perfTotal > 0) {
+    await onProgress?.({ slotIndex: 1, totalSlots: 1, clicksSoFar: perfTotal });
+    return perfAggs;
   }
 
-  return fetchRewardooPerformanceClickAggs_(apiToken, startDate, endDate);
+  const dayCount = countDaysInclusive_(startDate, endDate);
+  if (dayCount > RW_CLICK_DETAILS_MAX_DAYS) {
+    return perfAggs;
+  }
+
+  return fetchRewardooClickDetails_(apiToken, startDate, endDate, onProgress);
 }
 
 async function fetchRewardooClickDetails_(
@@ -89,16 +100,17 @@ async function fetchRewardooClickDetails_(
   onProgress?: (p: RwClickFetchProgress) => void | Promise<void>,
 ): Promise<RwMerchantClickAgg[]> {
   const agg = new Map<string, RwMerchantClickAgg>();
-  const seenRefs = new Set<string>();
   const slots = buildRwClickHourlySlots(startDate, endDate);
 
   for (let slotIndex = 0; slotIndex < slots.length; slotIndex += 1) {
     const slot = slots[slotIndex];
+    /** 仅在本小时片内去重，避免 7 天全局 Set 撑爆内存 */
+    const slotSeenRefs = new Set<string>();
     let page = 1;
     let totalPages = 1;
     let rateRetries = 0;
 
-    while (page <= totalPages && page <= 100) {
+    while (page <= totalPages && page <= 50) {
       const parsed = await postRwClickDetailsPage(
         apiToken,
         slot.begin,
@@ -132,8 +144,8 @@ async function fetchRewardooClickDetails_(
 
         const ref = String(row.click_ref ?? '').trim();
         if (ref) {
-          if (seenRefs.has(ref)) continue;
-          seenRefs.add(ref);
+          if (slotSeenRefs.has(ref)) continue;
+          slotSeenRefs.add(ref);
         }
 
         const clickDate = parseRwClickDate_(row.click_time);
@@ -157,6 +169,8 @@ async function fetchRewardooClickDetails_(
       if (page <= totalPages) await sleep(200);
     }
 
+    slotSeenRefs.clear();
+
     const clicksSoFar = [...agg.values()].reduce((s, r) => s + r.clicks, 0);
     if (onProgress && (slotIndex === 0 || slotIndex % 6 === 0 || slotIndex === slots.length - 1)) {
       await onProgress({ slotIndex: slotIndex + 1, totalSlots: slots.length, clicksSoFar });
@@ -166,7 +180,7 @@ async function fetchRewardooClickDetails_(
   return Array.from(agg.values());
 }
 
-/** performance/merchant|report 按商家+日 clicks 汇总（click_details 无数据时的兜底） */
+/** performance/merchant|report 按商家+日 clicks 汇总（首选，低内存） */
 async function fetchRewardooPerformanceClickAggs_(
   apiToken: string,
   startDate: string,
@@ -206,6 +220,10 @@ async function fetchRewardooPerformanceClickAggs_(
         });
       }
     }
+
+    if ([...agg.values()].reduce((s, r) => s + r.clicks, 0) > 0) {
+      break;
+    }
   }
 
   return Array.from(agg.values());
@@ -234,6 +252,8 @@ async function postRwClickDetailsPage(
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
       timeout: 120000,
       validateStatus: () => true,
+      maxContentLength: 8 * 1024 * 1024,
+      maxBodyLength: 8 * 1024 * 1024,
     },
   );
 

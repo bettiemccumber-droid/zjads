@@ -235,7 +235,7 @@ export class CollectorsService {
         normalized = normalizeRewardooOrders(rows, mappings, range);
 
         if (options.includeClicks) {
-          await onProgress?.('订单已拉取，正在采集 RW 联盟点击…');
+          await onProgress?.('订单已拉取，正在采集 RW 联盟点击（Performance 汇总）…');
           try {
             const clickAggs = await fetchRewardooClicks(
               apiToken,

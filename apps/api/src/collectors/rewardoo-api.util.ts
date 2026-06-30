@@ -282,6 +282,64 @@ export async function fetchRewardooPerformanceChunk(
 }
 
 /**
+ * 按页遍历 commission 模块数据，不累积全量 rows。
+ * @param dateKey payment=payment_begin/end（结算日）；range=begin/end（Performance 交易日）
+ */
+export async function forEachRewardooCommissionPage(
+  op: RwCommissionOp,
+  apiToken: string,
+  rangeBegin: string,
+  rangeEnd: string,
+  onPage: (rows: unknown[], pageIndex: number) => void | Promise<void>,
+  pageSize = RW_PAGE_SIZE,
+  dateKey: 'payment' | 'range' = 'payment',
+): Promise<void> {
+  let offset = 0;
+
+  for (let pageIndex = 0; pageIndex < 500; pageIndex += 1) {
+    const params: Record<string, string> = {
+      token: apiToken,
+      offset: String(offset),
+      pageSize: String(pageSize),
+    };
+    if (dateKey === 'payment') {
+      params.payment_begin = rangeBegin;
+      params.payment_end = rangeEnd;
+    } else {
+      params.begin = rangeBegin;
+      params.end = rangeEnd;
+    }
+
+    const parsed = await postRewardooApi('commission', op, params);
+
+    if (parsed.code === 1002) {
+      await sleep(65000);
+      continue;
+    }
+
+    if (parsed.code !== 0) {
+      throw new Error(
+        `Rewardoo commission/${op} API 错误 ${parsed.code}${parsed.message ? `: ${parsed.message}` : ''}`,
+      );
+    }
+
+    const rows = parsed.rows;
+    if (rows.length) {
+      await onPage(rows, pageIndex);
+    }
+
+    if (!rows.length || rows.length < pageSize) break;
+
+    const nextOffset =
+      parsed.offset != null && Number.isFinite(parsed.offset)
+        ? Number(parsed.offset) + rows.length
+        : offset + rows.length;
+    if (nextOffset <= offset) break;
+    offset = nextOffset;
+  }
+}
+
+/**
  * 按页遍历 performance 数据（offset/pageSize），不累积全量 rows，供点击汇总等低内存场景使用。
  */
 export async function forEachRewardooPerformancePage(

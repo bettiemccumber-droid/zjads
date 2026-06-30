@@ -1,13 +1,20 @@
 import axios from 'axios';
-import { parseRwApiEnvelope, RW_API_BASE } from './rewardoo-api.util';
+import {
+  forEachRewardooCommissionPage,
+  parseRwApiEnvelope,
+  RW_API_BASE,
+  type RwCommissionOp,
+} from './rewardoo-api.util';
 import type { PmMerchantClickAgg } from './partnermatic-clicks';
 
 export type RwMerchantClickAgg = PmMerchantClickAgg;
 
 export interface RwClickFetchProgress {
+  phase: 'commission' | 'click_details';
   slotIndex: number;
   totalSlots: number;
   clicksSoFar: number;
+  source?: string;
 }
 
 interface RwClickRow {
@@ -19,44 +26,22 @@ interface RwClickRow {
   click_ref?: string;
 }
 
+/** commission 汇总（与 RW 后台 Performance 一致，优先） */
+const RW_CLICK_COMMISSION_OPS: RwCommissionOp[] = ['merchant', 'performance', 'report'];
+
 /** ClickDetails：60 秒内最多 15 次（文档错误码 1006） */
 const RW_CLICK_MIN_INTERVAL_MS = 4100;
 
 const RW_CLICK_PAGE_SIZE = 500;
 
-/** 单次采集最长自然日数（超出则拒绝，避免小时片过多） */
+/** 单次采集最长自然日数 */
 const RW_CLICK_MAX_DAYS = 62;
 
 let lastRwClickRequestAt = 0;
 
 /**
- * 生成 RW click_details 小时片（UTC+8 日历日 + 整点窗口，与官方 curl 示例一致）。
- */
-export function buildRwClickHourlySlots(
-  startDate: string,
-  endDate: string,
-): { begin: string; end: string }[] {
-  const slots: { begin: string; end: string }[] = [];
-  const dates = listInclusiveDates_(startDate, endDate);
-
-  for (const ymd of dates) {
-    for (let h = 0; h < 24; h += 1) {
-      const hh = String(h).padStart(2, '0');
-      const begin = `${ymd} ${hh}:00:00`;
-      const end =
-        h < 23
-          ? `${ymd} ${String(h + 1).padStart(2, '0')}:00:00`
-          : `${addCalendarDays_(ymd, 1)} 00:00:00`;
-      slots.push({ begin, end });
-    }
-  }
-
-  return slots;
-}
-
-/**
- * 采集 Rewardoo 联盟点击（官方 ClickDetails：mod=medium&op=click_details）。
- * 与订单 API 同 mod/token；按小时片 + 分页流式汇总，不缓存全量点击行。
+ * 采集 Rewardoo 联盟点击。
+ * 优先 commission 商家日报 clicks（与后台 Performance 一致）；无数据时再回退 ClickDetails 小时片。
  */
 export async function fetchRewardooClicks(
   apiToken: string,
@@ -72,11 +57,123 @@ export async function fetchRewardooClicks(
   }
 
   const agg = new Map<string, RwMerchantClickAgg>();
+
+  for (const op of RW_CLICK_COMMISSION_OPS) {
+    for (const dateKey of ['range', 'payment'] as const) {
+      await forEachRewardooCommissionPage(
+        op,
+        apiToken,
+        startDate,
+        endDate,
+        (rows) => {
+          for (const raw of rows) {
+            mergeCommissionClickRow_(raw as Record<string, unknown>, agg, startDate, endDate);
+          }
+        },
+        RW_CLICK_PAGE_SIZE,
+        dateKey,
+      );
+
+      const clicksSoFar = sumAggClicks_(agg);
+      if (onProgress) {
+        await onProgress({
+          phase: 'commission',
+          slotIndex: 1,
+          totalSlots: 1,
+          clicksSoFar,
+          source: `commission/${op}${dateKey === 'range' ? ' (交易日)' : ''}`,
+        });
+      }
+
+      if (clicksSoFar > 0) {
+        return Array.from(agg.values());
+      }
+    }
+  }
+
+  /** 按自然日逐日拉 commission（部分站点区间查询无 clicks 字段，按日有） */
+  const dates = listInclusiveDates_(startDate, endDate);
+  for (const dateStr of dates) {
+    for (const op of RW_CLICK_COMMISSION_OPS) {
+      for (const dateKey of ['range', 'payment'] as const) {
+        await forEachRewardooCommissionPage(
+          op,
+          apiToken,
+          dateStr,
+          dateStr,
+          (rows) => {
+            for (const raw of rows) {
+              mergeCommissionClickRow_(
+                raw as Record<string, unknown>,
+                agg,
+                startDate,
+                endDate,
+                dateStr,
+              );
+            }
+          },
+          RW_CLICK_PAGE_SIZE,
+          dateKey,
+        );
+        if (sumAggClicks_(agg) > 0) {
+          return Array.from(agg.values());
+        }
+      }
+    }
+  }
+
+  await fetchClickDetailsAggs_(apiToken, startDate, endDate, agg, onProgress);
+  return Array.from(agg.values());
+}
+
+/** commission 行：clicks 字段为当日汇总次数（非逐条点击） */
+function mergeCommissionClickRow_(
+  row: Record<string, unknown>,
+  agg: Map<string, RwMerchantClickAgg>,
+  startDate: string,
+  endDate: string,
+  defaultDate?: string,
+): void {
+  const merchantId = resolveRwClickMerchantId_(row);
+  if (!merchantId) return;
+
+  const clicks = parseRwClickCount_(
+    row.clicks ?? row.click ?? row.total_clicks ?? row.click_count ?? row.cpc_click,
+  );
+  if (clicks <= 0) return;
+
+  const clickDate = parseRwRowDate_(row) || defaultDate || '';
+  if (!clickDate || clickDate < startDate || clickDate > endDate) return;
+
+  const key = `${merchantId}|${clickDate}`;
+  const existing = agg.get(key);
+  if (existing) {
+    existing.clicks += clicks;
+  } else {
+    agg.set(key, {
+      merchantId,
+      merchantName: String(row.merchant_name ?? row.advertiser_name ?? ''),
+      clickDate,
+      clicks,
+    });
+  }
+}
+
+/**
+ * 官方 ClickDetails（mod=medium&op=click_details）小时片兜底。
+ * 多数账号 Performance 有数但 click_details 为空，故仅作次级数据源。
+ */
+async function fetchClickDetailsAggs_(
+  apiToken: string,
+  startDate: string,
+  endDate: string,
+  agg: Map<string, RwMerchantClickAgg>,
+  onProgress?: (p: RwClickFetchProgress) => void | Promise<void>,
+): Promise<void> {
   const slots = buildRwClickHourlySlots(startDate, endDate);
 
   for (let slotIndex = 0; slotIndex < slots.length; slotIndex += 1) {
     const slot = slots[slotIndex];
-    /** 仅在本小时片内去重，避免跨天全局 Set 撑爆内存 */
     const slotSeenRefs = new Set<string>();
     let page = 1;
     let totalPages = 1;
@@ -142,23 +239,47 @@ export async function fetchRewardooClicks(
       if (page <= totalPages) await sleep_(200);
     }
 
-    const clicksSoFar = sumAggClicks_(agg);
     if (
       onProgress &&
       (slotIndex === 0 || slotIndex % 12 === 0 || slotIndex === slots.length - 1)
     ) {
       await onProgress({
+        phase: 'click_details',
         slotIndex: slotIndex + 1,
         totalSlots: slots.length,
-        clicksSoFar,
+        clicksSoFar: sumAggClicks_(agg),
+        source: 'medium/click_details',
       });
     }
   }
-
-  return Array.from(agg.values());
 }
 
-/** 调用 ClickDetails 单页（与 transaction_details 相同 mod=medium） */
+/**
+ * 生成 RW click_details 小时片（UTC+8 日历日 + 整点窗口，与官方 curl 示例一致）。
+ */
+export function buildRwClickHourlySlots(
+  startDate: string,
+  endDate: string,
+): { begin: string; end: string }[] {
+  const slots: { begin: string; end: string }[] = [];
+  const dates = listInclusiveDates_(startDate, endDate);
+
+  for (const ymd of dates) {
+    for (let h = 0; h < 24; h += 1) {
+      const hh = String(h).padStart(2, '0');
+      const begin = `${ymd} ${hh}:00:00`;
+      const end =
+        h < 23
+          ? `${ymd} ${String(h + 1).padStart(2, '0')}:00:00`
+          : `${addCalendarDays_(ymd, 1)} 00:00:00`;
+      slots.push({ begin, end });
+    }
+  }
+
+  return slots;
+}
+
+/** 调用 ClickDetails 单页；首页不带 page/limit，避免部分站点返回空列表 */
 async function postRwClickDetailsPage_(
   apiToken: string,
   beginDate: string,
@@ -171,9 +292,11 @@ async function postRwClickDetailsPage_(
     token: apiToken,
     begin_date: beginDate,
     end_date: endDate,
-    page: String(page),
-    limit: String(RW_CLICK_PAGE_SIZE),
   };
+  if (page > 1) {
+    params.page = String(page);
+    params.limit = String(RW_CLICK_PAGE_SIZE);
+  }
 
   const { data } = await axios.post<unknown>(
     `${RW_API_BASE}?mod=medium&op=click_details`,
@@ -211,7 +334,7 @@ async function postRwClickDetailsPage_(
 
 function resolveRwClickMerchantId_(row: RwClickRow | Record<string, unknown>): string {
   const rec = row as Record<string, unknown>;
-  for (const key of ['mid', 'm_id', 'merchant_id', 'brand_id'] as const) {
+  for (const key of ['mid', 'm_id', 'merchant_id', 'brand_id', 'norm_id'] as const) {
     const raw = rec[key];
     if (raw == null || String(raw).trim() === '') continue;
     return String(raw).trim();
@@ -226,13 +349,35 @@ function parseRwClickDate_(clickTime: unknown): string {
   return m ? m[1] : '';
 }
 
+function parseRwRowDate_(row: Record<string, unknown>): string {
+  for (const key of [
+    'date',
+    'ymd',
+    'order_ymd',
+    'transaction_date',
+    'payment_ymd',
+    'day',
+  ] as const) {
+    const v = row[key];
+    if (v == null || String(v).trim() === '') continue;
+    const s = String(v).trim().slice(0, 10);
+    if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
+  }
+  return '';
+}
+
+function parseRwClickCount_(raw: unknown): number {
+  if (raw == null || raw === '') return 0;
+  const n = typeof raw === 'number' ? raw : parseInt(String(raw).replace(/,/g, ''), 10);
+  return Number.isFinite(n) && n > 0 ? n : 0;
+}
+
 function sumAggClicks_(agg: Map<string, RwMerchantClickAgg>): number {
   let total = 0;
   for (const row of agg.values()) total += row.clicks;
   return total;
 }
 
-/** 闭区间 YYYY-MM-DD 列表（纯日历运算，避免 +08:00 与 UTC 格式化混用导致日期不递增） */
 function listInclusiveDates_(startDate: string, endDate: string): string[] {
   const out: string[] = [];
   let cur = startDate;

@@ -239,16 +239,22 @@ export class CollectorsService {
         rwBundle.rows.length = 0;
 
         if (options.includeClicks) {
-          await onProgress?.('订单已拉取，正在采集 RW 联盟点击（ClickDetails）…');
+          await onProgress?.('订单已拉取，正在采集 RW 联盟点击（Performance 汇总）…');
           try {
             const clickAggs = await fetchRewardooClicks(
               apiToken,
               startDate,
               endDate,
               async (p) => {
-                await onProgress?.(
-                  `RW 联盟点击 ${p.slotIndex}/${p.totalSlots} 小时片，已汇总 ${p.clicksSoFar} 次`,
-                );
+                if (p.phase === 'commission') {
+                  await onProgress?.(
+                    `RW 联盟点击 ${p.source} ${p.slotIndex}/${p.totalSlots}，已汇总 ${p.clicksSoFar} 次`,
+                  );
+                } else {
+                  await onProgress?.(
+                    `RW click_details 兜底 ${p.slotIndex}/${p.totalSlots} 小时片，已汇总 ${p.clicksSoFar} 次`,
+                  );
+                }
               },
             );
             await this.replaceClicksInRange(account.id, startDate, endDate);

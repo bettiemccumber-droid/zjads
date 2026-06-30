@@ -24,20 +24,20 @@ const RW_CLICK_MIN_INTERVAL_MS = 4100;
 
 const RW_CLICK_PAGE_SIZE = 500;
 
-/** 单次采集最长自然日数（7 天 ≈ 168 小时片，约 12 分钟） */
-const RW_CLICK_MAX_DAYS = 31;
+/** 单次采集最长自然日数（超出则拒绝，避免小时片过多） */
+const RW_CLICK_MAX_DAYS = 62;
 
 let lastRwClickRequestAt = 0;
 
 /**
- * 生成 RW click_details 小时片（UTC+8，结束时间为下一整点，与官方 curl 示例一致）。
+ * 生成 RW click_details 小时片（UTC+8 日历日 + 整点窗口，与官方 curl 示例一致）。
  */
 export function buildRwClickHourlySlots(
   startDate: string,
   endDate: string,
 ): { begin: string; end: string }[] {
   const slots: { begin: string; end: string }[] = [];
-  const dates = listUtc8Dates_(startDate, endDate);
+  const dates = listInclusiveDates_(startDate, endDate);
 
   for (const ymd of dates) {
     for (let h = 0; h < 24; h += 1) {
@@ -46,7 +46,7 @@ export function buildRwClickHourlySlots(
       const end =
         h < 23
           ? `${ymd} ${String(h + 1).padStart(2, '0')}:00:00`
-          : `${addUtc8Days_(ymd, 1)} 00:00:00`;
+          : `${addCalendarDays_(ymd, 1)} 00:00:00`;
       slots.push({ begin, end });
     }
   }
@@ -64,7 +64,7 @@ export async function fetchRewardooClicks(
   endDate: string,
   onProgress?: (p: RwClickFetchProgress) => void | Promise<void>,
 ): Promise<RwMerchantClickAgg[]> {
-  const dayCount = listUtc8Dates_(startDate, endDate).length;
+  const dayCount = countInclusiveDays_(startDate, endDate);
   if (dayCount > RW_CLICK_MAX_DAYS) {
     throw new Error(
       `RW 点击采集区间过长（${dayCount} 天），请缩短至 ${RW_CLICK_MAX_DAYS} 天内`,
@@ -232,24 +232,26 @@ function sumAggClicks_(agg: Map<string, RwMerchantClickAgg>): number {
   return total;
 }
 
-function listUtc8Dates_(startDate: string, endDate: string): string[] {
+/** 闭区间 YYYY-MM-DD 列表（纯日历运算，避免 +08:00 与 UTC 格式化混用导致日期不递增） */
+function listInclusiveDates_(startDate: string, endDate: string): string[] {
   const out: string[] = [];
   let cur = startDate;
-  while (cur <= endDate && out.length < RW_CLICK_MAX_DAYS + 1) {
+  while (cur <= endDate) {
     out.push(cur);
     if (cur === endDate) break;
-    cur = addUtc8Days_(cur, 1);
+    cur = addCalendarDays_(cur, 1);
   }
   return out;
 }
 
-function addUtc8Days_(ymd: string, days: number): string {
-  const d = new Date(`${ymd}T00:00:00+08:00`);
-  d.setUTCDate(d.getUTCDate() + days);
-  const y = d.getUTCFullYear();
-  const m = String(d.getUTCMonth() + 1).padStart(2, '0');
-  const day = String(d.getUTCDate()).padStart(2, '0');
-  return `${y}-${m}-${day}`;
+function countInclusiveDays_(startDate: string, endDate: string): number {
+  return listInclusiveDates_(startDate, endDate).length;
+}
+
+function addCalendarDays_(ymd: string, days: number): string {
+  const [y, m, d] = ymd.split('-').map(Number);
+  const dt = new Date(Date.UTC(y, m - 1, d + days));
+  return dt.toISOString().slice(0, 10);
 }
 
 async function throttleRwClickRequest_() {

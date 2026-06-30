@@ -250,6 +250,10 @@ export class CollectorsService {
                   await onProgress?.(
                     `RW 联盟点击 ${p.source}，已汇总 ${p.clicksSoFar} 次`,
                   );
+                } else if (p.phase === 'user_click') {
+                  await onProgress?.(
+                    `RW user_click ${p.slotIndex}/${p.totalSlots} 日，已汇总 ${p.clicksSoFar} 次`,
+                  );
                 } else {
                   await onProgress?.(
                     `RW click_details 兜底 ${p.slotIndex}/${p.totalSlots} 小时片，已汇总 ${p.clicksSoFar} 次`,

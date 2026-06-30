@@ -213,6 +213,13 @@ function extractRwRows(body: unknown): unknown[] {
     if (Array.isArray(nested.list)) return nested.list;
   }
 
+  /** LinkBux/Rewardoo 部分站点 typo：payliad.list */
+  const payliad = root.payliad;
+  if (payliad && typeof payliad === 'object' && !Array.isArray(payliad)) {
+    const nested = payliad as Record<string, unknown>;
+    if (Array.isArray(nested.list)) return nested.list;
+  }
+
   return [];
 }
 
@@ -282,8 +289,7 @@ export async function fetchRewardooPerformanceChunk(
 }
 
 /**
- * 按 page/limit 分页遍历任意 RW 模块（与 transaction_details / click_details 一致）。
- * 1003/1004 视为参数不兼容，返回 skipped=true。
+ * 按 page/limit 分页遍历（与 transaction_details / LinkBux performance 一致，含 type=json）。
  */
 export async function forEachRewardooPageLimit(
   mod: string,
@@ -300,6 +306,7 @@ export async function forEachRewardooPageLimit(
   for (; page <= totalPages && page <= 500; page += 1) {
     const parsed = await postRewardooApi(mod, op, {
       token: apiToken,
+      type: 'json',
       ...extraParams,
       page: String(page),
       limit: String(pageSize),
@@ -328,6 +335,63 @@ export async function forEachRewardooPageLimit(
 
     totalPages = parsed.totalPages ?? 1;
     if (parsed.rows.length < pageSize) break;
+  }
+
+  return { rowCount, skipped: false };
+}
+
+/**
+ * 按 offset/pageSize 分页遍历（commission/performance 部分站点仅此方式有效）。
+ */
+export async function forEachRewardooOffsetPage(
+  mod: string,
+  op: string,
+  apiToken: string,
+  extraParams: Record<string, string>,
+  onPage: (rows: unknown[], pageIndex: number) => void | Promise<void>,
+  pageSize = RW_PAGE_SIZE,
+): Promise<{ rowCount: number; skipped: boolean }> {
+  let offset = 0;
+  let rowCount = 0;
+
+  for (let pageIndex = 0; pageIndex < 500; pageIndex += 1) {
+    const parsed = await postRewardooApi(mod, op, {
+      token: apiToken,
+      type: 'json',
+      ...extraParams,
+      offset: String(offset),
+      pageSize: String(pageSize),
+    });
+
+    if (parsed.code === 1002) {
+      await sleep(65000);
+      pageIndex -= 1;
+      continue;
+    }
+
+    if (parsed.code === 1003 || parsed.code === 1004) {
+      return { rowCount: 0, skipped: true };
+    }
+
+    if (parsed.code !== 0) {
+      throw new Error(
+        `Rewardoo ${mod}/${op} API 错误 ${parsed.code}${parsed.message ? `: ${parsed.message}` : ''}`,
+      );
+    }
+
+    if (parsed.rows.length) {
+      await onPage(parsed.rows, pageIndex);
+      rowCount += parsed.rows.length;
+    }
+
+    if (!parsed.rows.length || parsed.rows.length < pageSize) break;
+
+    const nextOffset =
+      parsed.offset != null && Number.isFinite(parsed.offset)
+        ? Number(parsed.offset) + parsed.rows.length
+        : offset + parsed.rows.length;
+    if (nextOffset <= offset) break;
+    offset = nextOffset;
   }
 
   return { rowCount, skipped: false };

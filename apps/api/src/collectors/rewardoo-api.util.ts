@@ -281,6 +281,55 @@ export async function fetchRewardooPerformanceChunk(
   return fetchRewardooPaged('performance', op, apiToken, { begin, end }, pageSize);
 }
 
+/**
+ * 按页遍历 performance 数据（offset/pageSize），不累积全量 rows，供点击汇总等低内存场景使用。
+ */
+export async function forEachRewardooPerformancePage(
+  op: RwPerformanceOp,
+  apiToken: string,
+  begin: string,
+  end: string,
+  onPage: (rows: unknown[], pageIndex: number) => void | Promise<void>,
+  pageSize = RW_PAGE_SIZE,
+): Promise<void> {
+  let offset = 0;
+
+  for (let pageIndex = 0; pageIndex < 500; pageIndex += 1) {
+    const parsed = await postRewardooApi('performance', op, {
+      token: apiToken,
+      begin,
+      end,
+      offset: String(offset),
+      pageSize: String(pageSize),
+    });
+
+    if (parsed.code === 1002) {
+      await sleep(65000);
+      continue;
+    }
+
+    if (parsed.code !== 0) {
+      throw new Error(
+        `Rewardoo performance/${op} API 错误 ${parsed.code}${parsed.message ? `: ${parsed.message}` : ''}`,
+      );
+    }
+
+    const rows = parsed.rows;
+    if (rows.length) {
+      await onPage(rows, pageIndex);
+    }
+
+    if (!rows.length || rows.length < pageSize) break;
+
+    const nextOffset =
+      parsed.offset != null && Number.isFinite(parsed.offset)
+        ? Number(parsed.offset) + rows.length
+        : offset + rows.length;
+    if (nextOffset <= offset) break;
+    offset = nextOffset;
+  }
+}
+
 async function fetchRewardooPaged(
   mod: string,
   op: string,

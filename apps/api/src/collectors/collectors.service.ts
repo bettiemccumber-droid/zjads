@@ -222,7 +222,7 @@ export class CollectorsService {
         break;
       }
       case 'rewardoo': {
-        const { rows, source, triedSources } = await fetchRewardooCommissions(
+        const rwBundle = await fetchRewardooCommissions(
           apiToken,
           startDate,
           endDate,
@@ -231,8 +231,12 @@ export class CollectorsService {
           },
         );
         const range = { startDate, endDate };
-        rwApi = { ...summarizeRwCommissionApi(rows, source, range), triedSources };
-        normalized = normalizeRewardooOrders(rows, mappings, range);
+        rwApi = {
+          ...summarizeRwCommissionApi(rwBundle.rows, rwBundle.source, range),
+          triedSources: rwBundle.triedSources,
+        };
+        normalized = normalizeRewardooOrders(rwBundle.rows, mappings, range);
+        rwBundle.rows.length = 0;
 
         if (options.includeClicks) {
           await onProgress?.('订单已拉取，正在采集 RW 联盟点击（Performance 汇总）…');

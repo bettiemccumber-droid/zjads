@@ -1,4 +1,4 @@
-import { postRewardooApi, type RwPerformanceOp } from './rewardoo-api.util';
+import { forEachRewardooPerformancePage, type RwPerformanceOp } from './rewardoo-api.util';
 import type { PmMerchantClickAgg } from './partnermatic-clicks';
 
 export type RwMerchantClickAgg = PmMerchantClickAgg;
@@ -11,9 +11,10 @@ export interface RwClickFetchProgress {
 
 const RW_PERF_OPS: RwPerformanceOp[] = ['merchant', 'report'];
 const RW_PERF_PAGE_SIZE = 500;
+const RW_MAX_DAYS_PER_FETCH = 400;
 
 /**
- * 采集 Rewardoo 联盟点击：仅 performance 商家日报 clicks 字段，按自然日分页流式汇总（低内存）。
+ * 采集 Rewardoo 联盟点击：仅 performance 商家日报 clicks 字段，按自然日 + offset 分页流式汇总。
  */
 export async function fetchRewardooClicks(
   apiToken: string,
@@ -26,17 +27,19 @@ export async function fetchRewardooClicks(
 
   for (let dayIndex = 0; dayIndex < dates.length; dayIndex += 1) {
     const dateStr = dates[dayIndex];
+    const clicksBeforeDay = sumAggClicks_(agg);
 
-    for (const op of RW_PERF_OPS) {
-      await aggregatePerformanceClicksForDay_(apiToken, op, dateStr, agg);
+    await aggregatePerformanceClicksForDay_(apiToken, RW_PERF_OPS[0], dateStr, agg);
+
+    if (sumAggClicks_(agg) === clicksBeforeDay) {
+      await aggregatePerformanceClicksForDay_(apiToken, RW_PERF_OPS[1], dateStr, agg);
     }
 
-    const clicksSoFar = sumAggClicks_(agg);
     if (onProgress) {
       await onProgress({
         slotIndex: dayIndex + 1,
         totalSlots: dates.length,
-        clicksSoFar,
+        clicksSoFar: sumAggClicks_(agg),
       });
     }
   }
@@ -44,63 +47,52 @@ export async function fetchRewardooClicks(
   return Array.from(agg.values());
 }
 
-/** 按单日 + 分页拉 performance，只保留商家+日汇总，不缓存全量 rows */
+/** 按单日 offset 分页拉 performance，只保留商家+日汇总 */
 async function aggregatePerformanceClicksForDay_(
   apiToken: string,
   op: RwPerformanceOp,
   dateStr: string,
   agg: Map<string, RwMerchantClickAgg>,
 ): Promise<void> {
-  let page = 1;
-  let totalPages = 1;
-
-  while (page <= totalPages && page <= 200) {
-    const parsed = await postRewardooApi('performance', op, {
-      token: apiToken,
-      begin: dateStr,
-      end: dateStr,
-      page: String(page),
-      limit: String(RW_PERF_PAGE_SIZE),
-    });
-
-    if (parsed.code === 1002) {
-      await sleep_(65000);
-      continue;
-    }
-
-    if (parsed.code !== 0) {
-      return;
-    }
-
-    totalPages = parsed.totalPages ?? 1;
-
-    for (const raw of parsed.rows) {
-      const row = raw as Record<string, unknown>;
-      const merchantId = resolveRwClickMerchantId_(row);
-      if (!merchantId) continue;
-
-      const clicks = parseRwClickCount_(row.clicks ?? row.click);
-      if (clicks <= 0) continue;
-
-      const clickDate = parseRwPerformanceDate_(row) || dateStr;
-      if (clickDate !== dateStr) continue;
-
-      const key = `${merchantId}|${clickDate}`;
-      const existing = agg.get(key);
-      if (existing) {
-        existing.clicks += clicks;
-      } else {
-        agg.set(key, {
-          merchantId,
-          merchantName: String(row.merchant_name ?? row.advertiser_name ?? ''),
-          clickDate,
-          clicks,
-        });
+  await forEachRewardooPerformancePage(
+    op,
+    apiToken,
+    dateStr,
+    dateStr,
+    (rows) => {
+      for (const raw of rows) {
+        mergeRwPerformanceClickRow_(raw as Record<string, unknown>, dateStr, agg);
       }
-    }
+    },
+    RW_PERF_PAGE_SIZE,
+  );
+}
 
-    if (parsed.rows.length < RW_PERF_PAGE_SIZE) break;
-    page += 1;
+function mergeRwPerformanceClickRow_(
+  row: Record<string, unknown>,
+  dateStr: string,
+  agg: Map<string, RwMerchantClickAgg>,
+): void {
+  const merchantId = resolveRwClickMerchantId_(row);
+  if (!merchantId) return;
+
+  const clicks = parseRwClickCount_(row.clicks ?? row.click);
+  if (clicks <= 0) return;
+
+  const clickDate = parseRwPerformanceDate_(row) || dateStr;
+  if (clickDate !== dateStr) return;
+
+  const key = `${merchantId}|${clickDate}`;
+  const existing = agg.get(key);
+  if (existing) {
+    existing.clicks += clicks;
+  } else {
+    agg.set(key, {
+      merchantId,
+      merchantName: String(row.merchant_name ?? row.advertiser_name ?? ''),
+      clickDate,
+      clicks,
+    });
   }
 }
 
@@ -138,8 +130,9 @@ function sumAggClicks_(agg: Map<string, RwMerchantClickAgg>): number {
 function listUtc8Dates_(startDate: string, endDate: string): string[] {
   const out: string[] = [];
   let cur = startDate;
-  while (cur <= endDate) {
+  while (cur <= endDate && out.length < RW_MAX_DAYS_PER_FETCH) {
     out.push(cur);
+    if (cur === endDate) break;
     cur = addUtc8Days_(cur, 1);
   }
   return out;
@@ -152,10 +145,6 @@ function addUtc8Days_(ymd: string, days: number): string {
   const m = String(d.getUTCMonth() + 1).padStart(2, '0');
   const day = String(d.getUTCDate()).padStart(2, '0');
   return `${y}-${m}-${day}`;
-}
-
-function sleep_(ms: number) {
-  return new Promise((r) => setTimeout(r, ms));
 }
 
 /** @deprecated 仅测试保留；生产不再使用 click_details */

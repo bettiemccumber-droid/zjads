@@ -120,7 +120,7 @@ export function parseRwApiEnvelope(body: unknown): {
   const root = body as Record<string, unknown>;
   const statusRaw = root.status;
   let code = -1;
-  if (root.code === 0 || root.code === '0') {
+  if (root.code === 0 || root.code === '0' || root.code === 200 || root.code === '200') {
     code = 0;
   } else if (typeof statusRaw === 'number') {
     code = statusRaw === 200 ? 0 : statusRaw;

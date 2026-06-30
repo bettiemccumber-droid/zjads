@@ -11,6 +11,7 @@ import { parseCampaignName, inferPlatformNameFromAlias } from '../common/campaig
 import { resolveCampaignGroupKey } from '../common/campaign-group.util';
 import { suggestOperation } from '../common/operation-suggest.util';
 import { AuthUser, resolveOwnerUserId } from '../common/ownership.util';
+import { buildOrderDateRangeFilter } from '../common/order-date-range.util';
 import { isLbClickPseudoMerchant } from '../collectors/linkbux-clicks';
 import { buildSheetCsvUrl, parseAdSheetCsv } from '../ad-sources/sheet-parser.util';
 import { PrismaService } from '../prisma/prisma.service';
@@ -149,7 +150,7 @@ export class ReportsService {
     const adRows = await this.prisma.adCampaignDaily.findMany({
       where: {
         ownerUserId: ownerId,
-        date: { gte: new Date(q.startDate), lte: new Date(q.endDate) },
+        date: buildOrderDateRangeFilter(q.startDate, q.endDate)!,
       },
     });
 
@@ -193,7 +194,7 @@ export class ReportsService {
     const affiliateClickRows = await this.prisma.affiliateMerchantClickDaily.findMany({
       where: {
         channelAccountId: { in: accountIds },
-        clickDate: { gte: new Date(q.startDate), lte: new Date(q.endDate) },
+        clickDate: buildOrderDateRangeFilter(q.startDate, q.endDate)!,
       },
       include: {
         channelAccount: { include: { platform: true } },
@@ -300,7 +301,7 @@ export class ReportsService {
     const adRows = await this.prisma.adCampaignDaily.findMany({
       where: {
         ownerUserId: ownerId,
-        date: { gte: new Date(q.startDate), lte: new Date(q.endDate) },
+        date: buildOrderDateRangeFilter(q.startDate, q.endDate)!,
       },
     });
 
@@ -524,7 +525,7 @@ export class ReportsService {
     const adRows = await this.prisma.adCampaignDaily.findMany({
       where: {
         ownerUserId: ownerId,
-        date: { gte: new Date(q.startDate), lte: new Date(q.endDate) },
+        date: buildOrderDateRangeFilter(q.startDate, q.endDate)!,
       },
       orderBy: [{ date: 'desc' }, { campaignName: 'asc' }],
     });
@@ -684,7 +685,7 @@ export class ReportsService {
     const clickRows = await this.prisma.affiliateMerchantClickDaily.findMany({
       where: {
         channelAccountId: { in: accountIds },
-        clickDate: { gte: new Date(startDate), lte: new Date(endDate) },
+        clickDate: buildOrderDateRangeFilter(startDate, endDate)!,
       },
       include: { channelAccount: true },
     });
@@ -761,7 +762,7 @@ export class ReportsService {
     const clickRows = await this.prisma.affiliateMerchantClickDaily.findMany({
       where: {
         channelAccountId: { in: accountIds },
-        clickDate: { gte: new Date(startDate), lte: new Date(endDate) },
+        clickDate: buildOrderDateRangeFilter(startDate, endDate)!,
       },
       include: { channelAccount: true },
     });
@@ -1034,8 +1035,61 @@ export class ReportsService {
     startDate: string,
     endDate: string,
   ): T[] {
-    // 不为缺广告数据的日期补 0 花费行，避免看板出现「有佣金无广告费」的误导行
-    return rows;
+    const out = [...rows];
+    const seen = new Set(rows.map((r) => `${r.campaignGroupKey}|${r.date}`));
+    const templates = new Map<string, T>();
+
+    for (const row of rows) {
+      if (!templates.has(row.campaignGroupKey)) {
+        templates.set(row.campaignGroupKey, row);
+      }
+    }
+
+    for (const tpl of templates.values()) {
+      if (!tpl.merchantId) continue;
+
+      for (const dateStr of this.listDatesInRange_(startDate, endDate)) {
+        const dayKey = `${tpl.campaignGroupKey}|${dateStr}`;
+        if (seen.has(dayKey)) continue;
+
+        const affiliate = this.lookupAffiliateMetricsForDay(
+          affiliateByDay,
+          tpl.merchantId,
+          tpl.affiliateAlias,
+          dateStr,
+        );
+        if (
+          affiliate.orderCount <= 0 &&
+          affiliate.commission <= 0 &&
+          affiliate.affiliateClicks <= 0
+        ) {
+          continue;
+        }
+
+        seen.add(dayKey);
+        out.push({
+          ...tpl,
+          date: dateStr,
+          impressions: 0,
+          clicks: 0,
+          cost: 0,
+          dailyBudget: 0,
+          searchBudgetLostIs: 0,
+          searchRankLostIs: 0,
+          avgCpc: 0,
+          maxCpc: 0,
+          orderCount: affiliate.orderCount,
+          commission: affiliate.commission,
+          affiliateClicks: affiliate.affiliateClicks,
+          roi: 0,
+          profit: affiliate.commission,
+          epc: 0,
+          operationSuggestion: suggestOperation(0, affiliate.orderCount, 0),
+        });
+      }
+    }
+
+    return out;
   }
 
   /** 生成闭区间内的 YYYY-MM-DD 日期列表 */

@@ -35,6 +35,7 @@ import {
   isCollectorImplemented,
 } from './collectors.registry';
 import { isOrderDateInReportRange } from '../common/affiliate-order-date.util';
+import { buildOrderDateRangeFilter } from '../common/order-date-range.util';
 import { CollectResult, NormalizedOrder } from './types';
 
 export interface CollectOptions {
@@ -292,10 +293,7 @@ export class CollectorsService {
       where: {
         channelAccountId,
         source: AffiliateClickSource.api,
-        clickDate: {
-          gte: new Date(startDate),
-          lte: new Date(endDate),
-        },
+        clickDate: buildOrderDateRangeFilter(startDate, endDate),
       },
     });
   }

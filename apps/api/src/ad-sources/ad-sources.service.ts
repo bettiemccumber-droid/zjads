@@ -195,11 +195,15 @@ export class AdSourcesService {
       throw new BadRequestException(`所选日期区间内无广告数据。${hint}`);
     }
 
-    /** 指定日期区间导入时先清空该区间，避免 upsert 残留旧系列/旧花费 */
-    if (startDate && endDate) {
-      const dateRange = buildOrderDateRangeFilter(startDate, endDate);
+    const datesInBatch = [...new Set(rows.map((r) => r.date))].sort();
+
+    /** 仅清空本次 Sheet 实际包含的日期，避免 Sheet 未到 endDate 时误删库内末段数据 */
+    for (const dateStr of datesInBatch) {
       await this.prisma.adCampaignDaily.deleteMany({
-        where: { ownerUserId, date: dateRange },
+        where: {
+          ownerUserId,
+          date: buildOrderDateRangeFilter(dateStr, dateStr),
+        },
       });
     }
 
@@ -258,10 +262,22 @@ export class AdSourcesService {
     });
 
     const dates = rows.map((r) => r.date).sort();
+    const dateFrom = dates[0];
+    const dateTo = dates[dates.length - 1];
+    const requestedEnd = endDate ?? dateTo;
+    const coverageWarning =
+      endDate && dateTo < endDate
+        ? `Sheet 实际仅到 ${dateTo}（表内最新 ${sheetDateTo || dateTo}），早于请求 ${endDate}，末段按天广告费可能缺失，请先跑 MCC 脚本再导入`
+        : undefined;
+
     return {
       upserted,
-      dateFrom: dates[0],
-      dateTo: dates[dates.length - 1],
+      dateFrom,
+      dateTo,
+      requestedEnd,
+      coverageWarning,
+      sheetDateFrom,
+      sheetDateTo,
       campaignCount: new Set(rows.map((r) => r.campaignId)).size,
     };
   }

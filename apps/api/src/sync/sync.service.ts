@@ -328,7 +328,12 @@ export class SyncService implements OnModuleInit {
           console.log(`[sync] 任务 #${jobId} Sheet 导入失败: ${r.message ?? 'unknown'}`);
         }
       } else {
-        sheetImportNote = `Sheet 已导入 ${r.upserted} 行（${syncStart}~${syncEnd}）`;
+        let note = `Sheet 已导入 ${r.upserted} 行（${syncStart}~${syncEnd}，Sheet 实际 ${r.dateFrom}~${r.dateTo}）`;
+        if (r.coverageWarning) {
+          note += `；⚠ ${r.coverageWarning}`;
+          console.log(`[sync] 任务 #${jobId} Sheet 覆盖告警: ${r.coverageWarning}`);
+        }
+        sheetImportNote = note;
         console.log(`[sync] 任务 #${jobId} 已自动导入 Sheet：系列 ${r.upserted} 行（${syncStart}~${syncEnd}）`);
       }
     } else {

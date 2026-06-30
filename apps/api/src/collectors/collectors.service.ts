@@ -239,7 +239,7 @@ export class CollectorsService {
         rwBundle.rows.length = 0;
 
         if (options.includeClicks) {
-          await onProgress?.('订单已拉取，正在采集 RW 联盟点击（Performance 汇总）…');
+          await onProgress?.('订单已拉取，正在采集 RW 联盟点击（ClickDetails）…');
           try {
             const clickAggs = await fetchRewardooClicks(
               apiToken,
@@ -247,7 +247,7 @@ export class CollectorsService {
               endDate,
               async (p) => {
                 await onProgress?.(
-                  `RW 联盟点击 ${p.slotIndex}/${p.totalSlots} 天，已汇总 ${p.clicksSoFar} 次`,
+                  `RW 联盟点击 ${p.slotIndex}/${p.totalSlots} 小时片，已汇总 ${p.clicksSoFar} 次`,
                 );
               },
             );

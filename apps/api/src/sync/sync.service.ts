@@ -452,6 +452,12 @@ export class SyncService implements OnModuleInit {
         }
         parts.push(lbClickMsg);
       }
+      if (result.rwClickTotal !== undefined) {
+        parts.push(`RW 联盟点击 ${result.rwClickTotal}（${start}~${end}）`);
+      }
+      if (result.rwClickError) {
+        parts.push(`RW 联盟点击失败: ${result.rwClickError}`);
+      }
       const pmNote = parts.length ? parts.join('；') : '采集完成（无订单数据）';
       await this.prisma.syncJobItem.update({
         where: { id: item.id },

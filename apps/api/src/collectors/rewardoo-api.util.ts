@@ -170,6 +170,18 @@ function extractRwTotalPages(body: unknown): number | null {
     }
   }
 
+  const payload = root.payload;
+  if (payload && typeof payload === 'object' && !Array.isArray(payload)) {
+    const total = (payload as Record<string, unknown>).total;
+    if (total && typeof total === 'object') {
+      const tp = (total as Record<string, unknown>).total_page;
+      if (tp != null) {
+        const n = Number(tp);
+        return Number.isFinite(n) && n > 0 ? n : null;
+      }
+    }
+  }
+
   return null;
 }
 
@@ -192,6 +204,12 @@ function extractRwRows(body: unknown): unknown[] {
   const result = root.result;
   if (result && typeof result === 'object') {
     const nested = result as Record<string, unknown>;
+    if (Array.isArray(nested.list)) return nested.list;
+  }
+
+  const payload = root.payload;
+  if (payload && typeof payload === 'object' && !Array.isArray(payload)) {
+    const nested = payload as Record<string, unknown>;
     if (Array.isArray(nested.list)) return nested.list;
   }
 

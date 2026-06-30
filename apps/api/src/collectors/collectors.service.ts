@@ -28,6 +28,7 @@ import {
   normalizeRewardooOrders,
   summarizeRwCommissionApi,
 } from './rewardoo.collector';
+import { fetchRewardooClicks } from './rewardoo-clicks';
 import { ensurePlatformStatusMappings } from '../common/platform-status-defaults.util';
 import {
   collectorNotReadyMessage,
@@ -37,7 +38,7 @@ import { isOrderDateInReportRange } from '../common/affiliate-order-date.util';
 import { CollectResult, NormalizedOrder } from './types';
 
 export interface CollectOptions {
-  /** 是否采集联盟点击（PM/LH 随订单区间；LB 仅 endDate 单日，历史请导入校准） */
+  /** 是否采集联盟点击（PM/LH/RW 随订单区间；LB 仅 endDate 单日，历史请导入校准） */
   includeClicks?: boolean;
 }
 
@@ -75,6 +76,9 @@ export interface CollectResultWithPmMeta extends CollectResult {
   lbClickCollectDate?: string;
   /** PM 联盟点击采集失败时的错误信息（订单仍会写入） */
   pmClickError?: string;
+  rwClickTotal?: number;
+  /** RW 联盟点击采集失败时的错误信息（订单仍会写入） */
+  rwClickError?: string;
 }
 
 @Injectable()
@@ -115,8 +119,10 @@ export class CollectorsService {
     let lbClickEstimatedDays: number | undefined;
     let lbClickCollectDate: string | undefined;
     let pmClickError: string | undefined;
+    let rwClickTotal: number | undefined;
+    let rwClickError: string | undefined;
 
-    /** LB 点击只采区间最后一天；PM/LH API 分页正常，随订单全区间采集 */
+    /** LB 点击只采区间最后一天；PM/LH/RW API 随订单全区间采集 */
     const lbClickDay = endDate;
 
     switch (account.platform.code) {
@@ -226,6 +232,27 @@ export class CollectorsService {
         const range = { startDate, endDate };
         rwApi = { ...summarizeRwCommissionApi(rows, source, range), triedSources };
         normalized = normalizeRewardooOrders(rows, mappings, range);
+
+        if (options.includeClicks) {
+          await onProgress?.('订单已拉取，正在采集 RW 联盟点击…');
+          try {
+            const clickAggs = await fetchRewardooClicks(
+              apiToken,
+              startDate,
+              endDate,
+              async (p) => {
+                await onProgress?.(
+                  `RW 联盟点击 ${p.slotIndex}/${p.totalSlots}，已汇总 ${p.clicksSoFar} 次`,
+                );
+              },
+            );
+            await this.replaceClicksInRange(account.id, startDate, endDate);
+            rwClickTotal = await this.persistClicks(account.id, clickAggs);
+          } catch (clickErr) {
+            rwClickError = clickErr instanceof Error ? clickErr.message : String(clickErr);
+            await onProgress?.(`RW 联盟点击采集失败（订单仍会写入）: ${rwClickError}`);
+          }
+        }
         break;
       }
       default:
@@ -248,6 +275,8 @@ export class CollectorsService {
       lbClickEstimatedDays,
       lbClickCollectDate,
       pmClickError,
+      rwClickTotal,
+      rwClickError,
     };
   }
 

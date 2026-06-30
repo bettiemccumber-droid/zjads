@@ -1072,7 +1072,7 @@ export default function DashboardPage() {
         )}
 
         <p className="sync-collect-hint">
-          已接入 PM / LH / LB / RW 订单；PM/LH/LB 联盟点击随订单区间采集（LB 点击仅采区间<strong>最后一天</strong>，更早日期请用「点击校准导入」）。RW 暂无点击 API。
+          已接入 PM / LH / LB / RW 订单；PM/LH/LB/RW 联盟点击随订单区间采集（LB 点击仅采区间<strong>最后一天</strong>，更早日期请用「点击校准导入」）。
           仅选部分平台采集时<strong>不会</strong>重导 Google Sheet；全选采集后会自动同步 Sheet 广告费，再刷新报表。
           {viewUserId
             ? ' 也可在上方「导入 Sheet」或侧边栏「广告数据源」手动导入。'

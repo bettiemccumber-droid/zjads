@@ -107,6 +107,34 @@ const RW_CLICK_SUMMARY_SOURCES: RwClickSourceSpec[] = [
   },
 ];
 
+/** Performance 订单数：仅用 Transaction Date 口径（与后台 Performance Report Daily 一致） */
+const RW_PERFORMANCE_ORDER_SOURCES: RwClickSourceSpec[] = [
+  {
+    label: 'performance/report',
+    mod: 'performance',
+    op: 'report',
+    dateParams: (b, e) => ({ begin: b, end: e }),
+  },
+  {
+    label: 'medium/performance',
+    mod: 'medium',
+    op: 'performance',
+    dateParams: (b, e) => ({ begin_date: b, end_date: e }),
+  },
+  {
+    label: 'medium/performance CPS',
+    mod: 'medium',
+    op: 'performance',
+    dateParams: (b, e) => ({ begin_date: b, end_date: e, offer_type: 'CPS' }),
+  },
+  {
+    label: 'performance/merchant',
+    mod: 'performance',
+    op: 'merchant',
+    dateParams: (b, e) => ({ begin: b, end: e }),
+  },
+];
+
 /** ClickDetails：60 秒内最多 15 次（文档错误码 1006） */
 const RW_CLICK_MIN_INTERVAL_MS = 4100;
 
@@ -175,7 +203,7 @@ export async function fetchRewardooPerformanceSummaryAggs(
   const dates = listInclusiveDates_(startDate, endDate);
 
   for (const dateStr of dates) {
-    for (const spec of RW_CLICK_SUMMARY_SOURCES) {
+    for (const spec of RW_PERFORMANCE_ORDER_SOURCES) {
       const dayAgg = new Map<string, RwMerchantClickAgg>();
       if (
         await fetchClickSource_(
@@ -528,12 +556,20 @@ function mergeSummaryClickRow_(
   }
 }
 
-/** 从 Performance 汇总行解析 Orders（排除 order_id / order_time 等明细字段） */
+/** Performance 汇总行中的 Orders 字段（按优先级；勿用单数 order，易与明细行混淆） */
+const RW_PERFORMANCE_ORDER_FIELDS = [
+  'orders',
+  'order_count',
+  'total_orders',
+  'cps_orders',
+  'cps_order',
+  'sale_orders',
+] as const;
+
+/** 从 Performance 汇总行解析 Orders（与 RW 后台 Performance Daily 一致） */
 function extractRwOrderCountFromRow_(row: Record<string, unknown>): number {
-  for (const [key, val] of Object.entries(row)) {
-    if (!/order/i.test(key)) continue;
-    if (/order_(id|time|date|amount|ymd|ref|num_no)|orderid|order_no/i.test(key)) continue;
-    const n = parseRwClickCount_(val);
+  for (const key of RW_PERFORMANCE_ORDER_FIELDS) {
+    const n = parseRwClickCount_(row[key]);
     if (n > 0) return n;
   }
 

@@ -239,12 +239,15 @@ function mergeRwOrder(
   });
 }
 
-/** 解析 RW 订单号；优先 sign_id/transaction_id，避免同一 order_id 多笔交易被误合并 */
+/**
+ * 解析 RW 入库订单号；优先 order_id（与 Performance Orders 一致），
+ * 无 order_id 时再回退 sign_id/transaction_id。
+ */
 function resolveRwOrderId(
   row: RwCommissionRow,
   range?: { startDate: string; endDate: string },
 ): string {
-  for (const key of ['sign_id', 'txn_id', 'transaction_id', 'rewardoo_id', 'order_id'] as const) {
+  for (const key of ['order_id', 'rewardoo_id', 'sign_id', 'txn_id', 'transaction_id'] as const) {
     const v = row[key];
     if (v != null && String(v).trim()) return String(v).trim();
   }

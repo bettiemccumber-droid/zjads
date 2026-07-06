@@ -58,27 +58,71 @@ type OrderRow = {
  */
 export function aggregateAffiliateOrders(orders: OrderRow[]): MerchantCommissionAgg[] {
   const map = new Map<string, MerchantCommissionAgg>();
-  const orderSeen = new Set<string>();
+  const orderAgg = new Map<
+    string,
+    {
+      merchantKey: string;
+      merchantId: string;
+      merchantName: string;
+      platformCode: string;
+      platformName: string;
+      alias: string;
+      totalCommission: number;
+      confirmedCommission: number;
+      pendingCommission: number;
+      rejectedCommission: number;
+      hasRejected: boolean;
+    }
+  >();
 
   for (const o of orders) {
-    const dedupeKey = `${o.channelAccountId}|${dedupeAffiliateOrderKey(o.externalOrderId)}`;
-    if (orderSeen.has(dedupeKey)) continue;
-    orderSeen.add(dedupeKey);
-
     const mid = o.merchantId ?? '';
     if (!mid) continue;
 
     const platformCode = o.channelAccount.platform.code;
     const alias = (o.channelAccount.affiliateAlias || '').toLowerCase();
-    const aggKey = `${mid}|${platformCode}|${alias}`;
+    const dedupeKey = `${o.channelAccountId}|${dedupeAffiliateOrderKey(o.externalOrderId, {
+      rawPayload: o.rawPayload,
+      platformCode,
+    })}`;
+    const merchantKey = `${mid}|${platformCode}|${alias}`;
+    const comm = Number(o.commission);
+    const buckets = resolveOrderCommissionBuckets(o);
 
-    if (!map.has(aggKey)) {
-      map.set(aggKey, {
-        merchantId: mid,
-        merchantName: o.merchantName ?? '',
-        platformCode,
-        platformName: o.channelAccount.platform.name,
-        affiliateAlias: alias,
+    const existing = orderAgg.get(dedupeKey);
+    if (existing) {
+      existing.totalCommission += comm;
+      existing.confirmedCommission += buckets.approved;
+      existing.pendingCommission += buckets.pending;
+      existing.rejectedCommission += buckets.rejected;
+      if (orderHasRejectedCommission(o)) existing.hasRejected = true;
+      if (!existing.merchantName && o.merchantName) existing.merchantName = o.merchantName;
+      continue;
+    }
+
+    orderAgg.set(dedupeKey, {
+      merchantKey,
+      merchantId: mid,
+      merchantName: o.merchantName ?? '',
+      platformCode,
+      platformName: o.channelAccount.platform.name,
+      alias,
+      totalCommission: comm,
+      confirmedCommission: buckets.approved,
+      pendingCommission: buckets.pending,
+      rejectedCommission: buckets.rejected,
+      hasRejected: orderHasRejectedCommission(o),
+    });
+  }
+
+  for (const agg of orderAgg.values()) {
+    if (!map.has(agg.merchantKey)) {
+      map.set(agg.merchantKey, {
+        merchantId: agg.merchantId,
+        merchantName: agg.merchantName,
+        platformCode: agg.platformCode,
+        platformName: agg.platformName,
+        affiliateAlias: agg.alias,
         orderCount: 0,
         rejectedOrderCount: 0,
         totalCommission: 0,
@@ -88,17 +132,14 @@ export function aggregateAffiliateOrders(orders: OrderRow[]): MerchantCommission
         rejectionRate: 0,
       });
     }
-
-    const row = map.get(aggKey)!;
-    const comm = Number(o.commission);
-    const buckets = resolveOrderCommissionBuckets(o);
+    const row = map.get(agg.merchantKey)!;
     row.orderCount += 1;
-    row.totalCommission += comm;
-    row.confirmedCommission += buckets.approved;
-    row.pendingCommission += buckets.pending;
-    row.rejectedCommission += buckets.rejected;
-    if (orderHasRejectedCommission(o)) row.rejectedOrderCount += 1;
-    if (!row.merchantName && o.merchantName) row.merchantName = o.merchantName;
+    row.totalCommission += agg.totalCommission;
+    row.confirmedCommission += agg.confirmedCommission;
+    row.pendingCommission += agg.pendingCommission;
+    row.rejectedCommission += agg.rejectedCommission;
+    if (agg.hasRejected) row.rejectedOrderCount += 1;
+    if (!row.merchantName && agg.merchantName) row.merchantName = agg.merchantName;
   }
 
   return finalizeMerchantRows([...map.values()]);
@@ -109,27 +150,72 @@ export function aggregateAffiliateOrders(orders: OrderRow[]): MerchantCommission
  */
 export function aggregateAffiliateOrdersForMonitor(orders: OrderRow[]): MerchantCommissionAgg[] {
   const map = new Map<string, MerchantCommissionAgg>();
-  const orderSeen = new Set<string>();
+  const orderAgg = new Map<
+    string,
+    {
+      aggKey: string;
+      merchantId: string;
+      merchantName: string;
+      platformCode: string;
+      platformName: string;
+      alias: string;
+      totalCommission: number;
+      confirmedCommission: number;
+      pendingCommission: number;
+      rejectedCommission: number;
+      hasRejected: boolean;
+    }
+  >();
 
   for (const o of orders) {
     const mid = o.merchantId ?? '';
     if (!mid) continue;
 
     const platformCode = o.channelAccount.platform.code;
-    const dedupeKey = `${platformCode}|${dedupeAffiliateOrderKey(o.externalOrderId)}`;
-    if (orderSeen.has(dedupeKey)) continue;
-    orderSeen.add(dedupeKey);
-
     const alias = (o.channelAccount.affiliateAlias || '').toLowerCase();
+    const dedupeKey = `${platformCode}|${dedupeAffiliateOrderKey(o.externalOrderId, {
+      rawPayload: o.rawPayload,
+      platformCode,
+    })}`;
     const aggKey = `${mid}|${platformCode}`;
+    const comm = Number(o.commission);
+    const buckets = resolveOrderCommissionBuckets(o);
 
-    if (!map.has(aggKey)) {
-      map.set(aggKey, {
-        merchantId: mid,
-        merchantName: o.merchantName ?? '',
-        platformCode,
-        platformName: o.channelAccount.platform.name,
-        affiliateAlias: alias,
+    const existing = orderAgg.get(dedupeKey);
+    if (existing) {
+      existing.totalCommission += comm;
+      existing.confirmedCommission += buckets.approved;
+      existing.pendingCommission += buckets.pending;
+      existing.rejectedCommission += buckets.rejected;
+      if (orderHasRejectedCommission(o)) existing.hasRejected = true;
+      if (!existing.merchantName && o.merchantName) existing.merchantName = o.merchantName;
+      if (alias) existing.alias = mergeAliasList(existing.alias, alias);
+      continue;
+    }
+
+    orderAgg.set(dedupeKey, {
+      aggKey,
+      merchantId: mid,
+      merchantName: o.merchantName ?? '',
+      platformCode,
+      platformName: o.channelAccount.platform.name,
+      alias,
+      totalCommission: comm,
+      confirmedCommission: buckets.approved,
+      pendingCommission: buckets.pending,
+      rejectedCommission: buckets.rejected,
+      hasRejected: orderHasRejectedCommission(o),
+    });
+  }
+
+  for (const agg of orderAgg.values()) {
+    if (!map.has(agg.aggKey)) {
+      map.set(agg.aggKey, {
+        merchantId: agg.merchantId,
+        merchantName: agg.merchantName,
+        platformCode: agg.platformCode,
+        platformName: agg.platformName,
+        affiliateAlias: agg.alias,
         orderCount: 0,
         rejectedOrderCount: 0,
         totalCommission: 0,
@@ -139,29 +225,18 @@ export function aggregateAffiliateOrdersForMonitor(orders: OrderRow[]): Merchant
         rejectionRate: 0,
       });
     }
-
-    const row = map.get(aggKey)!;
-    appendOrderToMerchantRow(row, o, alias);
+    const row = map.get(agg.aggKey)!;
+    row.orderCount += 1;
+    row.totalCommission += agg.totalCommission;
+    row.confirmedCommission += agg.confirmedCommission;
+    row.pendingCommission += agg.pendingCommission;
+    row.rejectedCommission += agg.rejectedCommission;
+    if (agg.hasRejected) row.rejectedOrderCount += 1;
+    if (!row.merchantName && agg.merchantName) row.merchantName = agg.merchantName;
+    if (agg.alias) row.affiliateAlias = mergeAliasList(row.affiliateAlias, agg.alias);
   }
 
   return finalizeMerchantRows([...map.values()]);
-}
-
-function appendOrderToMerchantRow(
-  row: MerchantCommissionAgg,
-  o: OrderRow,
-  alias: string,
-) {
-  const comm = round2(Number(o.commission));
-  const buckets = resolveOrderCommissionBuckets(o);
-  row.orderCount += 1;
-  row.totalCommission = round2(row.totalCommission + comm);
-  row.confirmedCommission = round2(row.confirmedCommission + buckets.approved);
-  row.pendingCommission = round2(row.pendingCommission + buckets.pending);
-  row.rejectedCommission = round2(row.rejectedCommission + buckets.rejected);
-  if (orderHasRejectedCommission(o)) row.rejectedOrderCount += 1;
-  if (!row.merchantName && o.merchantName) row.merchantName = o.merchantName;
-  if (alias) row.affiliateAlias = mergeAliasList(row.affiliateAlias, alias);
 }
 
 function mergeAliasList(existing: string, alias: string): string {

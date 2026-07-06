@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import axios from 'axios';
-import { dedupeAffiliateOrderKey } from '../common/order-dedupe.util';
+import { dedupeAffiliateOrderRecord } from '../common/order-dedupe.util';
 import { resolveOrderCommissionBuckets } from '../common/order-commission-buckets.util';
 import {
   filterRowsByCampaignStatusMode,
@@ -108,7 +108,7 @@ export class ReportsService {
     for (const o of orders) {
       const alias = (o.channelAccount.affiliateAlias || '').toLowerCase();
       const merchantKey = `${o.merchantId ?? ''}|${alias}`;
-      const orderKey = `${o.channelAccountId}|${dedupeAffiliateOrderKey(o.externalOrderId)}`;
+      const orderKey = `${o.channelAccountId}|${dedupeAffiliateOrderRecord(o)}`;
       const comm = Number(o.commission);
       const existing = orderAgg.get(orderKey);
       if (existing) {
@@ -656,7 +656,7 @@ export class ReportsService {
         channelAccountId: { in: accountIds },
         orderDate: this.orderDateRange(startDate, endDate),
       },
-      include: { channelAccount: true },
+      include: { channelAccount: { include: { platform: true } } },
     });
 
     const orderSeenByKey = new Set<string>();
@@ -665,7 +665,7 @@ export class ReportsService {
       const merchantId = o.merchantId ?? '';
       const alias = (o.channelAccount.affiliateAlias || '').toLowerCase();
       const merchantKey = `${merchantId}|${alias}`;
-      const orderKey = `${o.channelAccountId}|${dedupeAffiliateOrderKey(o.externalOrderId)}`;
+      const orderKey = `${o.channelAccountId}|${dedupeAffiliateOrderRecord(o)}`;
       const comm = Number(o.commission);
 
       ensure(byKey, merchantKey).commission += comm;
@@ -730,7 +730,7 @@ export class ReportsService {
         channelAccountId: { in: accountIds },
         orderDate: this.orderDateRange(startDate, endDate),
       },
-      include: { channelAccount: true },
+      include: { channelAccount: { include: { platform: true } } },
     });
 
     const orderSeenByKey = new Set<string>();
@@ -742,7 +742,7 @@ export class ReportsService {
       const dateStr = o.orderDate.toISOString().slice(0, 10);
       const dayKey = `${merchantId}|${alias}|${dateStr}`;
       const merchantDayKey = `${merchantId}|${dateStr}`;
-      const orderKey = `${o.channelAccountId}|${dedupeAffiliateOrderKey(o.externalOrderId)}`;
+      const orderKey = `${o.channelAccountId}|${dedupeAffiliateOrderRecord(o)}`;
       const comm = Number(o.commission);
 
       ensureKey(byKey, dayKey).commission += comm;

@@ -62,6 +62,79 @@ export interface RwFetchBundle {
   triedSources: string[];
 }
 
+/** RW Performance 按商家+日的 Orders（与后台 Daily 一致） */
+export interface RwMerchantDayOrderAgg {
+  merchantId: string;
+  merchantName: string;
+  clickDate: string;
+  performanceOrders: number;
+}
+
+/**
+ * 从 transaction_details 推导 Performance Orders：同 merchant+日按 order_id 去重，无 order_id 则按 sign_id。
+ * 对齐 RW 后台 Orders（明细行数 ≠ 订单数）。
+ */
+export function deriveRwPerformanceOrdersFromDetailRows(
+  rows: RwCommissionRow[],
+  startDate: string,
+  endDate: string,
+): RwMerchantDayOrderAgg[] {
+  const byKey = new Map<
+    string,
+    { merchantId: string; merchantName: string; clickDate: string; keys: Set<string> }
+  >();
+
+  for (const row of rows) {
+    const merchantId = resolveRwMerchantId(row);
+    if (!merchantId) continue;
+
+    const commission = parseMoney(
+      row.sale_comm ?? row.commission ?? row.comm ?? row.cashback,
+    );
+    const orderAmount = parseMoney(
+      row.sale_amount ?? row.order_amount ?? row.sale ?? row.amount,
+    );
+    if (commission <= 0 && orderAmount <= 0) continue;
+
+    const clickDate = parseRwOrderDate(row, endDate).toISOString().slice(0, 10);
+    if (clickDate < startDate || clickDate > endDate) continue;
+
+    const orderIdRaw = row.order_id;
+    const orderId =
+      orderIdRaw != null && String(orderIdRaw).trim() !== '' && String(orderIdRaw) !== '0'
+        ? String(orderIdRaw).trim()
+        : '';
+    const signIdRaw = row.sign_id ?? row.txn_id ?? row.transaction_id;
+    const signId =
+      signIdRaw != null && String(signIdRaw).trim() !== '' && String(signIdRaw) !== '0'
+        ? String(signIdRaw).trim()
+        : '';
+
+    const dedupeKey = orderId ? `oid:${orderId}` : signId ? `sign:${signId}` : '';
+    if (!dedupeKey) continue;
+
+    const mapKey = `${merchantId}|${clickDate}`;
+    let bucket = byKey.get(mapKey);
+    if (!bucket) {
+      bucket = {
+        merchantId,
+        merchantName: String(row.merchant_name ?? row.advertiser_name ?? ''),
+        clickDate,
+        keys: new Set(),
+      };
+      byKey.set(mapKey, bucket);
+    }
+    bucket.keys.add(dedupeKey);
+  }
+
+  return [...byKey.values()].map((b) => ({
+    merchantId: b.merchantId,
+    merchantName: b.merchantName,
+    clickDate: b.clickDate,
+    performanceOrders: b.keys.size,
+  }));
+}
+
 /**
  * 拉取 Rewardoo 佣金（transaction 优先，空则回退 performance/merchant 等）
  */

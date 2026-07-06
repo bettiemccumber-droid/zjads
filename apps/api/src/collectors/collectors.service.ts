@@ -238,6 +238,7 @@ export class CollectorsService {
           },
         );
         const range = { startDate, endDate };
+        const detailRows = [...rwBundle.rows];
         rwApi = {
           ...summarizeRwCommissionApi(rwBundle.rows, rwBundle.source, range),
           triedSources: rwBundle.triedSources,
@@ -263,7 +264,7 @@ export class CollectorsService {
             async (message) => {
               await onProgress?.(message);
             },
-            { merchantsByDate },
+            { merchantsByDate, detailRows },
           );
           perfOrderTotal = perfAggs.reduce((s, a) => s + a.performanceOrders, 0);
           rwPerformanceOrderCount = perfOrderTotal;

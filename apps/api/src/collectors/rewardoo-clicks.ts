@@ -1,6 +1,10 @@
 import axios from 'axios';
 import { parseAffiliateOrderDateUtc } from '../common/affiliate-order-date.util';
 import {
+  deriveRwPerformanceOrdersFromDetailRows,
+  type RwCommissionRow,
+} from './rewardoo.collector';
+import {
   forEachRewardooOffsetPage,
   forEachRewardooPageLimit,
   parseRwApiEnvelope,
@@ -205,6 +209,8 @@ const RW_ACCOUNT_DAILY_PERFORMANCE_SOURCES: RwClickSourceSpec[] = [
 export interface RwPerformanceFetchOptions {
   /** 按日有佣金的 merchantId，用于账号级 Performance 归因 */
   merchantsByDate?: Map<string, Set<string>>;
+  /** transaction_details 原始行，API 失败时按 order_id 推导 Orders */
+  detailRows?: RwCommissionRow[];
 }
 
 /** ClickDetails：60 秒内最多 15 次（文档错误码 1006） */
@@ -274,6 +280,17 @@ export async function fetchRewardooPerformanceSummaryAggs(
   options?: RwPerformanceFetchOptions,
 ): Promise<RwMerchantClickAgg[]> {
   const agg = new Map<string, RwMerchantClickAgg>();
+
+  const mediumResult = await tryFetchRwMediumPerformanceOrders_(
+    apiToken,
+    startDate,
+    endDate,
+    onProgress,
+    options?.merchantsByDate,
+  );
+  if (mediumResult.length > 0) {
+    return mediumResult;
+  }
 
   const cpcGetResult = await tryFetchRwCpcPerformanceGetOrders_(
     apiToken,
@@ -377,6 +394,144 @@ export async function fetchRewardooPerformanceSummaryAggs(
   }
 
   await onProgress?.('Performance 订单接口均未返回有效 orders 汇总');
+  if (options?.detailRows?.length) {
+    const derived = deriveRwPerformanceOrdersFromDetailRows(
+      options.detailRows,
+      startDate,
+      endDate,
+    );
+    const total = derived.reduce((s, a) => s + a.performanceOrders, 0);
+    if (total > 0) {
+      await onProgress?.(
+        `Performance 明细推导（order_id/sign_id）→ ${total} 单（${derived.length} 条日明细）`,
+      );
+      return derived.map((d) => ({
+        merchantId: d.merchantId,
+        merchantName: d.merchantName,
+        clickDate: d.clickDate,
+        clicks: 0,
+        performanceOrders: d.performanceOrders,
+      }));
+    }
+  }
+  return [];
+}
+
+/** CPS Performance：medium/performance + mid（与 rw-click-probe / RW 后台一致） */
+async function tryFetchRwMediumPerformanceOrders_(
+  apiToken: string,
+  startDate: string,
+  endDate: string,
+  onProgress?: (message: string) => void | Promise<void>,
+  merchantsByDate?: Map<string, Set<string>>,
+): Promise<RwMerchantClickAgg[]> {
+  const merchantIds = new Set<string>();
+  for (const mids of merchantsByDate?.values() ?? []) {
+    for (const mid of mids) merchantIds.add(mid);
+  }
+
+  const midTargets: Array<string | undefined> =
+    merchantIds.size > 0 ? [...merchantIds] : [undefined];
+  if (merchantIds.size > 1) {
+    midTargets.push(undefined);
+  }
+
+  for (const mid of midTargets) {
+    const label = mid ? `mid=${mid}` : '全账号';
+    const baseParams: Record<string, string> = {
+      begin_date: startDate,
+      end_date: endDate,
+      ...(mid ? { mid } : {}),
+    };
+
+    const merchantAgg = new Map<string, RwMerchantClickAgg>();
+    const accountDaily = new Map<string, number>();
+    const mergeRows = (rows: unknown[]) => {
+      for (const raw of rows) {
+        mergeSummaryClickRow_(
+          raw as Record<string, unknown>,
+          merchantAgg,
+          startDate,
+          endDate,
+          undefined,
+          { performanceOrdersOnly: true, accountDailyOrders: accountDaily },
+        );
+      }
+    };
+
+    const getResult = await forEachRewardooGetPage_(
+      'medium',
+      'performance',
+      apiToken,
+      baseParams,
+      mergeRows,
+    );
+    if (sumAggPerformanceOrders_(merchantAgg) > 0) {
+      const total = sumAggPerformanceOrders_(merchantAgg);
+      await onProgress?.(
+        `medium/performance GET ${label} → ${total} 单（${getResult.rowCount} 行）`,
+      );
+      return [...merchantAgg.values()];
+    }
+
+    try {
+      await forEachRewardooPageLimit(
+        'medium',
+        'performance',
+        apiToken,
+        baseParams,
+        mergeRows,
+        RW_CLICK_PAGE_SIZE,
+      );
+    } catch {
+      /* 尝试 offset */
+    }
+
+    if (sumAggPerformanceOrders_(merchantAgg) > 0) {
+      const total = sumAggPerformanceOrders_(merchantAgg);
+      await onProgress?.(`medium/performance POST ${label} → ${total} 单`);
+      return [...merchantAgg.values()];
+    }
+
+    const accountTotal = sumMapValues_(accountDaily);
+    if (accountTotal > 0) {
+      const attributed = attributeAccountDailyPerformanceOrders_(accountDaily, merchantsByDate);
+      if (attributed.length > 0) {
+        await onProgress?.(`medium/performance ${label} 账号按日 → ${accountTotal} 单`);
+        return attributed;
+      }
+    }
+  }
+
+  const dates = listInclusiveDates_(startDate, endDate);
+  for (const dateStr of dates) {
+    for (const mid of merchantIds.size > 0 ? merchantIds : new Set<string | undefined>([undefined])) {
+      const merchantAgg = new Map<string, RwMerchantClickAgg>();
+      const params: Record<string, string> = {
+        begin_date: dateStr,
+        end_date: dateStr,
+        ...(mid ? { mid } : {}),
+      };
+      await forEachRewardooGetPage_('medium', 'performance', apiToken, params, (rows) => {
+        for (const raw of rows) {
+          mergeSummaryClickRow_(
+            raw as Record<string, unknown>,
+            merchantAgg,
+            dateStr,
+            dateStr,
+            dateStr,
+            { performanceOrdersOnly: true },
+          );
+        }
+      });
+      if (sumAggPerformanceOrders_(merchantAgg) > 0) {
+        const total = sumAggPerformanceOrders_(merchantAgg);
+        await onProgress?.(`medium/performance 逐日 ${dateStr} mid=${mid ?? 'all'} → ${total} 单`);
+        return [...merchantAgg.values()];
+      }
+    }
+  }
+
   return [];
 }
 
@@ -1044,12 +1199,11 @@ const RW_PERFORMANCE_ORDER_FIELDS = [
 
 /** 佣金明细行（含 sign_id），不能当 Performance Daily 汇总 */
 function isRwTransactionDetailRow_(row: Record<string, unknown>): boolean {
-  for (const key of ['sign_id', 'txn_id', 'transaction_id', 'rewardoo_id'] as const) {
-    const v = row[key];
-    if (v == null || String(v).trim() === '' || String(v) === '0') continue;
-    return true;
+  const signId = row.sign_id;
+  if (signId == null || String(signId).trim() === '' || String(signId) === '0') {
+    return false;
   }
-  return false;
+  return true;
 }
 
 /** 从 Performance Daily 汇总行解析 Orders */

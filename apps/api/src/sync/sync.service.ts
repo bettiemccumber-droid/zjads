@@ -430,7 +430,19 @@ export class SyncService implements OnModuleInit {
           result.rwApi.apiSource && result.rwApi.apiSource !== 'none'
             ? ` · ${result.rwApi.apiSource}`
             : '';
-        let rwMsg = `RW API ${result.rwApi.apiListRows} 行 → ${result.rwApi.orderCount} 单 / $${result.rwApi.totalCommission.toFixed(2)}${src}`;
+        const detailOrders = result.rwApi.detailOrderCount ?? result.rwApi.orderCount;
+        const commission = result.rwApi.totalCommission.toFixed(2);
+        let rwMsg = `RW 佣金 ${result.rwApi.apiListRows} 行 / $${commission}${src}`;
+        if (result.rwPerformanceOrderCount !== undefined && result.rwPerformanceOrderCount > 0) {
+          rwMsg += ` · Performance ${result.rwPerformanceOrderCount} 单（报表口径）`;
+          if (detailOrders !== result.rwPerformanceOrderCount) {
+            rwMsg += `，明细 ${detailOrders} 单`;
+          }
+        } else if (result.rwPerformanceOrderError) {
+          rwMsg += ` · Performance 失败: ${result.rwPerformanceOrderError.slice(0, 80)}，明细 ${detailOrders} 单`;
+        } else {
+          rwMsg += ` · 明细 ${detailOrders} 单（Performance 未写入）`;
+        }
         if (result.rwApi.sampleOrder) {
           const s = result.rwApi.sampleOrder;
           rwMsg += `（首单 mid=${s.merchantId ?? '空'} 日期=${s.orderDate}${s.merchantName ? ` ${s.merchantName}` : ''}）`;

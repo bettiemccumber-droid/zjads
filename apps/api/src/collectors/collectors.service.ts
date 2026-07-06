@@ -65,8 +65,13 @@ export interface CollectResultWithPmMeta extends CollectResult {
     totalCommission: number;
     apiSource: string;
     triedSources?: string[];
+    /** transaction_details 明细行数（非 Performance Orders 口径） */
+    detailOrderCount?: number;
     sampleOrder?: { merchantId: string | null; orderDate: string; merchantName: string | null };
   };
+  /** RW Performance 看板 Orders 汇总（与报表一致） */
+  rwPerformanceOrderCount?: number;
+  rwPerformanceOrderError?: string;
   /** 区间内联盟后台点击汇总（刷量监控，不参与广告转化率） */
   pmClickTotal?: number;
   lhClickTotal?: number;
@@ -122,6 +127,8 @@ export class CollectorsService {
     let pmClickError: string | undefined;
     let rwClickTotal: number | undefined;
     let rwClickError: string | undefined;
+    let rwPerformanceOrderCount: number | undefined;
+    let rwPerformanceOrderError: string | undefined;
 
     /** LB 点击只采区间最后一天；PM/LH/RW API 随订单全区间采集 */
     const lbClickDay = endDate;
@@ -234,6 +241,7 @@ export class CollectorsService {
         rwApi = {
           ...summarizeRwCommissionApi(rwBundle.rows, rwBundle.source, range),
           triedSources: rwBundle.triedSources,
+          detailOrderCount: summarizeRwCommissionApi(rwBundle.rows, rwBundle.source, range).orderCount,
         };
         normalized = normalizeRewardooOrders(rwBundle.rows, mappings, range);
         rwBundle.rows.length = 0;
@@ -241,26 +249,38 @@ export class CollectorsService {
         await onProgress?.('正在采集 RW Performance 订单数（对齐后台 Orders）…');
         let perfOrderTotal = 0;
         try {
+          await this.clearPerformanceOrdersInRange(account.id, startDate, endDate);
           const perfAggs = await fetchRewardooPerformanceSummaryAggs(
             apiToken,
             startDate,
             endDate,
+            async (message) => {
+              await onProgress?.(message);
+            },
           );
           perfOrderTotal = perfAggs.reduce((s, a) => s + a.performanceOrders, 0);
-          await this.persistPerformanceOrders(
-            account.id,
-            perfAggs.map((a) => ({
-              merchantId: a.merchantId,
-              merchantName: a.merchantName,
-              statDate: a.clickDate,
-              orders: a.performanceOrders,
-            })),
-          );
-          if (perfOrderTotal > 0 && rwApi) {
-            rwApi.orderCount = perfOrderTotal;
+          rwPerformanceOrderCount = perfOrderTotal;
+          if (perfOrderTotal > 0) {
+            await this.persistPerformanceOrders(
+              account.id,
+              perfAggs.map((a) => ({
+                merchantId: a.merchantId,
+                merchantName: a.merchantName,
+                statDate: a.clickDate,
+                orders: a.performanceOrders,
+              })),
+            );
+            if (rwApi) {
+              rwApi.orderCount = perfOrderTotal;
+            }
+            await onProgress?.(`Performance 订单 ${perfOrderTotal} 单已写入`);
+          } else {
+            rwPerformanceOrderError = 'Performance 接口未返回有效 orders 汇总';
+            await onProgress?.(rwPerformanceOrderError);
           }
         } catch (perfErr) {
           const msg = perfErr instanceof Error ? perfErr.message : String(perfErr);
+          rwPerformanceOrderError = msg.slice(0, 200);
           await onProgress?.(`RW Performance 订单数采集失败: ${msg.slice(0, 120)}`);
         }
 
@@ -318,6 +338,8 @@ export class CollectorsService {
       pmClickError,
       rwClickTotal,
       rwClickError,
+      rwPerformanceOrderCount,
+      rwPerformanceOrderError,
     };
   }
 
@@ -336,6 +358,22 @@ export class CollectorsService {
         clickDate: buildOrderDateRangeFilter(startDate, endDate)!,
       },
       data: { clicks: 0 },
+    });
+  }
+
+  /** 重采前清空区间内 API 写入的 Performance Orders，避免脏数据残留 */
+  private async clearPerformanceOrdersInRange(
+    channelAccountId: number,
+    startDate: string,
+    endDate: string,
+  ) {
+    await this.prisma.affiliateMerchantClickDaily.updateMany({
+      where: {
+        channelAccountId,
+        source: AffiliateClickSource.api,
+        clickDate: buildOrderDateRangeFilter(startDate, endDate)!,
+      },
+      data: { performanceOrders: 0 },
     });
   }
 
@@ -376,20 +414,12 @@ export class CollectorsService {
           merchantName: c.merchantName,
           clickDate,
           clicks: c.clicks,
-          performanceOrders:
-            'performanceOrders' in c && typeof c.performanceOrders === 'number'
-              ? c.performanceOrders
-              : 0,
+          performanceOrders: 0,
           source: AffiliateClickSource.api,
         },
         update: {
           merchantName: c.merchantName,
           clicks: c.clicks,
-          ...('performanceOrders' in c &&
-          typeof c.performanceOrders === 'number' &&
-          c.performanceOrders > 0
-            ? { performanceOrders: c.performanceOrders }
-            : {}),
           source: AffiliateClickSource.api,
         },
       });

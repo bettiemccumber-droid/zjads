@@ -107,8 +107,25 @@ const RW_CLICK_SUMMARY_SOURCES: RwClickSourceSpec[] = [
   },
 ];
 
-/** Performance 订单数：仅用 Transaction Date 口径（与后台 Performance Report Daily 一致） */
+/** Performance 订单数：Transaction Date + Daily 维度（与后台 Performance Report 一致） */
 const RW_PERFORMANCE_ORDER_SOURCES: RwClickSourceSpec[] = [
+  {
+    label: 'medium/cpc_performance daily',
+    mod: 'medium',
+    op: 'cpc_performance',
+    dateParams: (b, e) => ({
+      begin_date: b,
+      end_date: e,
+      dimension: 'day',
+      sub_dimension: 'merchant',
+    }),
+  },
+  {
+    label: 'performance/report daily',
+    mod: 'performance',
+    op: 'report',
+    dateParams: (b, e) => ({ begin: b, end: e, group_by: 'day' }),
+  },
   {
     label: 'performance/report',
     mod: 'performance',
@@ -198,6 +215,7 @@ export async function fetchRewardooPerformanceSummaryAggs(
   apiToken: string,
   startDate: string,
   endDate: string,
+  onProgress?: (message: string) => void | Promise<void>,
 ): Promise<RwMerchantClickAgg[]> {
   const agg = new Map<string, RwMerchantClickAgg>();
 
@@ -212,17 +230,21 @@ export async function fetchRewardooPerformanceSummaryAggs(
         rangeAgg,
         startDate,
         endDate,
+        undefined,
+        { requireOrders: true },
       )
     ) {
       for (const [key, row] of rangeAgg) {
         if (row.performanceOrders > 0) agg.set(key, row);
       }
-      if (agg.size > 0) break;
+      if (agg.size > 0) {
+        const total = sumAggPerformanceOrders_(agg);
+        await onProgress?.(
+          `Performance ${spec.label} → ${total} 单（${agg.size} 条日明细）`,
+        );
+        return [...agg.values()];
+      }
     }
-  }
-
-  if (agg.size > 0) {
-    return [...agg.values()];
   }
 
   const dates = listInclusiveDates_(startDate, endDate);
@@ -239,6 +261,7 @@ export async function fetchRewardooPerformanceSummaryAggs(
           dateStr,
           dateStr,
           dateStr,
+          { requireOrders: true },
         )
       ) {
         for (const [key, row] of dayAgg) {
@@ -249,7 +272,14 @@ export async function fetchRewardooPerformanceSummaryAggs(
     }
   }
 
-  return [...agg.values()];
+  if (agg.size > 0) {
+    const total = sumAggPerformanceOrders_(agg);
+    await onProgress?.(`Performance 逐日兜底 → ${total} 单（${agg.size} 条日明细）`);
+    return [...agg.values()];
+  }
+
+  await onProgress?.('Performance 订单接口均未返回有效 orders 汇总');
+  return [];
 }
 
 /** 尝试各汇总数据源：先整段，再按日；每种先试 page/limit，再试 offset */
@@ -310,8 +340,10 @@ async function fetchClickSource_(
   filterStart: string,
   filterEnd: string,
   defaultDate?: string,
+  options?: { requireOrders?: boolean },
 ): Promise<boolean> {
   const extraParams = { ...(spec.extra ?? {}), ...spec.dateParams(rangeBegin, rangeEnd) };
+  const ordersBefore = sumAggPerformanceOrders_(agg);
 
   const merge = (rows: unknown[]) => {
     for (const raw of rows) {
@@ -321,9 +353,15 @@ async function fetchClickSource_(
         filterStart,
         filterEnd,
         defaultDate,
+        options?.requireOrders ? { sumOrders: true } : undefined,
       );
     }
   };
+
+  const isSuccess = () =>
+    options?.requireOrders
+      ? sumAggPerformanceOrders_(agg) > ordersBefore
+      : hasAggMetrics_(agg);
 
   try {
     const pageResult = await forEachRewardooPageLimit(
@@ -334,9 +372,9 @@ async function fetchClickSource_(
       merge,
       RW_CLICK_PAGE_SIZE,
     );
-    if (!pageResult.skipped && hasAggMetrics_(agg)) return true;
+    if (!pageResult.skipped && isSuccess()) return true;
 
-    if (pageResult.rowCount === 0 || !hasAggMetrics_(agg)) {
+    if (pageResult.rowCount === 0 || !isSuccess()) {
       const offsetResult = await forEachRewardooOffsetPage(
         spec.mod,
         spec.op,
@@ -345,12 +383,12 @@ async function fetchClickSource_(
         merge,
         RW_CLICK_PAGE_SIZE,
       );
-      if (!offsetResult.skipped && hasAggMetrics_(agg)) return true;
+      if (!offsetResult.skipped && isSuccess()) return true;
     }
 
-    if (spec.mod === 'medium' && !hasAggMetrics_(agg)) {
+    if (spec.mod === 'medium' && !isSuccess()) {
       if (await fetchMediumPerformanceViaGet_(spec, apiToken, extraParams, merge)) {
-        return hasAggMetrics_(agg);
+        return isSuccess();
       }
     }
   } catch {
@@ -551,6 +589,7 @@ function mergeSummaryClickRow_(
   startDate: string,
   endDate: string,
   defaultDate?: string,
+  options?: { sumOrders?: boolean },
 ): void {
   const merchantId = resolveRwClickMerchantId_(row);
   if (!merchantId) return;
@@ -567,7 +606,9 @@ function mergeSummaryClickRow_(
   if (existing) {
     existing.clicks += clicks;
     if (orders > 0) {
-      existing.performanceOrders = Math.max(existing.performanceOrders, orders);
+      existing.performanceOrders = options?.sumOrders
+        ? existing.performanceOrders + orders
+        : Math.max(existing.performanceOrders, orders);
     }
   } else {
     agg.set(key, {
@@ -585,6 +626,8 @@ const RW_PERFORMANCE_ORDER_FIELDS = [
   'orders',
   'order_count',
   'total_orders',
+  'valid_orders',
+  'complete_orders',
   'cps_orders',
   'cps_order',
   'sale_orders',
@@ -842,9 +885,12 @@ function parseRwRowDate_(row: Record<string, unknown>): string {
     'ymd',
     'payment_ymd',
     'stat_date',
+    'stat_ymd',
     'click_ymd',
     'day',
     'report_date',
+    'begin_date',
+    'end_date',
   ] as const) {
     const v = row[key];
     if (v == null || String(v).trim() === '' || String(v) === 'null') continue;

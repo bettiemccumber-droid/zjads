@@ -120,6 +120,7 @@ const RW_PERFORMANCE_ORDER_SOURCES: RwClickSourceSpec[] = [
       end_date: e,
       dimension: 'day',
       sub_dimension: 'merchant',
+      status: 'All',
     }),
   },
   {
@@ -132,6 +133,56 @@ const RW_PERFORMANCE_ORDER_SOURCES: RwClickSourceSpec[] = [
       dimension: 'day',
       sub_dimension: 'merchant',
     }),
+  },
+];
+
+/** RW 文档 CPC Performance API：GET + begin_date / begin_click_date（LinkBux 同系） */
+const RW_CPC_PERFORMANCE_GET_VARIANTS: Array<{
+  label: string;
+  params: (b: string, e: string) => Record<string, string>;
+}> = [
+  {
+    label: 'CPC Performance begin_date',
+    params: (b, e) => ({ begin_date: b, end_date: e, status: 'All' }),
+  },
+  {
+    label: 'CPC Performance begin_click_date',
+    params: (b, e) => ({ begin_click_date: b, end_click_date: e, status: 'All' }),
+  },
+  {
+    label: 'CPC Performance daily+merchant',
+    params: (b, e) => ({
+      begin_date: b,
+      end_date: e,
+      dimension: 'day',
+      sub_dimension: 'merchant',
+      status: 'All',
+    }),
+  },
+  {
+    label: 'CPC Performance primary+secondary',
+    params: (b, e) => ({
+      begin_date: b,
+      end_date: e,
+      primary: 'day',
+      secondary: 'merchant',
+      status: 'All',
+    }),
+  },
+];
+
+/** RW 文档 CommissionSummary API（Transaction / Payment 两种日期口径） */
+const RW_COMMISSION_SUMMARY_VARIANTS: Array<{
+  label: string;
+  params: (b: string, e: string) => Record<string, string>;
+}> = [
+  {
+    label: 'CommissionSummary begin_date',
+    params: (b, e) => ({ begin_date: b, end_date: e }),
+  },
+  {
+    label: 'CommissionSummary payment',
+    params: (b, e) => ({ payment_begin: b, payment_end: e }),
   },
 ];
 
@@ -224,6 +275,28 @@ export async function fetchRewardooPerformanceSummaryAggs(
 ): Promise<RwMerchantClickAgg[]> {
   const agg = new Map<string, RwMerchantClickAgg>();
 
+  const cpcGetResult = await tryFetchRwCpcPerformanceGetOrders_(
+    apiToken,
+    startDate,
+    endDate,
+    onProgress,
+    options?.merchantsByDate,
+  );
+  if (cpcGetResult.length > 0) {
+    return cpcGetResult;
+  }
+
+  const summaryResult = await tryFetchRwCommissionSummaryOrders_(
+    apiToken,
+    startDate,
+    endDate,
+    onProgress,
+    options?.merchantsByDate,
+  );
+  if (summaryResult.length > 0) {
+    return summaryResult;
+  }
+
   for (const spec of RW_PERFORMANCE_ORDER_SOURCES) {
     const rangeAgg = new Map<string, RwMerchantClickAgg>();
     if (
@@ -305,6 +378,179 @@ export async function fetchRewardooPerformanceSummaryAggs(
 
   await onProgress?.('Performance 订单接口均未返回有效 orders 汇总');
   return [];
+}
+
+/** RW 文档 CPC Performance API（GET 分页，优先于 POST） */
+async function tryFetchRwCpcPerformanceGetOrders_(
+  apiToken: string,
+  startDate: string,
+  endDate: string,
+  onProgress?: (message: string) => void | Promise<void>,
+  merchantsByDate?: Map<string, Set<string>>,
+): Promise<RwMerchantClickAgg[]> {
+  for (const variant of RW_CPC_PERFORMANCE_GET_VARIANTS) {
+    const merchantAgg = new Map<string, RwMerchantClickAgg>();
+    const accountDaily = new Map<string, number>();
+    const extraParams = variant.params(startDate, endDate);
+
+    const { rowCount, code } = await forEachRewardooGetPage_(
+      'medium',
+      'cpc_performance',
+      apiToken,
+      extraParams,
+      (rows) => {
+        for (const raw of rows) {
+          mergeSummaryClickRow_(
+            raw as Record<string, unknown>,
+            merchantAgg,
+            startDate,
+            endDate,
+            undefined,
+            { performanceOrdersOnly: true, accountDailyOrders: accountDaily },
+          );
+        }
+      },
+    );
+
+    const merchantTotal = sumAggPerformanceOrders_(merchantAgg);
+    const accountTotal = sumMapValues_(accountDaily);
+    if (merchantTotal > 0) {
+      await onProgress?.(
+        `CPC Performance GET ${variant.label} → ${merchantTotal} 单（${merchantAgg.size} 条，${rowCount} 行）`,
+      );
+      return [...merchantAgg.values()];
+    }
+    if (accountTotal > 0) {
+      const attributed = attributeAccountDailyPerformanceOrders_(accountDaily, merchantsByDate);
+      if (attributed.length > 0) {
+        await onProgress?.(
+          `CPC Performance GET ${variant.label} 账号按日 → ${accountTotal} 单（code=${code}）`,
+        );
+        return attributed;
+      }
+    }
+  }
+
+  return [];
+}
+
+/** RW 文档 CommissionSummary API */
+async function tryFetchRwCommissionSummaryOrders_(
+  apiToken: string,
+  startDate: string,
+  endDate: string,
+  onProgress?: (message: string) => void | Promise<void>,
+  merchantsByDate?: Map<string, Set<string>>,
+): Promise<RwMerchantClickAgg[]> {
+  for (const variant of RW_COMMISSION_SUMMARY_VARIANTS) {
+    const merchantAgg = new Map<string, RwMerchantClickAgg>();
+    const accountDaily = new Map<string, number>();
+    const extraParams = variant.params(startDate, endDate);
+
+    try {
+      const { rowCount } = await forEachRewardooPageLimit(
+        'commission',
+        'summary',
+        apiToken,
+        extraParams,
+        (rows) => {
+          for (const raw of rows) {
+            mergeSummaryClickRow_(
+              raw as Record<string, unknown>,
+              merchantAgg,
+              startDate,
+              endDate,
+              undefined,
+              { performanceOrdersOnly: true, accountDailyOrders: accountDaily },
+            );
+          }
+        },
+        RW_CLICK_PAGE_SIZE,
+      );
+
+      const merchantTotal = sumAggPerformanceOrders_(merchantAgg);
+      const accountTotal = sumMapValues_(accountDaily);
+      if (merchantTotal > 0) {
+        await onProgress?.(
+          `CommissionSummary ${variant.label} → ${merchantTotal} 单（${rowCount} 行）`,
+        );
+        return [...merchantAgg.values()];
+      }
+      if (accountTotal > 0) {
+        const attributed = attributeAccountDailyPerformanceOrders_(accountDaily, merchantsByDate);
+        if (attributed.length > 0) {
+          await onProgress?.(`CommissionSummary ${variant.label} 账号按日 → ${accountTotal} 单`);
+          return attributed;
+        }
+      }
+    } catch {
+      continue;
+    }
+  }
+
+  return [];
+}
+
+/** GET 分页（CPC Performance API 官方用法） */
+async function forEachRewardooGetPage_(
+  mod: string,
+  op: string,
+  apiToken: string,
+  extraParams: Record<string, string>,
+  onPage: (rows: unknown[]) => void | Promise<void>,
+  pageSize = RW_CLICK_PAGE_SIZE,
+): Promise<{ rowCount: number; code: number; message: string }> {
+  let page = 1;
+  let totalPages = 1;
+  let rowCount = 0;
+  let lastCode = -1;
+  let lastMessage = '';
+
+  for (; page <= totalPages && page <= 500; page += 1) {
+    await throttleRwClickRequest_();
+    const { data } = await axios.get<unknown>(RW_API_BASE, {
+      params: {
+        mod,
+        op,
+        token: apiToken,
+        type: 'json',
+        page: String(page),
+        limit: String(pageSize),
+        ...extraParams,
+      },
+      timeout: 120000,
+      validateStatus: () => true,
+    });
+    const parsed = parseRwApiEnvelope(data);
+    lastCode = parsed.code;
+    lastMessage = parsed.message;
+
+    if (parsed.code === 1002) {
+      await sleepRwClick_(65000);
+      page -= 1;
+      continue;
+    }
+    if (parsed.code === 1003 || parsed.code === 1004) {
+      return { rowCount: 0, code: parsed.code, message: lastMessage };
+    }
+    if (parsed.code !== 0) {
+      return { rowCount, code: parsed.code, message: lastMessage };
+    }
+
+    if (parsed.rows.length) {
+      await onPage(parsed.rows);
+      rowCount += parsed.rows.length;
+    }
+
+    totalPages = parsed.totalPages ?? 1;
+    if (parsed.rows.length < pageSize) break;
+  }
+
+  return { rowCount, code: lastCode, message: lastMessage };
+}
+
+function sleepRwClick_(ms: number) {
+  return new Promise((r) => setTimeout(r, ms));
 }
 
 /** 拉取账号级 Performance Daily（与 RW 后台 Group by Daily 一致） */
@@ -506,6 +752,18 @@ async function fetchClickSource_(
   };
 
   try {
+    if (spec.op === 'cpc_performance') {
+      const getParams = { ...(spec.extra ?? {}), ...spec.dateParams(rangeBegin, rangeEnd) };
+      const getResult = await forEachRewardooGetPage_(
+        spec.mod,
+        spec.op,
+        apiToken,
+        getParams,
+        merge,
+      );
+      if (getResult.rowCount > 0 && isSuccess()) return true;
+    }
+
     const pageResult = await forEachRewardooPageLimit(
       spec.mod,
       spec.op,
@@ -701,24 +959,14 @@ async function fetchMediumPerformanceViaGet_(
   merge: (rows: unknown[]) => void,
 ): Promise<boolean> {
   try {
-    await throttleRwClickRequest_();
-    const { data } = await axios.get<unknown>(RW_API_BASE, {
-      params: {
-        mod: spec.mod,
-        op: spec.op,
-        token: apiToken,
-        type: 'json',
-        page: '1',
-        limit: String(RW_CLICK_PAGE_SIZE),
-        ...extraParams,
-      },
-      timeout: 120000,
-      validateStatus: () => true,
-    });
-    const parsed = parseRwApiEnvelope(data);
-    if (parsed.code !== 0 || !parsed.rows.length) return false;
-    merge(parsed.rows);
-    return true;
+    const { rowCount, code } = await forEachRewardooGetPage_(
+      spec.mod,
+      spec.op,
+      apiToken,
+      extraParams,
+      (rows) => merge(rows),
+    );
+    return rowCount > 0 && code === 0;
   } catch {
     return false;
   }
@@ -778,7 +1026,12 @@ function mergeSummaryClickRow_(
 }
 
 /** Daily 汇总行 Orders 字段（勿读 order/cps_order 等明细字段） */
-const RW_PERFORMANCE_AGG_ORDER_FIELDS = ['orders', 'order_count', 'total_orders'] as const;
+const RW_PERFORMANCE_AGG_ORDER_FIELDS = [
+  'orders',
+  'order_count',
+  'total_orders',
+  'cps_orders',
+] as const;
 
 /** Performance 汇总行中的 Orders 字段（点击采集等宽松口径） */
 const RW_PERFORMANCE_ORDER_FIELDS = [
@@ -1071,12 +1324,17 @@ function parseRwRowDate_(row: Record<string, unknown>): string {
     'order_date',
     'date',
     'ymd',
+    'day_ymd',
+    'click_date',
+    'click_ymd',
+    'statistic_date',
+    'statistic_ymd',
     'payment_ymd',
     'stat_date',
     'stat_ymd',
-    'click_ymd',
     'day',
     'report_date',
+    'report_ymd',
     'begin_date',
     'end_date',
   ] as const) {

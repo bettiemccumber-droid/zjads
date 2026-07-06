@@ -231,6 +231,24 @@ export class ReportsService {
       }
     }
 
+    /** RW 商家汇总订单数：用 Performance API 写入的 performanceOrders，不用明细行数 */
+    const rwPerformanceOrdersByKey = new Map<string, number>();
+    for (const c of affiliateClickRows) {
+      if (c.channelAccount.platform?.code !== 'rewardoo') continue;
+      if (c.performanceOrders <= 0) continue;
+      if (isLbClickPseudoMerchant(c.merchantId)) continue;
+      const alias = (c.channelAccount.affiliateAlias || '').toLowerCase();
+      const key = this.resolveMerchantRowKey(map, c.merchantId, alias);
+      rwPerformanceOrdersByKey.set(
+        key,
+        (rwPerformanceOrdersByKey.get(key) ?? 0) + c.performanceOrders,
+      );
+    }
+    for (const [key, orders] of rwPerformanceOrdersByKey) {
+      const row = map.get(key);
+      if (row) row.orderCount = orders;
+    }
+
     const summary = Array.from(map.values())
       .map((r, idx) => {
         const cost = r.totalCost;

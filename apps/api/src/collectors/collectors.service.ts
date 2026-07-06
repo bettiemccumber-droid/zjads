@@ -239,12 +239,14 @@ export class CollectorsService {
         rwBundle.rows.length = 0;
 
         await onProgress?.('正在采集 RW Performance 订单数（对齐后台 Orders）…');
+        let perfOrderTotal = 0;
         try {
           const perfAggs = await fetchRewardooPerformanceSummaryAggs(
             apiToken,
             startDate,
             endDate,
           );
+          perfOrderTotal = perfAggs.reduce((s, a) => s + a.performanceOrders, 0);
           await this.persistPerformanceOrders(
             account.id,
             perfAggs.map((a) => ({
@@ -254,6 +256,9 @@ export class CollectorsService {
               orders: a.performanceOrders,
             })),
           );
+          if (perfOrderTotal > 0 && rwApi) {
+            rwApi.orderCount = perfOrderTotal;
+          }
         } catch (perfErr) {
           const msg = perfErr instanceof Error ? perfErr.message : String(perfErr);
           await onProgress?.(`RW Performance 订单数采集失败: ${msg.slice(0, 120)}`);

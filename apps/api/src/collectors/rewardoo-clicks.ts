@@ -191,8 +191,8 @@ export async function fetchRewardooClicks(
 }
 
 /**
- * 仅拉取 RW Performance 汇总（Orders + 可选 Clicks），与后台 Performance 看板同源。
- * 按自然日逐日请求 medium/performance，避免整段区间无日期字段时漏单。
+ * 拉取 RW Performance 汇总（Orders），与后台 Performance Report · Group by Daily 一致。
+ * 优先整段区间一次请求；失败再按自然日逐日兜底。
  */
 export async function fetchRewardooPerformanceSummaryAggs(
   apiToken: string,
@@ -200,8 +200,32 @@ export async function fetchRewardooPerformanceSummaryAggs(
   endDate: string,
 ): Promise<RwMerchantClickAgg[]> {
   const agg = new Map<string, RwMerchantClickAgg>();
-  const dates = listInclusiveDates_(startDate, endDate);
 
+  for (const spec of RW_PERFORMANCE_ORDER_SOURCES) {
+    const rangeAgg = new Map<string, RwMerchantClickAgg>();
+    if (
+      await fetchClickSource_(
+        spec,
+        apiToken,
+        startDate,
+        endDate,
+        rangeAgg,
+        startDate,
+        endDate,
+      )
+    ) {
+      for (const [key, row] of rangeAgg) {
+        if (row.performanceOrders > 0) agg.set(key, row);
+      }
+      if (agg.size > 0) break;
+    }
+  }
+
+  if (agg.size > 0) {
+    return [...agg.values()];
+  }
+
+  const dates = listInclusiveDates_(startDate, endDate);
   for (const dateStr of dates) {
     for (const spec of RW_PERFORMANCE_ORDER_SOURCES) {
       const dayAgg = new Map<string, RwMerchantClickAgg>();
@@ -218,14 +242,14 @@ export async function fetchRewardooPerformanceSummaryAggs(
         )
       ) {
         for (const [key, row] of dayAgg) {
-          agg.set(key, row);
+          if (row.performanceOrders > 0) agg.set(key, row);
         }
         break;
       }
     }
   }
 
-  return Array.from(agg.values()).filter((a) => a.performanceOrders > 0);
+  return [...agg.values()];
 }
 
 /** 尝试各汇总数据源：先整段，再按日；每种先试 page/limit，再试 offset */

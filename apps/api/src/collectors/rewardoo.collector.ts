@@ -71,8 +71,8 @@ export interface RwMerchantDayOrderAgg {
 }
 
 /**
- * 从 transaction_details 推导 Performance Orders：同 merchant+日按 order_id 去重，无 order_id 则按 sign_id。
- * 对齐 RW 后台 Orders（明细行数 ≠ 订单数）。
+ * 从 transaction_details 推导 Performance Orders：merchant+日按 order_id+sign_id 去重。
+ * 同一 order_id 多行（拆佣金）与 RW Performance Daily 一致。
  */
 export function deriveRwPerformanceOrdersFromDetailRows(
   rows: RwCommissionRow[],
@@ -104,13 +104,28 @@ export function deriveRwPerformanceOrdersFromDetailRows(
       orderIdRaw != null && String(orderIdRaw).trim() !== '' && String(orderIdRaw) !== '0'
         ? String(orderIdRaw).trim()
         : '';
-    const signIdRaw = row.sign_id ?? row.txn_id ?? row.transaction_id;
+    const signIdRaw = row.sign_id;
     const signId =
       signIdRaw != null && String(signIdRaw).trim() !== '' && String(signIdRaw) !== '0'
         ? String(signIdRaw).trim()
         : '';
+    const txnIdRaw = row.transaction_id ?? row.txn_id ?? row.rewardoo_id;
+    const txnId =
+      txnIdRaw != null && String(txnIdRaw).trim() !== '' && String(txnIdRaw) !== '0'
+        ? String(txnIdRaw).trim()
+        : '';
 
-    const dedupeKey = orderId ? `oid:${orderId}` : signId ? `sign:${signId}` : '';
+    /** 同一 order_id 多行（拆佣金）在 RW Performance 仍计多单时，用 sign/txn 细分 */
+    let dedupeKey = '';
+    if (orderId && (signId || txnId)) {
+      dedupeKey = `oid:${orderId}|${signId ? `sign:${signId}` : `txn:${txnId}`}`;
+    } else if (orderId) {
+      dedupeKey = `oid:${orderId}`;
+    } else if (signId) {
+      dedupeKey = `sign:${signId}`;
+    } else if (txnId) {
+      dedupeKey = `txn:${txnId}`;
+    }
     if (!dedupeKey) continue;
 
     const mapKey = `${merchantId}|${clickDate}`;

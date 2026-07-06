@@ -417,6 +417,10 @@ export async function fetchRewardooPerformanceSummaryAggs(
   return [];
 }
 
+function rwMidParams_(mid: string): Record<string, string> {
+  return { mid, m_id: mid, merchant_id: mid };
+}
+
 /** CPS Performance：medium/performance + mid（与 rw-click-probe / RW 后台一致） */
 async function tryFetchRwMediumPerformanceOrders_(
   apiToken: string,
@@ -441,7 +445,7 @@ async function tryFetchRwMediumPerformanceOrders_(
     const baseParams: Record<string, string> = {
       begin_date: startDate,
       end_date: endDate,
-      ...(mid ? { mid } : {}),
+      ...(mid ? rwMidParams_(mid) : {}),
     };
 
     const merchantAgg = new Map<string, RwMerchantClickAgg>();
@@ -493,6 +497,30 @@ async function tryFetchRwMediumPerformanceOrders_(
       return [...merchantAgg.values()];
     }
 
+    try {
+      await forEachRewardooPageLimit(
+        'commission',
+        'performance',
+        apiToken,
+        {
+          begin_date: startDate,
+          end_date: endDate,
+          payment_begin: startDate,
+          payment_end: endDate,
+          ...(mid ? rwMidParams_(mid) : {}),
+        },
+        mergeRows,
+        RW_CLICK_PAGE_SIZE,
+      );
+      if (sumAggPerformanceOrders_(merchantAgg) > 0) {
+        const total = sumAggPerformanceOrders_(merchantAgg);
+        await onProgress?.(`commission/performance ${label} → ${total} 单`);
+        return [...merchantAgg.values()];
+      }
+    } catch {
+      /* ignore */
+    }
+
     const accountTotal = sumMapValues_(accountDaily);
     if (accountTotal > 0) {
       const attributed = attributeAccountDailyPerformanceOrders_(accountDaily, merchantsByDate);
@@ -504,19 +532,22 @@ async function tryFetchRwMediumPerformanceOrders_(
   }
 
   const dates = listInclusiveDates_(startDate, endDate);
+  const dayAgg = new Map<string, RwMerchantClickAgg>();
+  const midsToTry =
+    merchantIds.size > 0 ? [...merchantIds] : [undefined as string | undefined];
+
   for (const dateStr of dates) {
-    for (const mid of merchantIds.size > 0 ? merchantIds : new Set<string | undefined>([undefined])) {
-      const merchantAgg = new Map<string, RwMerchantClickAgg>();
+    for (const mid of midsToTry) {
       const params: Record<string, string> = {
         begin_date: dateStr,
         end_date: dateStr,
-        ...(mid ? { mid } : {}),
+        ...(mid ? rwMidParams_(mid) : {}),
       };
       await forEachRewardooGetPage_('medium', 'performance', apiToken, params, (rows) => {
         for (const raw of rows) {
           mergeSummaryClickRow_(
             raw as Record<string, unknown>,
-            merchantAgg,
+            dayAgg,
             dateStr,
             dateStr,
             dateStr,
@@ -524,12 +555,13 @@ async function tryFetchRwMediumPerformanceOrders_(
           );
         }
       });
-      if (sumAggPerformanceOrders_(merchantAgg) > 0) {
-        const total = sumAggPerformanceOrders_(merchantAgg);
-        await onProgress?.(`medium/performance 逐日 ${dateStr} mid=${mid ?? 'all'} → ${total} 单`);
-        return [...merchantAgg.values()];
-      }
     }
+  }
+
+  if (sumAggPerformanceOrders_(dayAgg) > 0) {
+    const total = sumAggPerformanceOrders_(dayAgg);
+    await onProgress?.(`medium/performance 逐日汇总 → ${total} 单（${dayAgg.size} 条）`);
+    return [...dayAgg.values()];
   }
 
   return [];
@@ -1167,7 +1199,11 @@ function mergeSummaryClickRow_(
   if (existing) {
     existing.clicks += clicks;
     if (orders > 0) {
-      existing.performanceOrders = Math.max(existing.performanceOrders, orders);
+      if (options?.performanceOrdersOnly && orders >= 2) {
+        existing.performanceOrders = orders;
+      } else {
+        existing.performanceOrders = Math.max(existing.performanceOrders, orders);
+      }
     }
   } else {
     agg.set(key, {
@@ -1197,8 +1233,11 @@ const RW_PERFORMANCE_ORDER_FIELDS = [
   'sale_orders',
 ] as const;
 
-/** 佣金明细行（含 sign_id），不能当 Performance Daily 汇总 */
+/** 佣金明细行（含 sign_id 且无汇总 orders），不能当 Performance Daily 汇总 */
 function isRwTransactionDetailRow_(row: Record<string, unknown>): boolean {
+  const aggregateOrders = extractRwPerformanceOrdersFromRow_(row);
+  if (aggregateOrders > 1) return false;
+
   const signId = row.sign_id;
   if (signId == null || String(signId).trim() === '' || String(signId) === '0') {
     return false;

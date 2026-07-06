@@ -107,7 +107,10 @@ const RW_CLICK_SUMMARY_SOURCES: RwClickSourceSpec[] = [
   },
 ];
 
-/** Performance 订单数：Transaction Date + Daily 维度（与后台 Performance Report 一致） */
+/**
+ * Performance 订单数：仅用 Daily 汇总接口（与后台 Group by Daily 一致）。
+ * 勿回退 medium/performance 等会返回 transaction 明细行的接口。
+ */
 const RW_PERFORMANCE_ORDER_SOURCES: RwClickSourceSpec[] = [
   {
     label: 'medium/cpc_performance daily',
@@ -125,30 +128,6 @@ const RW_PERFORMANCE_ORDER_SOURCES: RwClickSourceSpec[] = [
     mod: 'performance',
     op: 'report',
     dateParams: (b, e) => ({ begin: b, end: e, group_by: 'day' }),
-  },
-  {
-    label: 'performance/report',
-    mod: 'performance',
-    op: 'report',
-    dateParams: (b, e) => ({ begin: b, end: e }),
-  },
-  {
-    label: 'medium/performance',
-    mod: 'medium',
-    op: 'performance',
-    dateParams: (b, e) => ({ begin_date: b, end_date: e }),
-  },
-  {
-    label: 'medium/performance CPS',
-    mod: 'medium',
-    op: 'performance',
-    dateParams: (b, e) => ({ begin_date: b, end_date: e, offer_type: 'CPS' }),
-  },
-  {
-    label: 'performance/merchant',
-    mod: 'performance',
-    op: 'merchant',
-    dateParams: (b, e) => ({ begin: b, end: e }),
   },
 ];
 
@@ -235,9 +214,9 @@ export async function fetchRewardooPerformanceSummaryAggs(
       )
     ) {
       for (const [key, row] of rangeAgg) {
-        if (row.performanceOrders > 0) agg.set(key, row);
+        agg.set(key, row);
       }
-      if (agg.size > 0) {
+      if (agg.size > 0 && sumAggPerformanceOrders_(agg) > 0) {
         const total = sumAggPerformanceOrders_(agg);
         await onProgress?.(
           `Performance ${spec.label} → ${total} 单（${agg.size} 条日明细）`,
@@ -265,14 +244,14 @@ export async function fetchRewardooPerformanceSummaryAggs(
         )
       ) {
         for (const [key, row] of dayAgg) {
-          if (row.performanceOrders > 0) agg.set(key, row);
+          agg.set(key, row);
         }
         break;
       }
     }
   }
 
-  if (agg.size > 0) {
+  if (agg.size > 0 && sumAggPerformanceOrders_(agg) > 0) {
     const total = sumAggPerformanceOrders_(agg);
     await onProgress?.(`Performance 逐日兜底 → ${total} 单（${agg.size} 条日明细）`);
     return [...agg.values()];
@@ -353,7 +332,7 @@ async function fetchClickSource_(
         filterStart,
         filterEnd,
         defaultDate,
-        options?.requireOrders ? { sumOrders: true } : undefined,
+        options?.requireOrders ? { performanceOrdersOnly: true } : undefined,
       );
     }
   };
@@ -589,13 +568,18 @@ function mergeSummaryClickRow_(
   startDate: string,
   endDate: string,
   defaultDate?: string,
-  options?: { sumOrders?: boolean },
+  options?: { performanceOrdersOnly?: boolean },
 ): void {
+  if (options?.performanceOrdersOnly && isRwTransactionDetailRow_(row)) return;
+
   const merchantId = resolveRwClickMerchantId_(row);
   if (!merchantId) return;
 
   const clicks = extractRwClickCountFromRow_(row);
-  const orders = extractRwOrderCountFromRow_(row);
+  const orders = options?.performanceOrdersOnly
+    ? extractRwPerformanceOrdersFromRow_(row)
+    : extractRwOrderCountFromRow_(row);
+  if (options?.performanceOrdersOnly && orders <= 0) return;
   if (clicks <= 0 && orders <= 0) return;
 
   const clickDate = parseRwRowDate_(row) || defaultDate || '';
@@ -606,9 +590,7 @@ function mergeSummaryClickRow_(
   if (existing) {
     existing.clicks += clicks;
     if (orders > 0) {
-      existing.performanceOrders = options?.sumOrders
-        ? existing.performanceOrders + orders
-        : Math.max(existing.performanceOrders, orders);
+      existing.performanceOrders = Math.max(existing.performanceOrders, orders);
     }
   } else {
     agg.set(key, {
@@ -621,17 +603,44 @@ function mergeSummaryClickRow_(
   }
 }
 
-/** Performance 汇总行中的 Orders 字段（按优先级；勿用单数 order，易与明细行混淆） */
+/** Daily 汇总行 Orders 字段（勿读 order/cps_order 等明细字段） */
+const RW_PERFORMANCE_AGG_ORDER_FIELDS = ['orders', 'order_count', 'total_orders'] as const;
+
+/** Performance 汇总行中的 Orders 字段（点击采集等宽松口径） */
 const RW_PERFORMANCE_ORDER_FIELDS = [
-  'orders',
-  'order_count',
-  'total_orders',
+  ...RW_PERFORMANCE_AGG_ORDER_FIELDS,
   'valid_orders',
   'complete_orders',
   'cps_orders',
-  'cps_order',
   'sale_orders',
 ] as const;
+
+/** 佣金明细行（含 sign_id），不能当 Performance Daily 汇总 */
+function isRwTransactionDetailRow_(row: Record<string, unknown>): boolean {
+  for (const key of ['sign_id', 'txn_id', 'transaction_id', 'rewardoo_id'] as const) {
+    const v = row[key];
+    if (v == null || String(v).trim() === '' || String(v) === '0') continue;
+    return true;
+  }
+  return false;
+}
+
+/** 从 Performance Daily 汇总行解析 Orders */
+function extractRwPerformanceOrdersFromRow_(row: Record<string, unknown>): number {
+  for (const key of RW_PERFORMANCE_AGG_ORDER_FIELDS) {
+    const n = parseRwClickCount_(row[key]);
+    if (n > 0) return n;
+  }
+
+  for (const nestedKey of ['stat', 'stats', 'summary', 'total'] as const) {
+    const nested = row[nestedKey];
+    if (!nested || typeof nested !== 'object') continue;
+    const n = extractRwPerformanceOrdersFromRow_(nested as Record<string, unknown>);
+    if (n > 0) return n;
+  }
+
+  return 0;
+}
 
 /** 从 Performance 汇总行解析 Orders（与 RW 后台 Performance Daily 一致） */
 function extractRwOrderCountFromRow_(row: Record<string, unknown>): number {

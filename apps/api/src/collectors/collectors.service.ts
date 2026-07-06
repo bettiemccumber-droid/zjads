@@ -436,7 +436,6 @@ export class CollectorsService {
     aggs: Array<{ merchantId: string; merchantName: string; statDate: string; orders: number }>,
   ): Promise<void> {
     for (const a of aggs) {
-      if (a.orders <= 0) continue;
       const clickDate = new Date(a.statDate);
       const existing = await this.prisma.affiliateMerchantClickDaily.findUnique({
         where: {

@@ -687,7 +687,7 @@ export class ReportsService {
         channelAccountId: { in: accountIds },
         clickDate: buildOrderDateRangeFilter(startDate, endDate)!,
       },
-      include: { channelAccount: true },
+      include: { channelAccount: { include: { platform: true } } },
     });
 
     for (const c of clickRows) {
@@ -698,6 +698,8 @@ export class ReportsService {
       ensure(byKey, merchantKey).affiliateClicks += c.clicks;
       ensure(byMerchantId, merchantId).affiliateClicks += c.clicks;
     }
+
+    this.overlayRwPerformanceOrderCounts(clickRows, byKey, undefined, byMerchantId);
 
     return { byKey, byMerchantId };
   }
@@ -764,7 +766,7 @@ export class ReportsService {
         channelAccountId: { in: accountIds },
         clickDate: buildOrderDateRangeFilter(startDate, endDate)!,
       },
-      include: { channelAccount: true },
+      include: { channelAccount: { include: { platform: true } } },
     });
 
     for (const c of clickRows) {
@@ -778,7 +780,84 @@ export class ReportsService {
       ensureKey(byMerchantDay, merchantDayKey).affiliateClicks += c.clicks;
     }
 
+    this.overlayRwPerformanceOrderCounts(clickRows, byKey, byMerchantDay);
+
     return { byKey, byMerchantDay };
+  }
+
+  /**
+   * RW 订单数覆盖：使用 Performance API 写入的 performanceOrders，与后台 Orders 一致
+   */
+  private overlayRwPerformanceOrderCounts(
+    clickRows: Array<{
+      merchantId: string;
+      clickDate: Date;
+      performanceOrders: number;
+      channelAccount: {
+        affiliateAlias: string | null;
+        platform?: { code: string };
+      };
+    }>,
+    byKey: Map<string, AffiliateMetrics>,
+    byMerchantDay?: Map<string, AffiliateMetrics>,
+    byMerchantId?: Map<string, AffiliateMetrics>,
+  ) {
+    const ensure = (map: Map<string, AffiliateMetrics>, key: string) => {
+      if (!map.has(key)) map.set(key, { ...EMPTY_AFFILIATE });
+      return map.get(key)!;
+    };
+
+    if (byMerchantDay) {
+      const ordersByMerchantDay = new Map<string, number>();
+      for (const c of clickRows) {
+        if (c.channelAccount.platform?.code !== 'rewardoo') continue;
+        if (c.performanceOrders <= 0) continue;
+        if (isLbClickPseudoMerchant(c.merchantId)) continue;
+
+        const dateStr = c.clickDate.toISOString().slice(0, 10);
+        const merchantDayKey = `${c.merchantId}|${dateStr}`;
+        ordersByMerchantDay.set(
+          merchantDayKey,
+          (ordersByMerchantDay.get(merchantDayKey) ?? 0) + c.performanceOrders,
+        );
+      }
+
+      for (const [merchantDayKey, orders] of ordersByMerchantDay) {
+        ensure(byMerchantDay, merchantDayKey).orderCount = orders;
+        const [merchantId, dateStr] = merchantDayKey.split('|');
+        for (const c of clickRows) {
+          if (c.merchantId !== merchantId) continue;
+          if (c.clickDate.toISOString().slice(0, 10) !== dateStr) continue;
+          if (c.channelAccount.platform?.code !== 'rewardoo') continue;
+          const alias = (c.channelAccount.affiliateAlias || '').toLowerCase();
+          ensure(byKey, `${merchantId}|${alias}|${dateStr}`).orderCount = orders;
+        }
+      }
+    }
+
+    if (byMerchantId) {
+      const ordersByMerchant = new Map<string, number>();
+      for (const c of clickRows) {
+        if (c.channelAccount.platform?.code !== 'rewardoo') continue;
+        if (c.performanceOrders <= 0) continue;
+        if (isLbClickPseudoMerchant(c.merchantId)) continue;
+
+        ordersByMerchant.set(
+          c.merchantId,
+          (ordersByMerchant.get(c.merchantId) ?? 0) + c.performanceOrders,
+        );
+      }
+
+      for (const [merchantId, orders] of ordersByMerchant) {
+        ensure(byMerchantId, merchantId).orderCount = orders;
+        for (const c of clickRows) {
+          if (c.merchantId !== merchantId) continue;
+          if (c.channelAccount.platform?.code !== 'rewardoo') continue;
+          const alias = (c.channelAccount.affiliateAlias || '').toLowerCase();
+          ensure(byKey, `${merchantId}|${alias}`).orderCount = orders;
+        }
+      }
+    }
   }
 
   private lookupAffiliateMetricsForDay(

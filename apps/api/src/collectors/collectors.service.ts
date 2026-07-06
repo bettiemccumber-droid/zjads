@@ -29,6 +29,7 @@ import {
   summarizeRwCommissionApi,
 } from './rewardoo.collector';
 import { fetchRewardooClicks } from './rewardoo-clicks';
+import { fetchRewardooPerformanceOrderAggs } from './rewardoo-performance-orders';
 import { ensurePlatformStatusMappings } from '../common/platform-status-defaults.util';
 import {
   collectorNotReadyMessage,
@@ -268,6 +269,19 @@ export class CollectorsService {
             await onProgress?.(`RW 联盟点击采集失败（订单仍会写入）: ${rwClickError}`);
           }
         }
+
+        await onProgress?.('正在采集 RW Performance 订单数（对齐后台 Orders）…');
+        try {
+          const perfOrderAggs = await fetchRewardooPerformanceOrderAggs(
+            apiToken,
+            startDate,
+            endDate,
+          );
+          await this.persistPerformanceOrders(account.id, perfOrderAggs);
+        } catch (perfErr) {
+          const msg = perfErr instanceof Error ? perfErr.message : String(perfErr);
+          await onProgress?.(`RW Performance 订单数采集失败: ${msg.slice(0, 120)}`);
+        }
         break;
       }
       default:
@@ -360,6 +374,54 @@ export class CollectorsService {
       total += c.clicks;
     }
     return total;
+  }
+
+  /**
+   * 写入 RW Performance 看板 Orders（按商家+日，不影响 clicks 字段）
+   */
+  private async persistPerformanceOrders(
+    channelAccountId: number,
+    aggs: Array<{ merchantId: string; merchantName: string; statDate: string; orders: number }>,
+  ): Promise<void> {
+    for (const a of aggs) {
+      if (a.orders <= 0) continue;
+      const clickDate = new Date(a.statDate);
+      const existing = await this.prisma.affiliateMerchantClickDaily.findUnique({
+        where: {
+          channelAccountId_merchantId_clickDate: {
+            channelAccountId,
+            merchantId: a.merchantId,
+            clickDate,
+          },
+        },
+      });
+      if (existing?.source === AffiliateClickSource.manual) {
+        continue;
+      }
+
+      await this.prisma.affiliateMerchantClickDaily.upsert({
+        where: {
+          channelAccountId_merchantId_clickDate: {
+            channelAccountId,
+            merchantId: a.merchantId,
+            clickDate,
+          },
+        },
+        create: {
+          channelAccountId,
+          merchantId: a.merchantId,
+          merchantName: a.merchantName,
+          clickDate,
+          clicks: 0,
+          performanceOrders: a.orders,
+          source: AffiliateClickSource.api,
+        },
+        update: {
+          merchantName: a.merchantName,
+          performanceOrders: a.orders,
+        },
+      });
+    }
   }
 
   /**

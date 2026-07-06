@@ -28,7 +28,7 @@ import {
   normalizeRewardooOrders,
   summarizeRwCommissionApi,
 } from './rewardoo.collector';
-import { fetchRewardooClicks, fetchRewardooPerformanceSummaryAggs } from './rewardoo-clicks';
+import { fetchRewardooClicks, fetchRewardooPerformanceSummaryAggs, buildRwMerchantsByDateFromOrders } from './rewardoo-clicks';
 import { ensurePlatformStatusMappings } from '../common/platform-status-defaults.util';
 import {
   collectorNotReadyMessage,
@@ -249,7 +249,13 @@ export class CollectorsService {
         await onProgress?.('正在采集 RW Performance 订单数（对齐后台 Orders）…');
         let perfOrderTotal = 0;
         try {
-          await this.clearPerformanceOrdersInRange(account.id, startDate, endDate);
+          const merchantsByDate = buildRwMerchantsByDateFromOrders(
+            normalized.map((o) => ({
+              merchantId: o.merchantId,
+              orderDate: o.orderDate,
+              commission: o.commission,
+            })),
+          );
           const perfAggs = await fetchRewardooPerformanceSummaryAggs(
             apiToken,
             startDate,
@@ -257,10 +263,12 @@ export class CollectorsService {
             async (message) => {
               await onProgress?.(message);
             },
+            { merchantsByDate },
           );
           perfOrderTotal = perfAggs.reduce((s, a) => s + a.performanceOrders, 0);
           rwPerformanceOrderCount = perfOrderTotal;
           if (perfOrderTotal > 0) {
+            await this.clearPerformanceOrdersInRange(account.id, startDate, endDate);
             await this.persistPerformanceOrders(
               account.id,
               perfAggs.map((a) => ({

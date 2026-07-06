@@ -108,8 +108,7 @@ const RW_CLICK_SUMMARY_SOURCES: RwClickSourceSpec[] = [
 ];
 
 /**
- * Performance 订单数：仅用 Daily 汇总接口（与后台 Group by Daily 一致）。
- * 勿回退 medium/performance 等会返回 transaction 明细行的接口。
+ * Performance 订单数数据源（与 RW 后台 Performance Report 对齐）
  */
 const RW_PERFORMANCE_ORDER_SOURCES: RwClickSourceSpec[] = [
   {
@@ -124,12 +123,38 @@ const RW_PERFORMANCE_ORDER_SOURCES: RwClickSourceSpec[] = [
     }),
   },
   {
-    label: 'performance/report daily',
-    mod: 'performance',
-    op: 'report',
-    dateParams: (b, e) => ({ begin: b, end: e, group_by: 'day' }),
+    label: 'medium/performance daily',
+    mod: 'medium',
+    op: 'performance',
+    dateParams: (b, e) => ({
+      begin_date: b,
+      end_date: e,
+      dimension: 'day',
+      sub_dimension: 'merchant',
+    }),
   },
 ];
+
+/** RW 后台 Performance 按日汇总（账号级，无 merchant_id） */
+const RW_ACCOUNT_DAILY_PERFORMANCE_SOURCES: RwClickSourceSpec[] = [
+  {
+    label: 'performance/report',
+    mod: 'performance',
+    op: 'report',
+    dateParams: (b, e) => ({ begin: b, end: e }),
+  },
+  {
+    label: 'medium/performance',
+    mod: 'medium',
+    op: 'performance',
+    dateParams: (b, e) => ({ begin_date: b, end_date: e }),
+  },
+];
+
+export interface RwPerformanceFetchOptions {
+  /** 按日有佣金的 merchantId，用于账号级 Performance 归因 */
+  merchantsByDate?: Map<string, Set<string>>;
+}
 
 /** ClickDetails：60 秒内最多 15 次（文档错误码 1006） */
 const RW_CLICK_MIN_INTERVAL_MS = 4100;
@@ -195,6 +220,7 @@ export async function fetchRewardooPerformanceSummaryAggs(
   startDate: string,
   endDate: string,
   onProgress?: (message: string) => void | Promise<void>,
+  options?: RwPerformanceFetchOptions,
 ): Promise<RwMerchantClickAgg[]> {
   const agg = new Map<string, RwMerchantClickAgg>();
 
@@ -257,8 +283,133 @@ export async function fetchRewardooPerformanceSummaryAggs(
     return [...agg.values()];
   }
 
+  const accountDaily = await fetchAccountDailyPerformanceOrders_(
+    apiToken,
+    startDate,
+    endDate,
+    onProgress,
+  );
+  if (accountDaily.size > 0) {
+    const attributed = attributeAccountDailyPerformanceOrders_(
+      accountDaily,
+      options?.merchantsByDate,
+    );
+    if (attributed.length > 0) {
+      const total = attributed.reduce((s, a) => s + a.performanceOrders, 0);
+      await onProgress?.(
+        `Performance 账号按日 → ${total} 单（归因 ${attributed.length} 条商家日）`,
+      );
+      return attributed;
+    }
+  }
+
   await onProgress?.('Performance 订单接口均未返回有效 orders 汇总');
   return [];
+}
+
+/** 拉取账号级 Performance Daily（与 RW 后台 Group by Daily 一致） */
+async function fetchAccountDailyPerformanceOrders_(
+  apiToken: string,
+  startDate: string,
+  endDate: string,
+  onProgress?: (message: string) => void | Promise<void>,
+): Promise<Map<string, number>> {
+  const accountDaily = new Map<string, number>();
+
+  for (const spec of RW_ACCOUNT_DAILY_PERFORMANCE_SOURCES) {
+    const before = sumMapValues_(accountDaily);
+    await fetchClickSource_(
+      spec,
+      apiToken,
+      startDate,
+      endDate,
+      new Map(),
+      startDate,
+      endDate,
+      undefined,
+      {
+        requireOrders: true,
+        accountDailyOrders: accountDaily,
+      },
+    );
+    if (sumMapValues_(accountDaily) > before) {
+      await onProgress?.(
+        `Performance ${spec.label} 账号按日 → ${sumMapValues_(accountDaily)} 单`,
+      );
+      return accountDaily;
+    }
+  }
+
+  return accountDaily;
+}
+
+/** 账号级按日 Orders 归因到商家（单商家直接映射，多商家按日唯一匹配） */
+function attributeAccountDailyPerformanceOrders_(
+  accountDaily: Map<string, number>,
+  merchantsByDate?: Map<string, Set<string>>,
+): RwMerchantClickAgg[] {
+  if (!merchantsByDate || merchantsByDate.size === 0) return [];
+
+  const allMerchants = new Set<string>();
+  for (const mids of merchantsByDate.values()) {
+    for (const mid of mids) allMerchants.add(mid);
+  }
+
+  const out: RwMerchantClickAgg[] = [];
+
+  if (allMerchants.size === 1) {
+    const merchantId = [...allMerchants][0]!;
+    for (const [clickDate, performanceOrders] of accountDaily) {
+      if (performanceOrders <= 0) continue;
+      out.push({
+        merchantId,
+        merchantName: '',
+        clickDate,
+        clicks: 0,
+        performanceOrders,
+      });
+    }
+    return out;
+  }
+
+  for (const [clickDate, performanceOrders] of accountDaily) {
+    if (performanceOrders <= 0) continue;
+    const mids = merchantsByDate.get(clickDate);
+    if (!mids || mids.size !== 1) continue;
+    const merchantId = [...mids][0]!;
+    out.push({
+      merchantId,
+      merchantName: '',
+      clickDate,
+      clicks: 0,
+      performanceOrders,
+    });
+  }
+
+  return out;
+}
+
+function sumMapValues_(map: Map<string, number>): number {
+  let total = 0;
+  for (const v of map.values()) total += v;
+  return total;
+}
+
+/**
+ * 从已入库订单构建「按日有佣金的 merchantId」索引，供 Performance 账号级归因。
+ */
+export function buildRwMerchantsByDateFromOrders(
+  orders: Array<{ merchantId: string | null; orderDate: Date; commission: number }>,
+): Map<string, Set<string>> {
+  const map = new Map<string, Set<string>>();
+  for (const o of orders) {
+    const mid = o.merchantId?.trim();
+    if (!mid || Number(o.commission) <= 0) continue;
+    const dateStr = o.orderDate.toISOString().slice(0, 10);
+    if (!map.has(dateStr)) map.set(dateStr, new Set());
+    map.get(dateStr)!.add(mid);
+  }
+  return map;
 }
 
 /** 尝试各汇总数据源：先整段，再按日；每种先试 page/limit，再试 offset */
@@ -319,10 +470,13 @@ async function fetchClickSource_(
   filterStart: string,
   filterEnd: string,
   defaultDate?: string,
-  options?: { requireOrders?: boolean },
+  options?: { requireOrders?: boolean; accountDailyOrders?: Map<string, number> },
 ): Promise<boolean> {
   const extraParams = { ...(spec.extra ?? {}), ...spec.dateParams(rangeBegin, rangeEnd) };
   const ordersBefore = sumAggPerformanceOrders_(agg);
+  const accountOrdersBefore = options?.accountDailyOrders
+    ? sumMapValues_(options.accountDailyOrders)
+    : 0;
 
   const merge = (rows: unknown[]) => {
     for (const raw of rows) {
@@ -332,15 +486,24 @@ async function fetchClickSource_(
         filterStart,
         filterEnd,
         defaultDate,
-        options?.requireOrders ? { performanceOrdersOnly: true } : undefined,
+        options?.requireOrders
+          ? {
+              performanceOrdersOnly: true,
+              accountDailyOrders: options.accountDailyOrders,
+            }
+          : undefined,
       );
     }
   };
 
-  const isSuccess = () =>
-    options?.requireOrders
+  const isSuccess = () => {
+    if (options?.accountDailyOrders && sumMapValues_(options.accountDailyOrders) > accountOrdersBefore) {
+      return true;
+    }
+    return options?.requireOrders
       ? sumAggPerformanceOrders_(agg) > ordersBefore
       : hasAggMetrics_(agg);
+  };
 
   try {
     const pageResult = await forEachRewardooPageLimit(
@@ -568,18 +731,29 @@ function mergeSummaryClickRow_(
   startDate: string,
   endDate: string,
   defaultDate?: string,
-  options?: { performanceOrdersOnly?: boolean },
+  options?: { performanceOrdersOnly?: boolean; accountDailyOrders?: Map<string, number> },
 ): void {
   if (options?.performanceOrdersOnly && isRwTransactionDetailRow_(row)) return;
 
   const merchantId = resolveRwClickMerchantId_(row);
-  if (!merchantId) return;
-
-  const clicks = extractRwClickCountFromRow_(row);
   const orders = options?.performanceOrdersOnly
     ? extractRwPerformanceOrdersFromRow_(row)
     : extractRwOrderCountFromRow_(row);
   if (options?.performanceOrdersOnly && orders <= 0) return;
+
+  if (options?.performanceOrdersOnly && !merchantId && options.accountDailyOrders) {
+    const clickDate = parseRwRowDate_(row) || defaultDate || '';
+    if (!clickDate || clickDate < startDate || clickDate > endDate) return;
+    options.accountDailyOrders.set(
+      clickDate,
+      Math.max(options.accountDailyOrders.get(clickDate) ?? 0, orders),
+    );
+    return;
+  }
+
+  if (!merchantId) return;
+
+  const clicks = extractRwClickCountFromRow_(row);
   if (clicks <= 0 && orders <= 0) return;
 
   const clickDate = parseRwRowDate_(row) || defaultDate || '';
@@ -630,6 +804,11 @@ function extractRwPerformanceOrdersFromRow_(row: Record<string, unknown>): numbe
   for (const key of RW_PERFORMANCE_AGG_ORDER_FIELDS) {
     const n = parseRwClickCount_(row[key]);
     if (n > 0) return n;
+  }
+
+  if (!isRwTransactionDetailRow_(row)) {
+    const singular = parseRwClickCount_(row.order);
+    if (singular > 0) return singular;
   }
 
   for (const nestedKey of ['stat', 'stats', 'summary', 'total'] as const) {

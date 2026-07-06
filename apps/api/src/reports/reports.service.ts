@@ -145,9 +145,7 @@ export class ReportsService {
         });
       }
       const row = map.get(agg.merchantKey)!;
-      if (agg.platformCode !== 'rewardoo') {
-        row.orderCount += 1;
-      }
+      row.orderCount += 1;
       row.totalCommission += agg.commission;
     }
 
@@ -239,6 +237,7 @@ export class ReportsService {
     const rwPerformanceOrdersByKey = new Map<string, number>();
     for (const c of affiliateClickRows) {
       if (c.channelAccount.platform?.code !== 'rewardoo') continue;
+      if (c.performanceOrders <= 0) continue;
       if (isLbClickPseudoMerchant(c.merchantId)) continue;
       const alias = (c.channelAccount.affiliateAlias || '').toLowerCase();
       const key = this.resolveMerchantRowKey(map, c.merchantId, alias);
@@ -692,15 +691,14 @@ export class ReportsService {
       ensure(byKey, merchantKey).commission += comm;
       ensure(byMerchantId, merchantId).commission += comm;
 
-      const isRw = o.channelAccount.platform.code === 'rewardoo';
       if (!orderSeenByKey.has(orderKey)) {
         orderSeenByKey.add(orderKey);
-        if (!isRw) ensure(byKey, merchantKey).orderCount += 1;
+        ensure(byKey, merchantKey).orderCount += 1;
       }
       const midOrderKey = `${merchantId}|${orderKey}`;
       if (!orderSeenByMerchant.has(midOrderKey)) {
         orderSeenByMerchant.add(midOrderKey);
-        if (!isRw) ensure(byMerchantId, merchantId).orderCount += 1;
+        ensure(byMerchantId, merchantId).orderCount += 1;
       }
     }
 
@@ -772,15 +770,14 @@ export class ReportsService {
       ensureKey(byKey, dayKey).commission += comm;
       ensureKey(byMerchantDay, merchantDayKey).commission += comm;
 
-      const isRw = o.channelAccount.platform.code === 'rewardoo';
       if (!orderSeenByKey.has(`${dayKey}|${orderKey}`)) {
         orderSeenByKey.add(`${dayKey}|${orderKey}`);
-        if (!isRw) ensureKey(byKey, dayKey).orderCount += 1;
+        ensureKey(byKey, dayKey).orderCount += 1;
       }
       const midOrderKey = `${merchantDayKey}|${orderKey}`;
       if (!orderSeenByMerchantDay.has(midOrderKey)) {
         orderSeenByMerchantDay.add(midOrderKey);
-        if (!isRw) ensureKey(byMerchantDay, merchantDayKey).orderCount += 1;
+        ensureKey(byMerchantDay, merchantDayKey).orderCount += 1;
       }
     }
 
@@ -834,6 +831,7 @@ export class ReportsService {
       const ordersByMerchantDay = new Map<string, number>();
       for (const c of clickRows) {
         if (c.channelAccount.platform?.code !== 'rewardoo') continue;
+        if (c.performanceOrders <= 0) continue;
         if (isLbClickPseudoMerchant(c.merchantId)) continue;
 
         const dateStr = c.clickDate.toISOString().slice(0, 10);
@@ -861,6 +859,7 @@ export class ReportsService {
       const ordersByMerchant = new Map<string, number>();
       for (const c of clickRows) {
         if (c.channelAccount.platform?.code !== 'rewardoo') continue;
+        if (c.performanceOrders <= 0) continue;
         if (isLbClickPseudoMerchant(c.merchantId)) continue;
 
         ordersByMerchant.set(

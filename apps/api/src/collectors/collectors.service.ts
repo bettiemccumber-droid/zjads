@@ -28,8 +28,7 @@ import {
   normalizeRewardooOrders,
   summarizeRwCommissionApi,
 } from './rewardoo.collector';
-import { fetchRewardooClicks } from './rewardoo-clicks';
-import { fetchRewardooPerformanceOrderAggs } from './rewardoo-performance-orders';
+import { fetchRewardooClicks, fetchRewardooPerformanceSummaryAggs } from './rewardoo-clicks';
 import { ensurePlatformStatusMappings } from '../common/platform-status-defaults.util';
 import {
   collectorNotReadyMessage,
@@ -239,6 +238,27 @@ export class CollectorsService {
         normalized = normalizeRewardooOrders(rwBundle.rows, mappings, range);
         rwBundle.rows.length = 0;
 
+        await onProgress?.('正在采集 RW Performance 订单数（对齐后台 Orders）…');
+        try {
+          const perfAggs = await fetchRewardooPerformanceSummaryAggs(
+            apiToken,
+            startDate,
+            endDate,
+          );
+          await this.persistPerformanceOrders(
+            account.id,
+            perfAggs.map((a) => ({
+              merchantId: a.merchantId,
+              merchantName: a.merchantName,
+              statDate: a.clickDate,
+              orders: a.performanceOrders,
+            })),
+          );
+        } catch (perfErr) {
+          const msg = perfErr instanceof Error ? perfErr.message : String(perfErr);
+          await onProgress?.(`RW Performance 订单数采集失败: ${msg.slice(0, 120)}`);
+        }
+
         if (options.includeClicks) {
           await onProgress?.('订单已拉取，正在采集 RW 联盟点击（Performance 汇总 API）…');
           try {
@@ -268,19 +288,6 @@ export class CollectorsService {
             rwClickError = clickErr instanceof Error ? clickErr.message : String(clickErr);
             await onProgress?.(`RW 联盟点击采集失败（订单仍会写入）: ${rwClickError}`);
           }
-        }
-
-        await onProgress?.('正在采集 RW Performance 订单数（对齐后台 Orders）…');
-        try {
-          const perfOrderAggs = await fetchRewardooPerformanceOrderAggs(
-            apiToken,
-            startDate,
-            endDate,
-          );
-          await this.persistPerformanceOrders(account.id, perfOrderAggs);
-        } catch (perfErr) {
-          const msg = perfErr instanceof Error ? perfErr.message : String(perfErr);
-          await onProgress?.(`RW Performance 订单数采集失败: ${msg.slice(0, 120)}`);
         }
         break;
       }
@@ -317,12 +324,13 @@ export class CollectorsService {
     startDate: string,
     endDate: string,
   ) {
-    await this.prisma.affiliateMerchantClickDaily.deleteMany({
+    await this.prisma.affiliateMerchantClickDaily.updateMany({
       where: {
         channelAccountId,
         source: AffiliateClickSource.api,
-        clickDate: buildOrderDateRangeFilter(startDate, endDate),
+        clickDate: buildOrderDateRangeFilter(startDate, endDate)!,
       },
+      data: { clicks: 0 },
     });
   }
 
@@ -363,11 +371,20 @@ export class CollectorsService {
           merchantName: c.merchantName,
           clickDate,
           clicks: c.clicks,
+          performanceOrders:
+            'performanceOrders' in c && typeof c.performanceOrders === 'number'
+              ? c.performanceOrders
+              : 0,
           source: AffiliateClickSource.api,
         },
         update: {
           merchantName: c.merchantName,
           clicks: c.clicks,
+          ...('performanceOrders' in c &&
+          typeof c.performanceOrders === 'number' &&
+          c.performanceOrders > 0
+            ? { performanceOrders: c.performanceOrders }
+            : {}),
           source: AffiliateClickSource.api,
         },
       });

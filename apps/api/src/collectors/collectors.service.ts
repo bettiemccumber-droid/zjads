@@ -24,6 +24,7 @@ import {
 import { buildLbMcidToMidMap, fetchLinkBuxClicks } from './linkbux-clicks';
 import { fetchLinkHaitaoClicks, buildLhMcidToMidMap } from './linkhaitao-clicks';
 import {
+  deriveRwPerformanceOrdersFromDetailRows,
   fetchRewardooCommissions,
   normalizeRewardooOrders,
   summarizeRwCommissionApi,
@@ -250,6 +251,7 @@ export class CollectorsService {
 
         await onProgress?.('正在采集 RW Performance 订单数（对齐后台 Orders）…');
         let perfOrderTotal = 0;
+        await this.clearPerformanceOrdersInRange(account.id, startDate, endDate);
         try {
           const merchantsByDate = buildRwMerchantsByDateFromOrders(
             normalized.map((o) => ({
@@ -270,7 +272,6 @@ export class CollectorsService {
           perfOrderTotal = perfAggs.reduce((s, a) => s + a.performanceOrders, 0);
           rwPerformanceOrderCount = perfOrderTotal;
           if (perfOrderTotal > 0) {
-            await this.clearPerformanceOrdersInRange(account.id, startDate, endDate);
             await this.persistPerformanceOrders(
               account.id,
               expandRwPerformanceAggsForRange(perfAggs, startDate, endDate),
@@ -280,13 +281,72 @@ export class CollectorsService {
             }
             await onProgress?.(`Performance 订单 ${perfOrderTotal} 单已写入`);
           } else {
-            rwPerformanceOrderError = 'Performance 接口未返回有效 orders 汇总';
-            await onProgress?.(rwPerformanceOrderError);
+            const derived = deriveRwPerformanceOrdersFromDetailRows(
+              detailRows,
+              startDate,
+              endDate,
+            );
+            const derivedTotal = derived.reduce((s, a) => s + a.performanceOrders, 0);
+            if (derivedTotal > 0) {
+              perfOrderTotal = derivedTotal;
+              rwPerformanceOrderCount = derivedTotal;
+              await this.persistPerformanceOrders(
+                account.id,
+                expandRwPerformanceAggsForRange(
+                  derived.map((d) => ({
+                    merchantId: d.merchantId,
+                    merchantName: d.merchantName,
+                    clickDate: d.clickDate,
+                    clicks: 0,
+                    performanceOrders: d.performanceOrders,
+                  })),
+                  startDate,
+                  endDate,
+                ),
+              );
+              if (rwApi) {
+                rwApi.orderCount = derivedTotal;
+              }
+              await onProgress?.(
+                `Performance API 无数据，明细推导 ${derivedTotal} 单已写入`,
+              );
+            } else {
+              rwPerformanceOrderError = 'Performance 接口未返回有效 orders 汇总';
+              await onProgress?.(rwPerformanceOrderError);
+            }
           }
         } catch (perfErr) {
           const msg = perfErr instanceof Error ? perfErr.message : String(perfErr);
           rwPerformanceOrderError = msg.slice(0, 200);
           await onProgress?.(`RW Performance 订单数采集失败: ${msg.slice(0, 120)}`);
+          const derived = deriveRwPerformanceOrdersFromDetailRows(
+            detailRows,
+            startDate,
+            endDate,
+          );
+          const derivedTotal = derived.reduce((s, a) => s + a.performanceOrders, 0);
+          if (derivedTotal > 0) {
+            perfOrderTotal = derivedTotal;
+            rwPerformanceOrderCount = derivedTotal;
+            await this.persistPerformanceOrders(
+              account.id,
+              expandRwPerformanceAggsForRange(
+                derived.map((d) => ({
+                  merchantId: d.merchantId,
+                  merchantName: d.merchantName,
+                  clickDate: d.clickDate,
+                  clicks: 0,
+                  performanceOrders: d.performanceOrders,
+                })),
+                startDate,
+                endDate,
+              ),
+            );
+            if (rwApi) {
+              rwApi.orderCount = derivedTotal;
+            }
+            await onProgress?.(`Performance 失败，明细推导 ${derivedTotal} 单已写入`);
+          }
         }
 
         if (options.includeClicks) {

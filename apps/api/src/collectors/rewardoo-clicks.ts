@@ -1339,10 +1339,18 @@ const RW_PERFORMANCE_ORDER_FIELDS = [
   'sale_orders',
 ] as const;
 
+/** 读取汇总行顶层 Orders 字段（不递归，避免与明细行判断互相调用） */
+function readRwAggregateOrdersField_(row: Record<string, unknown>): number {
+  for (const key of RW_PERFORMANCE_AGG_ORDER_FIELDS) {
+    const n = parseRwClickCount_(row[key]);
+    if (n > 0) return n;
+  }
+  return 0;
+}
+
 /** 佣金明细行（含 sign_id 且无汇总 orders），不能当 Performance Daily 汇总 */
 function isRwTransactionDetailRow_(row: Record<string, unknown>): boolean {
-  const aggregateOrders = extractRwPerformanceOrdersFromRow_(row);
-  if (aggregateOrders > 1) return false;
+  if (readRwAggregateOrdersField_(row) > 1) return false;
 
   const signId = row.sign_id;
   if (signId == null || String(signId).trim() === '' || String(signId) === '0') {
@@ -1352,11 +1360,14 @@ function isRwTransactionDetailRow_(row: Record<string, unknown>): boolean {
 }
 
 /** 从 Performance Daily 汇总行解析 Orders */
-function extractRwPerformanceOrdersFromRow_(row: Record<string, unknown>): number {
-  for (const key of RW_PERFORMANCE_AGG_ORDER_FIELDS) {
-    const n = parseRwClickCount_(row[key]);
-    if (n > 0) return n;
-  }
+function extractRwPerformanceOrdersFromRow_(
+  row: Record<string, unknown>,
+  depth = 0,
+): number {
+  if (depth > 4) return 0;
+
+  const agg = readRwAggregateOrdersField_(row);
+  if (agg > 0) return agg;
 
   if (!isRwTransactionDetailRow_(row)) {
     const singular = parseRwClickCount_(row.order);
@@ -1365,8 +1376,8 @@ function extractRwPerformanceOrdersFromRow_(row: Record<string, unknown>): numbe
 
   for (const nestedKey of ['stat', 'stats', 'summary', 'total'] as const) {
     const nested = row[nestedKey];
-    if (!nested || typeof nested !== 'object') continue;
-    const n = extractRwPerformanceOrdersFromRow_(nested as Record<string, unknown>);
+    if (!nested || typeof nested !== 'object' || Array.isArray(nested)) continue;
+    const n = extractRwPerformanceOrdersFromRow_(nested as Record<string, unknown>, depth + 1);
     if (n > 0) return n;
   }
 
@@ -1374,7 +1385,9 @@ function extractRwPerformanceOrdersFromRow_(row: Record<string, unknown>): numbe
 }
 
 /** 从 Performance 汇总行解析 Orders（与 RW 后台 Performance Daily 一致） */
-function extractRwOrderCountFromRow_(row: Record<string, unknown>): number {
+function extractRwOrderCountFromRow_(row: Record<string, unknown>, depth = 0): number {
+  if (depth > 4) return 0;
+
   for (const key of RW_PERFORMANCE_ORDER_FIELDS) {
     const n = parseRwClickCount_(row[key]);
     if (n > 0) return n;
@@ -1382,15 +1395,17 @@ function extractRwOrderCountFromRow_(row: Record<string, unknown>): number {
 
   for (const nestedKey of ['stat', 'stats', 'summary', 'total'] as const) {
     const nested = row[nestedKey];
-    if (!nested || typeof nested !== 'object') continue;
-    const n = extractRwOrderCountFromRow_(nested as Record<string, unknown>);
+    if (!nested || typeof nested !== 'object' || Array.isArray(nested)) continue;
+    const n = extractRwOrderCountFromRow_(nested as Record<string, unknown>, depth + 1);
     if (n > 0) return n;
   }
 
   return 0;
 }
 
-function extractRwClickCountFromRow_(row: Record<string, unknown>): number {
+function extractRwClickCountFromRow_(row: Record<string, unknown>, depth = 0): number {
+  if (depth > 4) return 0;
+
   for (const [key, val] of Object.entries(row)) {
     if (!/click/i.test(key)) continue;
     if (/click_(time|ref|id|url|link)|clicktime|clickdate/i.test(key)) continue;
@@ -1400,8 +1415,8 @@ function extractRwClickCountFromRow_(row: Record<string, unknown>): number {
 
   for (const nestedKey of ['stat', 'stats', 'summary', 'total'] as const) {
     const nested = row[nestedKey];
-    if (!nested || typeof nested !== 'object') continue;
-    const n = extractRwClickCountFromRow_(nested as Record<string, unknown>);
+    if (!nested || typeof nested !== 'object' || Array.isArray(nested)) continue;
+    const n = extractRwClickCountFromRow_(nested as Record<string, unknown>, depth + 1);
     if (n > 0) return n;
   }
 

@@ -21,6 +21,7 @@ export interface RwCommissionRow {
   norm_id?: string | number;
   merchant_id?: string | number;
   merchant_name?: string;
+  sitename?: string;
   advertiser_name?: string;
   sale_amount?: string | number;
   amount?: string | number;
@@ -95,8 +96,8 @@ export function deriveRwPerformanceOrdersFromDetailRows(
     );
     if (commission <= 0 && orderAmount <= 0) continue;
 
-    const clickDate = parseRwPerformanceStatDate_(row, endDate).toISOString().slice(0, 10);
-    if (clickDate < startDate || clickDate > endDate) continue;
+    const clickDate = parseRwDetailStatDateStr(row, endDate);
+    if (!clickDate || clickDate < startDate || clickDate > endDate) continue;
 
     const dedupeKey = resolveRwOrderDedupeKey_(row);
     if (!dedupeKey) continue;
@@ -123,8 +124,43 @@ export function deriveRwPerformanceOrdersFromDetailRows(
   }));
 }
 
+/** 明细行按日归因（RW Performance Transaction Date 优先，无效日期不回退「今天」） */
+export function parseRwDetailStatDateStr(
+  row: RwCommissionRow,
+  fallbackDate: string,
+): string | null {
+  for (const key of [
+    'transaction_date',
+    'order_ymd',
+    'order_date',
+    'date',
+    'ymd',
+  ] as const) {
+    const v = row[key];
+    if (v == null || String(v).trim() === '' || String(v) === 'null') continue;
+    const d = parseAffiliateOrderDateUtc(v).toISOString().slice(0, 10);
+    if (/^\d{4}-\d{2}-\d{2}$/.test(d)) return d;
+  }
+
+  for (const key of ['order_time', 'transaction_time'] as const) {
+    const v = row[key];
+    if (v == null || String(v).trim() === '') continue;
+    const d = parseAffiliateOrderDateUtc(v).toISOString().slice(0, 10);
+    if (/^\d{4}-\d{2}-\d{2}$/.test(d)) return d;
+  }
+
+  for (const key of ['validation_date', 'payment_ymd'] as const) {
+    const v = row[key];
+    if (v == null || String(v).trim() === '' || String(v) === 'null') continue;
+    const d = parseAffiliateOrderDateUtc(v).toISOString().slice(0, 10);
+    if (/^\d{4}-\d{2}-\d{2}$/.test(d)) return d;
+  }
+
+  return /^\d{4}-\d{2}-\d{2}$/.test(fallbackDate) ? fallbackDate : null;
+}
+
 /**
- * 从 transaction_details 按 Transaction Date + 商家汇总日佣金（affiliate 口径 + transaction_date 分组）
+ * 从 transaction_details 按日+商家汇总（affiliate 口径，供报表快速写入）
  */
 export function buildRwDailyMetricsFromDetailRows(
   rows: RwCommissionRow[],
@@ -161,10 +197,16 @@ export function buildRwDailyMetricsFromDetailRows(
     );
     if (commission <= 0 && orderAmount <= 0) continue;
 
-    const clickDate = parseRwPerformanceStatDate_(row, endDate).toISOString().slice(0, 10);
-    if (clickDate < startDate || clickDate > endDate) continue;
+    const clickDate = parseRwDetailStatDateStr(row, endDate);
+    if (!clickDate || clickDate < startDate || clickDate > endDate) continue;
 
-    const dedupeKey = resolveRwOrderDedupeKey_(row);
+    let dedupeKey = resolveRwOrderDedupeKey_(row);
+    if (!dedupeKey) {
+      const signId = row.sign_id ?? row.txn_id ?? row.transaction_id;
+      if (signId != null && String(signId).trim() !== '' && String(signId) !== '0') {
+        dedupeKey = `sign:${String(signId).trim()}`;
+      }
+    }
     if (!dedupeKey) continue;
 
     const mapKey = `${merchantId}|${clickDate}`;
@@ -172,7 +214,9 @@ export function buildRwDailyMetricsFromDetailRows(
     if (!bucket) {
       bucket = {
         merchantId,
-        merchantName: String(row.merchant_name ?? row.advertiser_name ?? ''),
+        merchantName: String(
+          row.merchant_name ?? row.sitename ?? row.advertiser_name ?? '',
+        ),
         clickDate,
         orderKeys: new Set(),
         performanceCommission: 0,
@@ -181,8 +225,9 @@ export function buildRwDailyMetricsFromDetailRows(
     }
     bucket.orderKeys.add(dedupeKey);
     bucket.performanceCommission += commission;
-    if (!bucket.merchantName && row.merchant_name) {
-      bucket.merchantName = String(row.merchant_name);
+    const name = row.merchant_name ?? row.sitename ?? row.advertiser_name;
+    if (!bucket.merchantName && name) {
+      bucket.merchantName = String(name);
     }
   }
 

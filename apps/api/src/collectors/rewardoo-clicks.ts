@@ -289,6 +289,30 @@ export async function fetchRewardooPerformanceSummaryAggs(
   );
 }
 
+/**
+ * 快速拉取 RW 点击/Performance（整段区间单次请求，避免逐日多源拖慢采集）
+ */
+export async function fetchRewardooClicksQuick(
+  apiToken: string,
+  startDate: string,
+  endDate: string,
+): Promise<RwMerchantClickAgg[]> {
+  const agg = new Map<string, RwMerchantClickAgg>();
+  const spec = RW_CPS_DAILY_SOURCES[0];
+  await fetchClickSource_(
+    spec,
+    apiToken,
+    startDate,
+    endDate,
+    agg,
+    startDate,
+    endDate,
+    undefined,
+    { rwPerformanceDaily: true },
+  );
+  return [...agg.values()];
+}
+
 /** CPS 按天 Performance（与 fetchRewardooClicks 同源链路） */
 const RW_CPS_DAILY_SOURCES: RwClickSourceSpec[] = [
   {

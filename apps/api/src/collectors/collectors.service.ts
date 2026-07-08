@@ -32,7 +32,7 @@ import {
 } from './rewardoo.collector';
 import {
   fetchRewardooPerformanceSummaryAggs,
-  fetchRewardooClicks,
+  fetchRewardooClicksQuick,
   buildRwMerchantsByDateFromOrders,
   expandRwPerformanceAggsForRange,
   mergeRwPerformanceWithClickAggs,
@@ -256,87 +256,108 @@ export class CollectorsService {
         };
         normalized = normalizeRewardooOrders(detailRows, mappings, range);
 
-        await onProgress?.('正在采集 RW CPS Performance（API + 点击）…');
+        await onProgress?.('正在写入 RW 按日汇总（transaction_details）…');
         let perfOrderTotal = 0;
-        let perfSource = 'API';
+        let perfSource = 'transaction_details';
         try {
-          const merchantsByDate = buildRwMerchantsByDateFromOrders(
-            normalized.map((o) => ({
-              merchantId: o.merchantId,
-              orderDate: o.orderDate,
-              commission: o.commission,
-            })),
-          );
-          let perfAggs = await fetchRewardooPerformanceSummaryAggs(
-            apiToken,
-            startDate,
-            endDate,
-            async (message) => {
-              await onProgress?.(message);
-            },
-            { merchantsByDate },
-          );
-
-          let clickAggs: Awaited<ReturnType<typeof fetchRewardooClicks>> = [];
-          try {
-            clickAggs = await fetchRewardooClicks(
-              apiToken,
-              startDate,
-              endDate,
-              async (p) => {
-                await onProgress?.(
-                  `RW 点击 ${p.source ?? 'medium/performance'} ${p.slotIndex}/${p.totalSlots}，已汇总 ${p.clicksSoFar}`,
-                );
-              },
-            );
-          } catch (clickErr) {
-            const clickMsg =
-              clickErr instanceof Error ? clickErr.message : String(clickErr);
-            await onProgress?.(`RW 点击采集跳过: ${clickMsg.slice(0, 100)}`);
-          }
-          rwClickTotal = clickAggs.reduce((s, a) => s + a.clicks, 0);
-
           const detailMetrics = buildRwDailyMetricsFromDetailRows(
             detailRows,
             startDate,
             endDate,
           );
-          if (perfAggs.length === 0 && detailMetrics.length > 0) {
-            perfSource = 'transaction_details';
-            perfAggs = rwDetailMetricsToClickAggs(detailMetrics);
-            await onProgress?.(
-              `Performance API 无数据，改用 transaction_details 按日汇总（${perfAggs.length} 条商家日）`,
-            );
-          }
-
-          perfAggs = mergeRwPerformanceWithClickAggs(perfAggs, clickAggs);
-          if (rwClickTotal > 0 && perfSource === 'transaction_details') {
-            await onProgress?.(`已合并点击采集 ${rwClickTotal} 次`);
-          }
-
+          let perfAggs = rwDetailMetricsToClickAggs(detailMetrics);
+          let perfCommTotal = perfAggs.reduce((s, a) => s + a.performanceCommission, 0);
           perfOrderTotal = perfAggs.reduce((s, a) => s + a.performanceOrders, 0);
-          const perfCommTotal = perfAggs.reduce((s, a) => s + a.performanceCommission, 0);
-          rwPerformanceOrderCount = perfOrderTotal;
-          rwClickTotal = perfAggs.reduce((s, a) => s + a.clicks, 0);
 
-          if (
-            perfAggs.length === 0 ||
-            (perfOrderTotal <= 0 && perfCommTotal <= 0 && rwClickTotal <= 0)
-          ) {
-            rwPerformanceOrderError = 'RW Performance 与 transaction_details 均无有效按日数据';
-            await onProgress?.(rwPerformanceOrderError);
-          } else {
+          if (perfAggs.length > 0 && (perfCommTotal > 0 || perfOrderTotal > 0)) {
             await this.clearRwPerformanceDailyInRange(account.id, startDate, endDate);
             await this.persistRwPerformanceDaily(
               account.id,
               expandRwPerformanceAggsForRange(perfAggs, startDate, endDate),
             );
-            if (rwApi) {
-              rwApi.orderCount = perfOrderTotal;
-            }
+            rwPerformanceOrderCount = perfOrderTotal;
+            if (rwApi) rwApi.orderCount = perfOrderTotal;
             await onProgress?.(
-              `Performance 已写入（${perfSource}）${perfOrderTotal} 单 / $${perfCommTotal.toFixed(2)} / 点击 ${rwClickTotal}`,
+              `Performance 已写入（${perfSource}）${perfOrderTotal} 单 / $${perfCommTotal.toFixed(2)}`,
             );
+          } else {
+            await onProgress?.(
+              `transaction_details 无法按日汇总（${detailRows.length} 行），尝试 Performance API…`,
+            );
+            const merchantsByDate = buildRwMerchantsByDateFromOrders(
+              normalized.map((o) => ({
+                merchantId: o.merchantId,
+                orderDate: o.orderDate,
+                commission: o.commission,
+              })),
+            );
+            perfAggs = await fetchRewardooPerformanceSummaryAggs(
+              apiToken,
+              startDate,
+              endDate,
+              async (message) => {
+                await onProgress?.(message);
+              },
+              { merchantsByDate },
+            );
+            perfSource = 'API';
+            perfOrderTotal = perfAggs.reduce((s, a) => s + a.performanceOrders, 0);
+            perfCommTotal = perfAggs.reduce((s, a) => s + a.performanceCommission, 0);
+            if (perfAggs.length > 0 && (perfCommTotal > 0 || perfOrderTotal > 0)) {
+              await this.clearRwPerformanceDailyInRange(account.id, startDate, endDate);
+              await this.persistRwPerformanceDaily(
+                account.id,
+                expandRwPerformanceAggsForRange(perfAggs, startDate, endDate),
+              );
+              rwPerformanceOrderCount = perfOrderTotal;
+              if (rwApi) rwApi.orderCount = perfOrderTotal;
+              await onProgress?.(
+                `Performance 已写入（${perfSource}）${perfOrderTotal} 单 / $${perfCommTotal.toFixed(2)}`,
+              );
+            }
+          }
+
+          if (rwPerformanceOrderCount && rwPerformanceOrderCount > 0) {
+            try {
+              const clickAggs = await fetchRewardooClicksQuick(
+                apiToken,
+                startDate,
+                endDate,
+              );
+              const clickTotal = clickAggs.reduce((s, a) => s + a.clicks, 0);
+              const apiOrderTotal = clickAggs.reduce(
+                (s, a) => s + a.performanceOrders,
+                0,
+              );
+              const apiCommTotal = clickAggs.reduce(
+                (s, a) => s + a.performanceCommission,
+                0,
+              );
+              if (clickTotal > 0 || apiOrderTotal > 0 || apiCommTotal > 0) {
+                const merged = mergeRwPerformanceWithClickAggs(perfAggs, clickAggs);
+                await this.persistRwPerformanceDaily(
+                  account.id,
+                  expandRwPerformanceAggsForRange(merged, startDate, endDate),
+                );
+                perfOrderTotal = merged.reduce((s, a) => s + a.performanceOrders, 0);
+                rwPerformanceOrderCount = perfOrderTotal;
+                rwClickTotal = merged.reduce((s, a) => s + a.clicks, 0);
+                if (rwApi) rwApi.orderCount = perfOrderTotal;
+                await onProgress?.(
+                  `已合并 Performance API：${perfOrderTotal} 单 / 点击 ${rwClickTotal}`,
+                );
+              }
+            } catch (clickErr) {
+              const clickMsg =
+                clickErr instanceof Error ? clickErr.message : String(clickErr);
+              await onProgress?.(`RW 点击补充跳过: ${clickMsg.slice(0, 80)}`);
+            }
+          } else {
+            rwPerformanceOrderError =
+              detailRows.length > 0
+                ? 'transaction_details 有数据但无法生成按日 Performance'
+                : 'RW 无订单明细';
+            await onProgress?.(rwPerformanceOrderError);
           }
         } catch (perfErr) {
           const msg = perfErr instanceof Error ? perfErr.message : String(perfErr);

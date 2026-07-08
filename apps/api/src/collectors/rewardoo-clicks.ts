@@ -304,38 +304,95 @@ async function fetchRwPerformanceDaily_(
     for (const mid of mids) merchantIds.add(mid);
   }
 
-  const dates = listInclusiveDates_(startDate, endDate);
   const dayAgg = new Map<string, RwMerchantClickAgg>();
   const midsToTry =
     merchantIds.size > 0 ? [...merchantIds] : [undefined as string | undefined];
 
+  for (const mid of midsToTry) {
+    const rangeParams: Record<string, string> = {
+      begin_date: startDate,
+      end_date: endDate,
+      ...(mid ? rwMidParams_(mid) : {}),
+    };
+    await fetchRwPerformancePages_(apiToken, rangeParams, (rows, defaultDate) => {
+      for (const raw of rows) {
+        const row = raw as Record<string, unknown>;
+        const statDate = parseRwRowDate_(row) || defaultDate || '';
+        if (!statDate || statDate < startDate || statDate > endDate) continue;
+        mergeRwPerformanceDailyRow_(row, dayAgg, statDate);
+      }
+    });
+  }
+
+  const dates = listInclusiveDates_(startDate, endDate);
+  let rangeOrders = [...dayAgg.values()].reduce((s, a) => s + a.performanceOrders, 0);
+  let rangeComm = [...dayAgg.values()].reduce((s, a) => s + a.performanceCommission, 0);
+  let rangeClicks = [...dayAgg.values()].reduce((s, a) => s + a.clicks, 0);
+  if (rangeOrders <= 0 && rangeComm <= 0 && rangeClicks <= 0) {
+    dayAgg.clear();
+  }
+
   for (const dateStr of dates) {
     for (const mid of midsToTry) {
-      const params: Record<string, string> = {
+      const mapKey = mid ? `${mid}|${dateStr}` : '';
+      if (mid && dayAgg.has(mapKey)) continue;
+      if (!mid && [...dayAgg.keys()].some((k) => k.endsWith(`|${dateStr}`))) continue;
+
+      const dayParams: Record<string, string> = {
         begin_date: dateStr,
         end_date: dateStr,
         ...(mid ? rwMidParams_(mid) : {}),
       };
-
-      await forEachRewardooGetPage_('medium', 'performance', apiToken, params, (rows) => {
+      await fetchRwPerformancePages_(apiToken, dayParams, (rows) => {
         for (const raw of rows) {
-          mergeRwPerformanceDailyRow_(raw as Record<string, unknown>, dayAgg, dateStr);
+          mergeRwPerformanceDailyRow_(
+            raw as Record<string, unknown>,
+            dayAgg,
+            dateStr,
+          );
         }
       });
     }
   }
 
   if (dayAgg.size === 0) {
-    await onProgress?.('medium/performance 逐日无数据');
+    await onProgress?.('medium/performance 无数据（POST/GET 均为空）');
     return [];
   }
 
   const totalOrders = [...dayAgg.values()].reduce((s, a) => s + a.performanceOrders, 0);
   const totalComm = [...dayAgg.values()].reduce((s, a) => s + a.performanceCommission, 0);
+  const totalClicks = [...dayAgg.values()].reduce((s, a) => s + a.clicks, 0);
   await onProgress?.(
-    `medium/performance 逐日 → ${totalOrders} 单 / $${totalComm.toFixed(2)}（${dayAgg.size} 条商家日）`,
+    `medium/performance → ${totalOrders} 单 / $${totalComm.toFixed(2)} / 点击 ${totalClicks}（${dayAgg.size} 条商家日）`,
   );
   return [...dayAgg.values()];
+}
+
+/** POST page/limit 优先，GET 兜底（与 rw-click-probe 一致） */
+async function fetchRwPerformancePages_(
+  apiToken: string,
+  params: Record<string, string>,
+  onRows: (rows: unknown[], defaultDate?: string) => void | Promise<void>,
+): Promise<void> {
+  const defaultDate =
+    params.begin_date === params.end_date ? params.begin_date : undefined;
+
+  const postResult = await forEachRewardooPageLimit(
+    'medium',
+    'performance',
+    apiToken,
+    params,
+    async (rows) => {
+      await onRows(rows, defaultDate);
+    },
+    RW_CLICK_PAGE_SIZE,
+  );
+  if (postResult.rowCount > 0) return;
+
+  await forEachRewardooGetPage_('medium', 'performance', apiToken, params, async (rows) => {
+    await onRows(rows, defaultDate);
+  });
 }
 
 /** 解析 RW Performance 汇总行 Comm.（与后台 Performance Daily 一致） */
@@ -353,6 +410,7 @@ function extractRwPerformanceCommissionFromRow_(
     'approved_comm',
     'cps_comm',
     'cashback',
+    'total_commission',
   ] as const) {
     const n = parseRwMoney_(row[key]);
     if (n > 0) return n;
@@ -380,8 +438,6 @@ function mergeRwPerformanceDailyRow_(
   agg: Map<string, RwMerchantClickAgg>,
   statDate: string,
 ): void {
-  if (isRwTransactionDetailRow_(row)) return;
-
   const merchantId = resolveRwClickMerchantId_(row);
   if (!merchantId) return;
 
@@ -406,14 +462,9 @@ function mergeRwPerformanceDailyRow_(
   }
 
   if (!existing.merchantName && merchantName) existing.merchantName = merchantName;
-  if (orders > existing.performanceOrders) {
-    existing.performanceOrders = orders;
-    existing.performanceCommission = commission;
-    existing.clicks = clicks;
-  } else if (orders === existing.performanceOrders) {
-    existing.performanceCommission = Math.max(existing.performanceCommission, commission);
-    existing.clicks = Math.max(existing.clicks, clicks);
-  }
+  existing.performanceOrders = Math.max(existing.performanceOrders, orders);
+  existing.performanceCommission = Math.max(existing.performanceCommission, commission);
+  existing.clicks = Math.max(existing.clicks, clicks);
 }
 
 function rwMidParams_(mid: string): Record<string, string> {

@@ -247,9 +247,8 @@ export class CollectorsService {
         normalized = normalizeRewardooOrders(rwBundle.rows, mappings, range);
         rwBundle.rows.length = 0;
 
-        await onProgress?.('正在采集 RW Performance（medium/performance 逐日，对齐后台）…');
+        await onProgress?.('正在采集 RW Performance（medium/performance，对齐后台）…');
         let perfOrderTotal = 0;
-        await this.clearRwPerformanceDailyInRange(account.id, startDate, endDate);
         try {
           const merchantsByDate = buildRwMerchantsByDateFromOrders(
             normalized.map((o) => ({
@@ -272,10 +271,14 @@ export class CollectorsService {
           rwPerformanceOrderCount = perfOrderTotal;
           rwClickTotal = perfAggs.reduce((s, a) => s + a.clicks, 0);
 
-          if (perfAggs.length === 0) {
-            rwPerformanceOrderError = 'medium/performance 逐日无数据';
+          if (perfAggs.length === 0 || (perfOrderTotal <= 0 && perfCommTotal <= 0 && rwClickTotal <= 0)) {
+            rwPerformanceOrderError =
+              perfAggs.length === 0
+                ? 'medium/performance 无数据'
+                : 'medium/performance 响应无有效 orders/comm/clicks';
             await onProgress?.(rwPerformanceOrderError);
           } else {
+            await this.clearRwPerformanceDailyInRange(account.id, startDate, endDate);
             await this.persistRwPerformanceDaily(
               account.id,
               expandRwPerformanceAggsForRange(perfAggs, startDate, endDate),

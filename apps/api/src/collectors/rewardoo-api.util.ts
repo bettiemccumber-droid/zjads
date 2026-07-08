@@ -199,6 +199,8 @@ function extractRwRows(body: unknown): unknown[] {
     if (Array.isArray(nested.list)) return nested.list;
     if (Array.isArray(nested.rows)) return nested.rows;
     if (Array.isArray(nested.items)) return nested.items;
+    /** affiliate collectRWOrders：data.list || data.transactions */
+    if (Array.isArray(nested.transactions)) return nested.transactions;
   }
 
   const result = root.result;

@@ -4,7 +4,6 @@ import {
   forEachRewardooOffsetPage,
   forEachRewardooPageLimit,
   parseRwApiEnvelope,
-  postRewardooApi,
   RW_API_BASE,
 } from './rewardoo-api.util';
 import type { PmMerchantClickAgg } from './partnermatic-clicks';
@@ -290,109 +289,82 @@ export async function fetchRewardooPerformanceSummaryAggs(
   );
 }
 
-/** 官方 CPC Performance API（平台命名含 CPC，实际可含 CPS 数据，仅最后兜底） */
-function buildRwCpcPerformanceParamVariants_(
-  begin: string,
-  end: string,
-  mid?: string,
-): Record<string, string>[] {
-  const midPart = mid ? rwMidParams_(mid) : {};
-  return [
-    { begin_date: begin, end_date: end, offer_type: 'CPS', status: 'All', ...midPart },
-    { begin_date: begin, end_date: end, status: 'All', ...midPart },
-    {
-      begin_date: begin,
-      end_date: end,
+/** CPS 按天 Performance（与 fetchRewardooClicks 同源链路） */
+const RW_CPS_DAILY_SOURCES: RwClickSourceSpec[] = [
+  {
+    label: 'medium/performance CPS',
+    mod: 'medium',
+    op: 'performance',
+    dateParams: (b, e) => ({ begin_date: b, end_date: e, offer_type: 'CPS' }),
+  },
+  {
+    label: 'medium/performance',
+    mod: 'medium',
+    op: 'performance',
+    dateParams: (b, e) => ({ begin_date: b, end_date: e }),
+  },
+  {
+    label: 'CommissionSummary API',
+    mod: 'commission',
+    op: 'summary',
+    dateParams: (b, e) => ({ begin_date: b, end_date: e }),
+  },
+  {
+    label: 'medium/cpc_performance daily',
+    mod: 'medium',
+    op: 'cpc_performance',
+    dateParams: (b, e) => ({
+      begin_date: b,
+      end_date: e,
       dimension: 'day',
       sub_dimension: 'merchant',
-      status: 'All',
-      ...midPart,
-    },
-    { begin_click_date: begin, end_click_date: end, status: 'All', ...midPart },
-  ];
-}
-
-/** CPS Performance：medium/performance + offer_type=CPS（对齐后台 CPS Performance Report） */
-function buildRwCpsPerformanceParamVariants_(
-  begin: string,
-  end: string,
-  mid?: string,
-): Record<string, string>[] {
-  const midPart = mid ? rwMidParams_(mid) : {};
-  return [
-    { begin_date: begin, end_date: end, offer_type: 'CPS', ...midPart },
-    {
-      begin_date: begin,
-      end_date: end,
-      offer_type: 'CPS',
-      dimension: 'day',
-      sub_dimension: 'merchant',
-      ...midPart,
-    },
-    { begin_date: begin, end_date: end, ...midPart },
-    {
-      begin_date: begin,
-      end_date: end,
-      dimension: 'day',
-      sub_dimension: 'merchant',
-      ...midPart,
-    },
-  ];
-}
-
-/** 探测官方 CPC Performance API 原始响应 */
-async function probeRwCpcPerformanceSample_(
-  apiToken: string,
-  params: Record<string, string>,
-): Promise<string> {
-  await throttleRwClickRequest_();
-  const { data } = await axios.get<unknown>(RW_API_BASE, {
-    params: {
-      mod: 'medium',
-      op: 'cpc_performance',
-      token: apiToken,
-      type: 'json',
-      page: '1',
-      limit: '10',
-      status: 'All',
-      ...params,
-    },
-    timeout: 120000,
-    validateStatus: () => true,
-  });
-  const parsed = parseRwApiEnvelope(data);
-  const first = parsed.rows[0] as Record<string, unknown> | undefined;
-  const keys = first ? Object.keys(first).join(',') : '(empty)';
-  return `CPC Performance code=${parsed.code} rows=${parsed.rows.length} keys=${keys}${
-    parsed.message ? ` msg=${parsed.message}` : ''
-  }`;
-}
-
-/** 探测 medium/performance 原始响应（非文档接口） */
-async function probeRwPerformanceSample_(
-  apiToken: string,
-  params: Record<string, string>,
-): Promise<string> {
-  const parsed = await postRewardooApi('medium', 'performance', {
-    token: apiToken,
-    type: 'json',
-    page: '1',
-    limit: '10',
-    ...params,
-  });
-  const first = parsed.rows[0] as Record<string, unknown> | undefined;
-  const keys = first ? Object.keys(first).join(',') : '(empty)';
-  return `code=${parsed.code} rows=${parsed.rows.length} keys=${keys}${
-    parsed.message ? ` msg=${parsed.message}` : ''
-  }`;
-}
+    }),
+  },
+];
 
 /**
- * 拉取 RW CPS Performance 日汇总（对齐后台 Performance Report · Transaction Date · Daily）
- * 1. CommissionSummary API（begin_date = Transaction Date）
- * 2. medium/performance + offer_type=CPS
- * 3. CPC Performance API（文档名含 CPC，仅兜底）
+ * 合并 Performance 汇总与点击采集结果（按 merchantId|clickDate）
  */
+export function mergeRwPerformanceWithClickAggs(
+  perfAggs: RwMerchantClickAgg[],
+  clickAggs: RwMerchantClickAgg[],
+): RwMerchantClickAgg[] {
+  const map = new Map<string, RwMerchantClickAgg>();
+  for (const a of perfAggs) {
+    map.set(`${a.merchantId}|${a.clickDate}`, { ...a });
+  }
+  for (const c of clickAggs) {
+    const key = `${c.merchantId}|${c.clickDate}`;
+    const existing = map.get(key);
+    if (existing) {
+      existing.clicks = Math.max(existing.clicks, c.clicks);
+      existing.performanceOrders = Math.max(existing.performanceOrders, c.performanceOrders);
+      existing.performanceCommission = Math.max(
+        existing.performanceCommission,
+        c.performanceCommission,
+      );
+      if (!existing.merchantName && c.merchantName) existing.merchantName = c.merchantName;
+    } else {
+      map.set(key, { ...c });
+    }
+  }
+  return [...map.values()];
+}
+
+/** 将 transaction_details 日汇总转为 RwMerchantClickAgg */
+export function rwDetailMetricsToClickAggs(
+  details: Array<{
+    merchantId: string;
+    merchantName: string;
+    clickDate: string;
+    performanceOrders: number;
+    performanceCommission: number;
+    clicks: number;
+  }>,
+): RwMerchantClickAgg[] {
+  return details.map((d) => ({ ...d }));
+}
+
 async function fetchRwPerformanceDaily_(
   apiToken: string,
   startDate: string,
@@ -411,144 +383,47 @@ async function fetchRwPerformanceDaily_(
   const dates = listInclusiveDates_(startDate, endDate);
   let lastSource = '';
 
-  const metricsGrew = (
-    ordersBefore: number,
-    commBefore: number,
-    clicksBefore: number,
-  ): boolean =>
-    sumAggPerformanceOrders_(dayAgg) > ordersBefore ||
-    sumAggPerformanceCommission_(dayAgg) > commBefore ||
-    sumAggClicks_(dayAgg) > clicksBefore;
-
-  const tryFetchCpsPerformance = async (
+  const trySources = async (
     rangeBegin: string,
     rangeEnd: string,
     mid?: string,
     defaultDate?: string,
   ): Promise<boolean> => {
-    for (const variant of buildRwCpsPerformanceParamVariants_(rangeBegin, rangeEnd, mid)) {
+    for (const spec of RW_CPS_DAILY_SOURCES) {
       const ordersBefore = sumAggPerformanceOrders_(dayAgg);
       const commBefore = sumAggPerformanceCommission_(dayAgg);
       const clicksBefore = sumAggClicks_(dayAgg);
-      const spec: RwClickSourceSpec = {
-        label: `CPS Performance${mid ? ` mid=${mid}` : ''}`,
-        mod: 'medium',
-        op: 'performance',
-        dateParams: () => variant,
+      const extraMid = mid ? rwMidParams_(mid) : {};
+      const specWithMid: RwClickSourceSpec = {
+        ...spec,
+        dateParams: (b, e) => ({ ...spec.dateParams(b, e), ...extraMid }),
       };
-      await fetchClickSource_(
-        spec,
-        apiToken,
-        rangeBegin,
-        rangeEnd,
-        dayAgg,
-        startDate,
-        endDate,
-        defaultDate,
-        { rwPerformanceDaily: true, forcedMid: mid },
-      );
-      if (metricsGrew(ordersBefore, commBefore, clicksBefore)) {
-        lastSource = 'CPS Performance (medium/performance)';
-        return true;
+      if (
+        await fetchClickSource_(
+          specWithMid,
+          apiToken,
+          rangeBegin,
+          rangeEnd,
+          dayAgg,
+          startDate,
+          endDate,
+          defaultDate,
+          { rwPerformanceDaily: true, forcedMid: mid },
+        )
+      ) {
+        if (
+          sumAggPerformanceOrders_(dayAgg) > ordersBefore ||
+          sumAggPerformanceCommission_(dayAgg) > commBefore ||
+          sumAggClicks_(dayAgg) > clicksBefore
+        ) {
+          lastSource = spec.label;
+          return true;
+        }
       }
     }
     return false;
   };
 
-  const tryFetchCpcPerformanceFallback = async (
-    rangeBegin: string,
-    rangeEnd: string,
-    mid?: string,
-    defaultDate?: string,
-  ): Promise<boolean> => {
-    for (const variant of buildRwCpcPerformanceParamVariants_(rangeBegin, rangeEnd, mid)) {
-      const ordersBefore = sumAggPerformanceOrders_(dayAgg);
-      const commBefore = sumAggPerformanceCommission_(dayAgg);
-      const clicksBefore = sumAggClicks_(dayAgg);
-      const spec: RwClickSourceSpec = {
-        label: `CPC Performance API${mid ? ` mid=${mid}` : ''}`,
-        mod: 'medium',
-        op: 'cpc_performance',
-        dateParams: () => variant,
-      };
-      await fetchClickSource_(
-        spec,
-        apiToken,
-        rangeBegin,
-        rangeEnd,
-        dayAgg,
-        startDate,
-        endDate,
-        defaultDate,
-        { rwPerformanceDaily: true, forcedMid: mid },
-      );
-      if (metricsGrew(ordersBefore, commBefore, clicksBefore)) {
-        lastSource = 'CPC Performance API（兜底）';
-        return true;
-      }
-    }
-    return false;
-  };
-
-  const tryFetchCommissionSummary = async (
-    rangeBegin: string,
-    rangeEnd: string,
-    mid?: string,
-    defaultDate?: string,
-  ): Promise<boolean> => {
-    const ordersBefore = sumAggPerformanceOrders_(dayAgg);
-    const commBefore = sumAggPerformanceCommission_(dayAgg);
-    const clicksBefore = sumAggClicks_(dayAgg);
-    const spec: RwClickSourceSpec = {
-      label: `CommissionSummary API${mid ? ` mid=${mid}` : ''}`,
-      mod: 'commission',
-      op: 'summary',
-      dateParams: (b, e) => ({
-        begin_date: b,
-        end_date: e,
-        ...(mid ? rwMidParams_(mid) : {}),
-      }),
-    };
-    await fetchClickSource_(
-      spec,
-      apiToken,
-      rangeBegin,
-      rangeEnd,
-      dayAgg,
-      startDate,
-      endDate,
-      defaultDate,
-      { rwPerformanceDaily: true, forcedMid: mid },
-    );
-    if (metricsGrew(ordersBefore, commBefore, clicksBefore)) {
-      lastSource = 'CommissionSummary API';
-      return true;
-    }
-    return false;
-  };
-
-  const tryFetchDay = async (
-    rangeBegin: string,
-    rangeEnd: string,
-    mid?: string,
-    defaultDate?: string,
-  ): Promise<void> => {
-    const snap = () => ({
-      orders: sumAggPerformanceOrders_(dayAgg),
-      comm: sumAggPerformanceCommission_(dayAgg),
-      clicks: sumAggClicks_(dayAgg),
-    });
-    const baseline = snap();
-    await tryFetchCommissionSummary(rangeBegin, rangeEnd, mid, defaultDate);
-    if (!metricsGrew(baseline.orders, baseline.comm, baseline.clicks)) {
-      await tryFetchCpsPerformance(rangeBegin, rangeEnd, mid, defaultDate);
-    }
-    if (!metricsGrew(baseline.orders, baseline.comm, baseline.clicks)) {
-      await tryFetchCpcPerformanceFallback(rangeBegin, rangeEnd, mid, defaultDate);
-    }
-  };
-
-  /** 逐日 + mid：与 RW 后台 Transaction Date · Group by Daily 一致 */
   for (const dateStr of dates) {
     for (const mid of midsToTry) {
       const mapKey = mid ? `${mid}|${dateStr}` : '';
@@ -558,28 +433,18 @@ async function fetchRwPerformanceDaily_(
           continue;
         }
       }
-      await tryFetchDay(dateStr, dateStr, mid, dateStr);
+      await trySources(dateStr, dateStr, mid, dateStr);
     }
   }
 
-  /** 整段区间补洞 */
   if (!hasAggMetrics_(dayAgg)) {
     for (const mid of midsToTry) {
-      await tryFetchDay(startDate, endDate, mid);
+      await trySources(startDate, endDate, mid);
     }
   }
 
   if (!hasAggMetrics_(dayAgg)) {
-    const probeMid = midsToTry.find((m) => m !== undefined) ?? midsToTry[0];
-    const probeParams = {
-      begin_date: startDate,
-      end_date: endDate,
-      offer_type: 'CPS',
-      ...(probeMid ? rwMidParams_(probeMid) : {}),
-    };
-    const summaryProbe = await probeRwPerformanceSample_(apiToken, probeParams);
-    const cpcProbe = await probeRwCpcPerformanceSample_(apiToken, probeParams);
-    await onProgress?.(`CPS Performance 无数据 · CommissionSummary/CPS: ${summaryProbe} · CPC兜底: ${cpcProbe}`);
+    await onProgress?.('CPS Performance API 无数据（medium/performance CPS / CommissionSummary）');
     return [];
   }
 
@@ -587,7 +452,7 @@ async function fetchRwPerformanceDaily_(
   const totalComm = sumAggPerformanceCommission_(dayAgg);
   const totalClicks = sumAggClicks_(dayAgg);
   await onProgress?.(
-    `${lastSource || 'Performance API'} → ${totalOrders} 单 / $${totalComm.toFixed(2)} / 点击 ${totalClicks}（${dayAgg.size} 条商家日）`,
+    `${lastSource || 'CPS Performance'} → ${totalOrders} 单 / $${totalComm.toFixed(2)} / 点击 ${totalClicks}（${dayAgg.size} 条商家日）`,
   );
   return [...dayAgg.values()];
 }

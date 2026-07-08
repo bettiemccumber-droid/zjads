@@ -124,6 +124,79 @@ export function deriveRwPerformanceOrdersFromDetailRows(
 }
 
 /**
+ * 从 transaction_details 按 Transaction Date + 商家汇总日佣金（affiliate 口径 + transaction_date 分组）
+ */
+export function buildRwDailyMetricsFromDetailRows(
+  rows: RwCommissionRow[],
+  startDate: string,
+  endDate: string,
+): Array<{
+  merchantId: string;
+  merchantName: string;
+  clickDate: string;
+  performanceOrders: number;
+  performanceCommission: number;
+  clicks: number;
+}> {
+  const byKey = new Map<
+    string,
+    {
+      merchantId: string;
+      merchantName: string;
+      clickDate: string;
+      orderKeys: Set<string>;
+      performanceCommission: number;
+    }
+  >();
+
+  for (const row of rows) {
+    const merchantId = resolveRwMerchantId(row);
+    if (!merchantId) continue;
+
+    const commission = parseMoney(
+      row.sale_comm ?? row.commission ?? row.comm ?? row.cashback,
+    );
+    const orderAmount = parseMoney(
+      row.sale_amount ?? row.order_amount ?? row.sale ?? row.amount,
+    );
+    if (commission <= 0 && orderAmount <= 0) continue;
+
+    const clickDate = parseRwPerformanceStatDate_(row, endDate).toISOString().slice(0, 10);
+    if (clickDate < startDate || clickDate > endDate) continue;
+
+    const dedupeKey = resolveRwOrderDedupeKey_(row);
+    if (!dedupeKey) continue;
+
+    const mapKey = `${merchantId}|${clickDate}`;
+    let bucket = byKey.get(mapKey);
+    if (!bucket) {
+      bucket = {
+        merchantId,
+        merchantName: String(row.merchant_name ?? row.advertiser_name ?? ''),
+        clickDate,
+        orderKeys: new Set(),
+        performanceCommission: 0,
+      };
+      byKey.set(mapKey, bucket);
+    }
+    bucket.orderKeys.add(dedupeKey);
+    bucket.performanceCommission += commission;
+    if (!bucket.merchantName && row.merchant_name) {
+      bucket.merchantName = String(row.merchant_name);
+    }
+  }
+
+  return [...byKey.values()].map((b) => ({
+    merchantId: b.merchantId,
+    merchantName: b.merchantName,
+    clickDate: b.clickDate,
+    performanceOrders: b.orderKeys.size,
+    performanceCommission: Math.round(b.performanceCommission * 100) / 100,
+    clicks: 0,
+  }));
+}
+
+/**
  * 拉取 Rewardoo 佣金（仅 transaction_details，与 affiliate collectRWOrders 一致）
  */
 export async function fetchRewardooCommissions(
@@ -386,9 +459,13 @@ function normalizeRwRawStatus(raw: string | number | undefined): string {
 }
 
 /**
- * 解析 RW 订单日期（与 RW Performance Transaction Date 一致，transaction_date 优先）
+ * 解析 RW 订单日期（与 affiliate collectRWOrders 一致：order_time 优先）
  */
 function parseRwOrderDate(row: RwCommissionRow, fallbackDate?: string): Date {
+  if (row.order_time != null && String(row.order_time).trim() !== '') {
+    return parseAffiliateOrderDateUtc(row.order_time);
+  }
+
   for (const key of [
     'transaction_date',
     'order_ymd',
@@ -401,7 +478,7 @@ function parseRwOrderDate(row: RwCommissionRow, fallbackDate?: string): Date {
     return parseAffiliateOrderDateUtc(v);
   }
 
-  for (const key of ['order_time', 'transaction_time'] as const) {
+  for (const key of ['transaction_time'] as const) {
     const v = row[key];
     if (v == null || String(v).trim() === '') continue;
     return parseAffiliateOrderDateUtc(v);

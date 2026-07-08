@@ -432,7 +432,7 @@ export class SyncService implements OnModuleInit {
             : '';
         const detailOrders = result.rwApi.detailOrderCount ?? result.rwApi.orderCount;
         const commission = result.rwApi.totalCommission.toFixed(2);
-        let rwMsg = `RW 佣金 ${result.rwApi.apiListRows} 行 / $${commission}${src}`;
+        let rwMsg = `RW 佣金 ${result.rwApi.apiListRows} 行 / 合并 ${detailOrders} 单 / $${commission}${src}`;
         if (result.rwPerformanceOrderCount !== undefined && result.rwPerformanceOrderCount > 0) {
           rwMsg += ` · Performance ${result.rwPerformanceOrderCount} 单（报表口径）`;
           if (detailOrders !== result.rwPerformanceOrderCount) {

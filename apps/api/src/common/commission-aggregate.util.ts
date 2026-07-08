@@ -1,7 +1,7 @@
 import { NormalizedStatus } from '@prisma/client';
 import { isCollectorImplemented } from '../collectors/collectors.registry';
 import { commissionAlertMerchantId } from './commission-alert-key.util';
-import { dedupeAffiliateOrderKey } from './order-dedupe.util';
+import { dedupeAffiliateOrderRecord } from './order-dedupe.util';
 import {
   orderHasRejectedCommission,
   resolveOrderCommissionBuckets,
@@ -81,7 +81,7 @@ export function aggregateAffiliateOrders(orders: OrderRow[]): MerchantCommission
 
     const platformCode = o.channelAccount.platform.code;
     const alias = (o.channelAccount.affiliateAlias || '').toLowerCase();
-    const dedupeKey = `${o.channelAccountId}|${dedupeAffiliateOrderKey(o.externalOrderId)}`;
+    const dedupeKey = `${o.channelAccountId}|${dedupeAffiliateOrderRecord(o)}`;
     const merchantKey = `${mid}|${platformCode}|${alias}`;
     const comm = Number(o.commission);
     const buckets = resolveOrderCommissionBuckets(o);
@@ -170,7 +170,7 @@ export function aggregateAffiliateOrdersForMonitor(orders: OrderRow[]): Merchant
 
     const platformCode = o.channelAccount.platform.code;
     const alias = (o.channelAccount.affiliateAlias || '').toLowerCase();
-    const dedupeKey = `${platformCode}|${dedupeAffiliateOrderKey(o.externalOrderId)}`;
+    const dedupeKey = `${platformCode}|${dedupeAffiliateOrderRecord(o)}`;
     const aggKey = `${mid}|${platformCode}`;
     const comm = Number(o.commission);
     const buckets = resolveOrderCommissionBuckets(o);

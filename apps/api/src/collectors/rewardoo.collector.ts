@@ -1,8 +1,8 @@
 import { NormalizedStatus, PlatformStatusMapping } from '@prisma/client';
 import { parseAffiliateOrderDateUtc } from '../common/affiliate-order-date.util';
 import {
-  fetchRewardooCommissionData,
-  RwCommissionOp,
+  fetchRewardooTransactionDetailPages,
+  RW_TRANSACTION_DETAILS_OP,
 } from './rewardoo-api.util';
 import { NormalizedOrder } from './types';
 import { normalizeStatus } from './status-normalizer';
@@ -71,8 +71,7 @@ export interface RwMerchantDayOrderAgg {
 }
 
 /**
- * 从 transaction_details 推导 Performance Orders：merchant+日按 order_id+sign_id 去重。
- * 同一 order_id 多行（拆佣金）与 RW Performance Daily 一致。
+ * 从 transaction_details 推导按日 Orders（与 affiliate orderMap 一致：order_id 合并拆单行）。
  */
 export function deriveRwPerformanceOrdersFromDetailRows(
   rows: RwCommissionRow[],
@@ -96,36 +95,10 @@ export function deriveRwPerformanceOrdersFromDetailRows(
     );
     if (commission <= 0 && orderAmount <= 0) continue;
 
-    const clickDate = parseRwOrderDate(row, endDate).toISOString().slice(0, 10);
+    const clickDate = parseRwPerformanceStatDate_(row, endDate).toISOString().slice(0, 10);
     if (clickDate < startDate || clickDate > endDate) continue;
 
-    const orderIdRaw = row.order_id;
-    const orderId =
-      orderIdRaw != null && String(orderIdRaw).trim() !== '' && String(orderIdRaw) !== '0'
-        ? String(orderIdRaw).trim()
-        : '';
-    const signIdRaw = row.sign_id;
-    const signId =
-      signIdRaw != null && String(signIdRaw).trim() !== '' && String(signIdRaw) !== '0'
-        ? String(signIdRaw).trim()
-        : '';
-    const txnIdRaw = row.transaction_id ?? row.txn_id ?? row.rewardoo_id;
-    const txnId =
-      txnIdRaw != null && String(txnIdRaw).trim() !== '' && String(txnIdRaw) !== '0'
-        ? String(txnIdRaw).trim()
-        : '';
-
-    /** 同一 order_id 多行（拆佣金）在 RW Performance 仍计多单时，用 sign/txn 细分 */
-    let dedupeKey = '';
-    if (orderId && (signId || txnId)) {
-      dedupeKey = `oid:${orderId}|${signId ? `sign:${signId}` : `txn:${txnId}`}`;
-    } else if (orderId) {
-      dedupeKey = `oid:${orderId}`;
-    } else if (signId) {
-      dedupeKey = `sign:${signId}`;
-    } else if (txnId) {
-      dedupeKey = `txn:${txnId}`;
-    }
+    const dedupeKey = resolveRwOrderDedupeKey_(row);
     if (!dedupeKey) continue;
 
     const mapKey = `${merchantId}|${clickDate}`;
@@ -151,7 +124,7 @@ export function deriveRwPerformanceOrdersFromDetailRows(
 }
 
 /**
- * 拉取 Rewardoo 佣金（transaction 优先，空则回退 performance/merchant 等）
+ * 拉取 Rewardoo 佣金（仅 transaction_details，与 affiliate collectRWOrders 一致）
  */
 export async function fetchRewardooCommissions(
   apiToken: string,
@@ -159,13 +132,17 @@ export async function fetchRewardooCommissions(
   endDate: string,
   onProgress?: (message: string) => void | Promise<void>,
 ): Promise<RwFetchBundle> {
-  const { source, rows, triedSources } = await fetchRewardooCommissionData(
+  const source = `medium/${RW_TRANSACTION_DETAILS_OP}`;
+  await onProgress?.(`RW ${source} 拉取中…`);
+  const rows = await fetchRewardooTransactionDetailPages(
     apiToken,
     startDate,
     endDate,
-    onProgress,
+    async (chunkIndex, totalChunks) => {
+      await onProgress?.(`RW ${source} ${chunkIndex}/${totalChunks} 段…`);
+    },
   );
-  return { source, rows: rows as RwCommissionRow[], triedSources };
+  return { source, rows: rows as RwCommissionRow[], triedSources: [source] };
 }
 
 /**
@@ -328,15 +305,20 @@ function mergeRwOrder(
 }
 
 /**
- * 解析 RW 入库订单号；优先 sign_id（佣金明细行），订单数展示走 Performance API。
+ * 解析 RW 入库订单号；与 affiliate 一致优先 order_id / rewardoo_id 合并拆单商品行。
  */
 function resolveRwOrderId(
   row: RwCommissionRow,
   range?: { startDate: string; endDate: string },
 ): string {
-  for (const key of ['sign_id', 'txn_id', 'transaction_id', 'rewardoo_id', 'order_id'] as const) {
+  for (const key of ['order_id', 'rewardoo_id'] as const) {
     const v = row[key];
-    if (v != null && String(v).trim()) return String(v).trim();
+    if (v != null && String(v).trim() && String(v) !== '0') return String(v).trim();
+  }
+
+  for (const key of ['sign_id', 'txn_id', 'transaction_id'] as const) {
+    const v = row[key];
+    if (v != null && String(v).trim() && String(v) !== '0') return String(v).trim();
   }
 
   const merchantId = resolveRwMerchantId(row);
@@ -404,12 +386,15 @@ function normalizeRwRawStatus(raw: string | number | undefined): string {
 }
 
 /**
- * 解析 RW 订单日期（与 Rewardoo Performance Daily / transaction_details 一致）
- * 1. 优先交易发生日（transaction_date / order_ymd / date）
- * 2. order_time 时间戳按 UTC 自然日
- * 3. validation_date / payment_ymd 仅作兜底（结算日≠交易日）
+ * 解析 RW 订单日期（与 affiliate collectRWOrders 一致：order_time UTC 自然日优先）
  */
 function parseRwOrderDate(row: RwCommissionRow, fallbackDate?: string): Date {
+  for (const key of ['order_time', 'transaction_time'] as const) {
+    const v = row[key];
+    if (v == null || String(v).trim() === '') continue;
+    return parseAffiliateOrderDateUtc(v);
+  }
+
   for (const key of [
     'transaction_date',
     'order_ymd',
@@ -419,12 +404,6 @@ function parseRwOrderDate(row: RwCommissionRow, fallbackDate?: string): Date {
   ] as const) {
     const v = row[key];
     if (v == null || String(v).trim() === '' || String(v) === 'null') continue;
-    return parseAffiliateOrderDateUtc(v);
-  }
-
-  for (const key of ['order_time', 'transaction_time'] as const) {
-    const v = row[key];
-    if (v == null || String(v).trim() === '') continue;
     return parseAffiliateOrderDateUtc(v);
   }
 
@@ -438,6 +417,35 @@ function parseRwOrderDate(row: RwCommissionRow, fallbackDate?: string): Date {
     return parseAffiliateOrderDateUtc(fallbackDate);
   }
   return new Date();
+}
+
+/** RW Performance 报表日期（Transaction Date 优先，与后台 Daily 一致） */
+function parseRwPerformanceStatDate_(row: RwCommissionRow, fallbackDate?: string): Date {
+  for (const key of [
+    'transaction_date',
+    'order_ymd',
+    'order_date',
+    'date',
+    'ymd',
+  ] as const) {
+    const v = row[key];
+    if (v == null || String(v).trim() === '' || String(v) === 'null') continue;
+    return parseAffiliateOrderDateUtc(v);
+  }
+
+  return parseRwOrderDate(row, fallbackDate);
+}
+
+function resolveRwOrderDedupeKey_(row: RwCommissionRow): string {
+  const orderId = row.order_id ?? row.rewardoo_id;
+  if (orderId != null && String(orderId).trim() !== '' && String(orderId) !== '0') {
+    return String(orderId).trim();
+  }
+  const signId = row.sign_id ?? row.txn_id ?? row.transaction_id;
+  if (signId != null && String(signId).trim() !== '' && String(signId) !== '0') {
+    return `sign:${String(signId).trim()}`;
+  }
+  return '';
 }
 
 function parseMoney(v: string | number | undefined | null): number {

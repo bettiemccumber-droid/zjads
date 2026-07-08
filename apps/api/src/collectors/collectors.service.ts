@@ -239,10 +239,11 @@ export class CollectorsService {
         );
         const range = { startDate, endDate };
         const detailRows = [...rwBundle.rows];
+        const summary = summarizeRwCommissionApi(rwBundle.rows, rwBundle.source, range);
         rwApi = {
-          ...summarizeRwCommissionApi(rwBundle.rows, rwBundle.source, range),
+          ...summary,
           triedSources: rwBundle.triedSources,
-          detailOrderCount: summarizeRwCommissionApi(rwBundle.rows, rwBundle.source, range).orderCount,
+          detailOrderCount: summary.orderCount,
         };
         normalized = normalizeRewardooOrders(rwBundle.rows, mappings, range);
         rwBundle.rows.length = 0;

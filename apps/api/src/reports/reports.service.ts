@@ -13,6 +13,7 @@ import { suggestOperation } from '../common/operation-suggest.util';
 import { AuthUser, resolveOwnerUserId } from '../common/ownership.util';
 import { buildOrderDateRangeFilter } from '../common/order-date-range.util';
 import { isLbClickPseudoMerchant } from '../collectors/linkbux-clicks';
+import { isRwClickPseudoMerchant } from '../collectors/rewardoo-clicks';
 import { buildSheetCsvUrl, parseAdSheetCsv } from '../ad-sources/sheet-parser.util';
 import { PrismaService } from '../prisma/prisma.service';
 
@@ -204,7 +205,7 @@ export class ReportsService {
     });
 
     for (const c of affiliateClickRows) {
-      if (isLbClickPseudoMerchant(c.merchantId)) continue;
+      if (isLbClickPseudoMerchant(c.merchantId) || isRwClickPseudoMerchant(c.merchantId)) continue;
       const alias = (c.channelAccount.affiliateAlias || '').toLowerCase();
       const key = this.resolveMerchantRowKey(map, c.merchantId, alias);
       if (!map.has(key)) {
@@ -238,7 +239,7 @@ export class ReportsService {
     for (const c of affiliateClickRows) {
       if (c.channelAccount.platform?.code !== 'rewardoo') continue;
       if (c.performanceOrders <= 0) continue;
-      if (isLbClickPseudoMerchant(c.merchantId)) continue;
+      if (isLbClickPseudoMerchant(c.merchantId) || isRwClickPseudoMerchant(c.merchantId)) continue;
       const alias = (c.channelAccount.affiliateAlias || '').toLowerCase();
       const key = this.resolveMerchantRowKey(map, c.merchantId, alias);
       rwPerformanceOrdersByKey.set(
@@ -711,7 +712,7 @@ export class ReportsService {
     });
 
     for (const c of clickRows) {
-      if (isLbClickPseudoMerchant(c.merchantId)) continue;
+      if (isLbClickPseudoMerchant(c.merchantId) || isRwClickPseudoMerchant(c.merchantId)) continue;
       const merchantId = c.merchantId;
       const alias = (c.channelAccount.affiliateAlias || '').toLowerCase();
       const merchantKey = `${merchantId}|${alias}`;
@@ -790,7 +791,7 @@ export class ReportsService {
     });
 
     for (const c of clickRows) {
-      if (isLbClickPseudoMerchant(c.merchantId)) continue;
+      if (isLbClickPseudoMerchant(c.merchantId) || isRwClickPseudoMerchant(c.merchantId)) continue;
       const merchantId = c.merchantId;
       const alias = (c.channelAccount.affiliateAlias || '').toLowerCase();
       const dateStr = c.clickDate.toISOString().slice(0, 10);
@@ -832,7 +833,7 @@ export class ReportsService {
       for (const c of clickRows) {
         if (c.channelAccount.platform?.code !== 'rewardoo') continue;
         if (c.performanceOrders <= 0) continue;
-        if (isLbClickPseudoMerchant(c.merchantId)) continue;
+        if (isLbClickPseudoMerchant(c.merchantId) || isRwClickPseudoMerchant(c.merchantId)) continue;
 
         const dateStr = c.clickDate.toISOString().slice(0, 10);
         const merchantDayKey = `${c.merchantId}|${dateStr}`;
@@ -860,7 +861,7 @@ export class ReportsService {
       for (const c of clickRows) {
         if (c.channelAccount.platform?.code !== 'rewardoo') continue;
         if (c.performanceOrders <= 0) continue;
-        if (isLbClickPseudoMerchant(c.merchantId)) continue;
+        if (isLbClickPseudoMerchant(c.merchantId) || isRwClickPseudoMerchant(c.merchantId)) continue;
 
         ordersByMerchant.set(
           c.merchantId,

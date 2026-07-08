@@ -21,6 +21,11 @@ export interface RwMerchantClickAgg {
   performanceOrders: number;
 }
 
+/** RW 点击采集无法归因商家时的占位 ID，报表应忽略 */
+export function isRwClickPseudoMerchant(merchantId: string): boolean {
+  return merchantId === '__rw_unmatched__';
+}
+
 export interface RwClickFetchProgress {
   phase: 'summary' | 'user_click' | 'click_details';
   slotIndex: number;
@@ -403,7 +408,7 @@ export async function fetchRewardooPerformanceSummaryAggs(
     const total = derived.reduce((s, a) => s + a.performanceOrders, 0);
     if (total > 0) {
       await onProgress?.(
-        `Performance 明细推导（order_id/sign_id）→ ${total} 单（${derived.length} 条日明细）`,
+        `Performance 明细推导（order_id 合并）→ ${total} 单（${derived.length} 条日明细）`,
       );
       return derived.map((d) => ({
         merchantId: d.merchantId,
@@ -442,14 +447,74 @@ async function tryFetchRwMediumPerformanceOrders_(
 
   for (const mid of midTargets) {
     const label = mid ? `mid=${mid}` : '全账号';
-    const baseParams: Record<string, string> = {
-      begin_date: startDate,
-      end_date: endDate,
-      ...(mid ? rwMidParams_(mid) : {}),
-    };
+    const accountDaily = new Map<string, number>();
+    const paramVariants: Record<string, string>[] = [
+      {
+        begin_date: startDate,
+        end_date: endDate,
+        ...(mid ? rwMidParams_(mid) : {}),
+      },
+      {
+        begin_date: startDate,
+        end_date: endDate,
+        offer_type: 'CPS',
+        ...(mid ? rwMidParams_(mid) : {}),
+      },
+    ];
+
+    for (const baseParams of paramVariants) {
+      const variantLabel =
+        baseParams.offer_type === 'CPS' ? `${label} CPS` : label;
+      const merchantAgg = new Map<string, RwMerchantClickAgg>();
+      const mergeRows = (rows: unknown[]) => {
+        for (const raw of rows) {
+          mergeSummaryClickRow_(
+            raw as Record<string, unknown>,
+            merchantAgg,
+            startDate,
+            endDate,
+            undefined,
+            { performanceOrdersOnly: true, accountDailyOrders: accountDaily },
+          );
+        }
+      };
+
+      const getResult = await forEachRewardooGetPage_(
+        'medium',
+        'performance',
+        apiToken,
+        baseParams,
+        mergeRows,
+      );
+      if (sumAggPerformanceOrders_(merchantAgg) > 0) {
+        const total = sumAggPerformanceOrders_(merchantAgg);
+        await onProgress?.(
+          `medium/performance GET ${variantLabel} → ${total} 单（${getResult.rowCount} 行）`,
+        );
+        return [...merchantAgg.values()];
+      }
+
+      try {
+        await forEachRewardooPageLimit(
+          'medium',
+          'performance',
+          apiToken,
+          baseParams,
+          mergeRows,
+          RW_CLICK_PAGE_SIZE,
+        );
+      } catch {
+        /* 尝试 offset */
+      }
+
+      if (sumAggPerformanceOrders_(merchantAgg) > 0) {
+        const total = sumAggPerformanceOrders_(merchantAgg);
+        await onProgress?.(`medium/performance POST ${variantLabel} → ${total} 单`);
+        return [...merchantAgg.values()];
+      }
+    }
 
     const merchantAgg = new Map<string, RwMerchantClickAgg>();
-    const accountDaily = new Map<string, number>();
     const mergeRows = (rows: unknown[]) => {
       for (const raw of rows) {
         mergeSummaryClickRow_(
@@ -462,40 +527,6 @@ async function tryFetchRwMediumPerformanceOrders_(
         );
       }
     };
-
-    const getResult = await forEachRewardooGetPage_(
-      'medium',
-      'performance',
-      apiToken,
-      baseParams,
-      mergeRows,
-    );
-    if (sumAggPerformanceOrders_(merchantAgg) > 0) {
-      const total = sumAggPerformanceOrders_(merchantAgg);
-      await onProgress?.(
-        `medium/performance GET ${label} → ${total} 单（${getResult.rowCount} 行）`,
-      );
-      return [...merchantAgg.values()];
-    }
-
-    try {
-      await forEachRewardooPageLimit(
-        'medium',
-        'performance',
-        apiToken,
-        baseParams,
-        mergeRows,
-        RW_CLICK_PAGE_SIZE,
-      );
-    } catch {
-      /* 尝试 offset */
-    }
-
-    if (sumAggPerformanceOrders_(merchantAgg) > 0) {
-      const total = sumAggPerformanceOrders_(merchantAgg);
-      await onProgress?.(`medium/performance POST ${label} → ${total} 单`);
-      return [...merchantAgg.values()];
-    }
 
     try {
       await forEachRewardooPageLimit(

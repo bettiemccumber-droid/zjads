@@ -277,23 +277,33 @@ export class CollectorsService {
             { merchantsByDate },
           );
 
-          const clickAggs = await fetchRewardooClicks(
-            apiToken,
-            startDate,
-            endDate,
-            async (p) => {
-              await onProgress?.(
-                `RW 点击 ${p.source ?? 'medium/performance'} ${p.slotIndex}/${p.totalSlots}，已汇总 ${p.clicksSoFar}`,
-              );
-            },
-          );
+          let clickAggs: Awaited<ReturnType<typeof fetchRewardooClicks>> = [];
+          try {
+            clickAggs = await fetchRewardooClicks(
+              apiToken,
+              startDate,
+              endDate,
+              async (p) => {
+                await onProgress?.(
+                  `RW 点击 ${p.source ?? 'medium/performance'} ${p.slotIndex}/${p.totalSlots}，已汇总 ${p.clicksSoFar}`,
+                );
+              },
+            );
+          } catch (clickErr) {
+            const clickMsg =
+              clickErr instanceof Error ? clickErr.message : String(clickErr);
+            await onProgress?.(`RW 点击采集跳过: ${clickMsg.slice(0, 100)}`);
+          }
           rwClickTotal = clickAggs.reduce((s, a) => s + a.clicks, 0);
 
-          if (perfAggs.length === 0) {
+          const detailMetrics = buildRwDailyMetricsFromDetailRows(
+            detailRows,
+            startDate,
+            endDate,
+          );
+          if (perfAggs.length === 0 && detailMetrics.length > 0) {
             perfSource = 'transaction_details';
-            perfAggs = rwDetailMetricsToClickAggs(
-              buildRwDailyMetricsFromDetailRows(detailRows, startDate, endDate),
-            );
+            perfAggs = rwDetailMetricsToClickAggs(detailMetrics);
             await onProgress?.(
               `Performance API 无数据，改用 transaction_details 按日汇总（${perfAggs.length} 条商家日）`,
             );

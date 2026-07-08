@@ -88,7 +88,7 @@ export function deriveRwPerformanceOrdersFromDetailRows(
     if (!merchantId) continue;
 
     const commission = parseMoney(
-      row.sale_comm ?? row.commission ?? row.comm ?? row.cashback,
+      row.cashback ?? row.sale_comm ?? row.commission ?? row.comm,
     );
     const orderAmount = parseMoney(
       row.sale_amount ?? row.order_amount ?? row.sale ?? row.amount,
@@ -154,7 +154,7 @@ export function buildRwDailyMetricsFromDetailRows(
     if (!merchantId) continue;
 
     const commission = parseMoney(
-      row.sale_comm ?? row.commission ?? row.comm ?? row.cashback,
+      row.cashback ?? row.sale_comm ?? row.commission ?? row.comm,
     );
     const orderAmount = parseMoney(
       row.sale_amount ?? row.order_amount ?? row.sale ?? row.amount,
@@ -235,7 +235,7 @@ export function normalizeRewardooOrders(
       row.sale_amount ?? row.order_amount ?? row.sale ?? row.amount,
     );
     const commission = parseMoney(
-      row.sale_comm ?? row.commission ?? row.comm ?? row.cashback,
+      row.cashback ?? row.sale_comm ?? row.commission ?? row.comm,
     );
     if (commission <= 0 && orderAmount <= 0) continue;
 

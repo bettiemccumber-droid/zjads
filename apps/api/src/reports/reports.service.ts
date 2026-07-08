@@ -234,11 +234,10 @@ export class ReportsService {
       }
     }
 
-    /** RW 商家汇总订单数：用 Performance API 写入的 performanceOrders，不用明细行数 */
+    /** RW 商家汇总订单数：用 Performance API 写入的 performanceOrders（含 0，覆盖 DB 明细计数） */
     const rwPerformanceOrdersByKey = new Map<string, number>();
     for (const c of affiliateClickRows) {
       if (c.channelAccount.platform?.code !== 'rewardoo') continue;
-      if (c.performanceOrders <= 0) continue;
       if (isLbClickPseudoMerchant(c.merchantId) || isRwClickPseudoMerchant(c.merchantId)) continue;
       const alias = (c.channelAccount.affiliateAlias || '').toLowerCase();
       const key = this.resolveMerchantRowKey(map, c.merchantId, alias);
@@ -832,7 +831,6 @@ export class ReportsService {
       const ordersByMerchantDay = new Map<string, number>();
       for (const c of clickRows) {
         if (c.channelAccount.platform?.code !== 'rewardoo') continue;
-        if (c.performanceOrders <= 0) continue;
         if (isLbClickPseudoMerchant(c.merchantId) || isRwClickPseudoMerchant(c.merchantId)) continue;
 
         const dateStr = c.clickDate.toISOString().slice(0, 10);
@@ -860,7 +858,6 @@ export class ReportsService {
       const ordersByMerchant = new Map<string, number>();
       for (const c of clickRows) {
         if (c.channelAccount.platform?.code !== 'rewardoo') continue;
-        if (c.performanceOrders <= 0) continue;
         if (isLbClickPseudoMerchant(c.merchantId) || isRwClickPseudoMerchant(c.merchantId)) continue;
 
         ordersByMerchant.set(

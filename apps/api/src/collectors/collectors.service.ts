@@ -28,7 +28,7 @@ import {
   normalizeRewardooOrders,
   summarizeRwCommissionApi,
 } from './rewardoo.collector';
-import { fetchRewardooClicks, fetchRewardooPerformanceSummaryAggs, buildRwMerchantsByDateFromOrders } from './rewardoo-clicks';
+import { fetchRewardooClicks, fetchRewardooPerformanceSummaryAggs, buildRwMerchantsByDateFromOrders, expandRwPerformanceAggsForRange } from './rewardoo-clicks';
 import { ensurePlatformStatusMappings } from '../common/platform-status-defaults.util';
 import {
   collectorNotReadyMessage,
@@ -273,12 +273,7 @@ export class CollectorsService {
             await this.clearPerformanceOrdersInRange(account.id, startDate, endDate);
             await this.persistPerformanceOrders(
               account.id,
-              perfAggs.map((a) => ({
-                merchantId: a.merchantId,
-                merchantName: a.merchantName,
-                statDate: a.clickDate,
-                orders: a.performanceOrders,
-              })),
+              expandRwPerformanceAggsForRange(perfAggs, startDate, endDate),
             );
             if (rwApi) {
               rwApi.orderCount = perfOrderTotal;

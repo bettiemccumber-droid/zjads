@@ -275,7 +275,7 @@ export async function fetchRewardooClicks(
 
 /**
  * 拉取 RW Performance 汇总（Orders），与后台 Performance Report · Group by Daily 一致。
- * 优先整段区间一次请求；失败再按自然日逐日兜底。
+ * 优先按自然日逐日请求 medium/performance，避免整段区间返回无日期字段导致漏单。
  */
 export async function fetchRewardooPerformanceSummaryAggs(
   apiToken: string,
@@ -285,6 +285,17 @@ export async function fetchRewardooPerformanceSummaryAggs(
   options?: RwPerformanceFetchOptions,
 ): Promise<RwMerchantClickAgg[]> {
   const agg = new Map<string, RwMerchantClickAgg>();
+
+  const perDayResult = await tryFetchRwMediumPerformanceOrdersPerDay_(
+    apiToken,
+    startDate,
+    endDate,
+    onProgress,
+    options?.merchantsByDate,
+  );
+  if (perDayResult.length > 0 && perDayResult.reduce((s, a) => s + a.performanceOrders, 0) > 0) {
+    return perDayResult;
+  }
 
   const mediumResult = await tryFetchRwMediumPerformanceOrders_(
     apiToken,
@@ -426,7 +437,71 @@ function rwMidParams_(mid: string): Record<string, string> {
   return { mid, m_id: mid, merchant_id: mid };
 }
 
-/** CPS Performance：medium/performance + mid（与 rw-click-probe / RW 后台一致） */
+/**
+ * 按自然日逐日拉取 medium/performance（与 RW 后台 Group by Daily 一致，最可靠）
+ */
+async function tryFetchRwMediumPerformanceOrdersPerDay_(
+  apiToken: string,
+  startDate: string,
+  endDate: string,
+  onProgress?: (message: string) => void | Promise<void>,
+  merchantsByDate?: Map<string, Set<string>>,
+): Promise<RwMerchantClickAgg[]> {
+  const merchantIds = new Set<string>();
+  for (const mids of merchantsByDate?.values() ?? []) {
+    for (const mid of mids) merchantIds.add(mid);
+  }
+
+  const dates = listInclusiveDates_(startDate, endDate);
+  const dayAgg = new Map<string, RwMerchantClickAgg>();
+  const midsToTry =
+    merchantIds.size > 0 ? [...merchantIds] : [undefined as string | undefined];
+
+  for (const dateStr of dates) {
+    for (const mid of midsToTry) {
+      const paramVariants: Record<string, string>[] = [
+        {
+          begin_date: dateStr,
+          end_date: dateStr,
+          ...(mid ? rwMidParams_(mid) : {}),
+        },
+        {
+          begin_date: dateStr,
+          end_date: dateStr,
+          offer_type: 'CPS',
+          ...(mid ? rwMidParams_(mid) : {}),
+        },
+      ];
+
+      for (const params of paramVariants) {
+        await forEachRewardooGetPage_('medium', 'performance', apiToken, params, (rows) => {
+          for (const raw of rows) {
+            mergeSummaryClickRow_(
+              raw as Record<string, unknown>,
+              dayAgg,
+              dateStr,
+              dateStr,
+              dateStr,
+              { performanceOrdersOnly: true },
+            );
+          }
+        });
+      }
+    }
+  }
+
+  if (sumAggPerformanceOrders_(dayAgg) > 0) {
+    const total = sumAggPerformanceOrders_(dayAgg);
+    await onProgress?.(
+      `medium/performance 逐日 → ${total} 单（${dayAgg.size} 条商家日）`,
+    );
+    return [...dayAgg.values()];
+  }
+
+  return [];
+}
+
+/** CPS Performance：medium/performance + mid（区间兜底，逐日失败时使用） */
 async function tryFetchRwMediumPerformanceOrders_(
   apiToken: string,
   startDate: string,
@@ -1597,6 +1672,35 @@ function sumAggPerformanceOrders_(agg: Map<string, RwMerchantClickAgg>): number 
 
 function hasAggMetrics_(agg: Map<string, RwMerchantClickAgg>): boolean {
   return sumAggClicks_(agg) > 0 || sumAggPerformanceOrders_(agg) > 0;
+}
+
+export function expandRwPerformanceAggsForRange(
+  perfAggs: RwMerchantClickAgg[],
+  startDate: string,
+  endDate: string,
+): Array<{ merchantId: string; merchantName: string; statDate: string; orders: number }> {
+  const merchants = new Map<string, string>();
+  for (const a of perfAggs) {
+    merchants.set(a.merchantId, a.merchantName);
+  }
+  const ordersMap = new Map<string, number>();
+  for (const a of perfAggs) {
+    ordersMap.set(`${a.merchantId}|${a.clickDate}`, a.performanceOrders);
+  }
+
+  const out: Array<{ merchantId: string; merchantName: string; statDate: string; orders: number }> =
+    [];
+  for (const dateStr of listInclusiveDates_(startDate, endDate)) {
+    for (const [merchantId, merchantName] of merchants) {
+      out.push({
+        merchantId,
+        merchantName,
+        statDate: dateStr,
+        orders: ordersMap.get(`${merchantId}|${dateStr}`) ?? 0,
+      });
+    }
+  }
+  return out;
 }
 
 function listInclusiveDates_(startDate: string, endDate: string): string[] {

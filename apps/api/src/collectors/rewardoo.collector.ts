@@ -386,15 +386,9 @@ function normalizeRwRawStatus(raw: string | number | undefined): string {
 }
 
 /**
- * 解析 RW 订单日期（与 affiliate collectRWOrders 一致：order_time UTC 自然日优先）
+ * 解析 RW 订单日期（与 RW Performance Transaction Date 一致，transaction_date 优先）
  */
 function parseRwOrderDate(row: RwCommissionRow, fallbackDate?: string): Date {
-  for (const key of ['order_time', 'transaction_time'] as const) {
-    const v = row[key];
-    if (v == null || String(v).trim() === '') continue;
-    return parseAffiliateOrderDateUtc(v);
-  }
-
   for (const key of [
     'transaction_date',
     'order_ymd',
@@ -404,6 +398,12 @@ function parseRwOrderDate(row: RwCommissionRow, fallbackDate?: string): Date {
   ] as const) {
     const v = row[key];
     if (v == null || String(v).trim() === '' || String(v) === 'null') continue;
+    return parseAffiliateOrderDateUtc(v);
+  }
+
+  for (const key of ['order_time', 'transaction_time'] as const) {
+    const v = row[key];
+    if (v == null || String(v).trim() === '') continue;
     return parseAffiliateOrderDateUtc(v);
   }
 

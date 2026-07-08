@@ -146,6 +146,7 @@ export class ReportsService {
         });
       }
       const row = map.get(agg.merchantKey)!;
+      if (agg.platformCode === 'rewardoo') continue;
       row.orderCount += 1;
       row.totalCommission += agg.commission;
     }
@@ -234,21 +235,25 @@ export class ReportsService {
       }
     }
 
-    /** RW 商家汇总订单数：用 Performance API 写入的 performanceOrders（含 0，覆盖 DB 明细计数） */
-    const rwPerformanceOrdersByKey = new Map<string, number>();
+    /** RW 商家汇总：orders + comm 均来自 medium/performance 逐日写入 */
+    const rwPerformanceByKey = new Map<string, { orders: number; commission: number }>();
     for (const c of affiliateClickRows) {
       if (c.channelAccount.platform?.code !== 'rewardoo') continue;
       if (isLbClickPseudoMerchant(c.merchantId) || isRwClickPseudoMerchant(c.merchantId)) continue;
       const alias = (c.channelAccount.affiliateAlias || '').toLowerCase();
       const key = this.resolveMerchantRowKey(map, c.merchantId, alias);
-      rwPerformanceOrdersByKey.set(
-        key,
-        (rwPerformanceOrdersByKey.get(key) ?? 0) + c.performanceOrders,
-      );
+      const prev = rwPerformanceByKey.get(key) ?? { orders: 0, commission: 0 };
+      rwPerformanceByKey.set(key, {
+        orders: prev.orders + c.performanceOrders,
+        commission: prev.commission + Number(c.performanceCommission),
+      });
     }
-    for (const [key, orders] of rwPerformanceOrdersByKey) {
+    for (const [key, metrics] of rwPerformanceByKey) {
       const row = map.get(key);
-      if (row) row.orderCount = orders;
+      if (row) {
+        row.orderCount = metrics.orders;
+        row.totalCommission = metrics.commission;
+      }
     }
 
     const summary = Array.from(map.values())
@@ -687,16 +692,17 @@ export class ReportsService {
       const merchantKey = `${merchantId}|${alias}`;
       const orderKey = `${o.channelAccountId}|${dedupeAffiliateOrderRecord(o)}`;
       const comm = Number(o.commission);
+      const isRw = o.channelAccount.platform?.code === 'rewardoo';
 
-      ensure(byKey, merchantKey).commission += comm;
-      ensure(byMerchantId, merchantId).commission += comm;
+      ensure(byKey, merchantKey).commission += isRw ? 0 : comm;
+      ensure(byMerchantId, merchantId).commission += isRw ? 0 : comm;
 
-      if (!orderSeenByKey.has(orderKey)) {
+      if (!isRw && !orderSeenByKey.has(orderKey)) {
         orderSeenByKey.add(orderKey);
         ensure(byKey, merchantKey).orderCount += 1;
       }
       const midOrderKey = `${merchantId}|${orderKey}`;
-      if (!orderSeenByMerchant.has(midOrderKey)) {
+      if (!isRw && !orderSeenByMerchant.has(midOrderKey)) {
         orderSeenByMerchant.add(midOrderKey);
         ensure(byMerchantId, merchantId).orderCount += 1;
       }
@@ -719,7 +725,7 @@ export class ReportsService {
       ensure(byMerchantId, merchantId).affiliateClicks += c.clicks;
     }
 
-    this.overlayRwPerformanceOrderCounts(clickRows, byKey, undefined, byMerchantId);
+    this.overlayRwPerformanceDaily(clickRows, byKey, undefined, byMerchantId);
 
     return { byKey, byMerchantId };
   }
@@ -766,16 +772,19 @@ export class ReportsService {
       const merchantDayKey = `${merchantId}|${dateStr}`;
       const orderKey = `${o.channelAccountId}|${dedupeAffiliateOrderRecord(o)}`;
       const comm = Number(o.commission);
+      const isRw = o.channelAccount.platform?.code === 'rewardoo';
 
-      ensureKey(byKey, dayKey).commission += comm;
-      ensureKey(byMerchantDay, merchantDayKey).commission += comm;
+      if (!isRw) {
+        ensureKey(byKey, dayKey).commission += comm;
+        ensureKey(byMerchantDay, merchantDayKey).commission += comm;
+      }
 
-      if (!orderSeenByKey.has(`${dayKey}|${orderKey}`)) {
+      if (!isRw && !orderSeenByKey.has(`${dayKey}|${orderKey}`)) {
         orderSeenByKey.add(`${dayKey}|${orderKey}`);
         ensureKey(byKey, dayKey).orderCount += 1;
       }
       const midOrderKey = `${merchantDayKey}|${orderKey}`;
-      if (!orderSeenByMerchantDay.has(midOrderKey)) {
+      if (!isRw && !orderSeenByMerchantDay.has(midOrderKey)) {
         orderSeenByMerchantDay.add(midOrderKey);
         ensureKey(byMerchantDay, merchantDayKey).orderCount += 1;
       }
@@ -800,19 +809,21 @@ export class ReportsService {
       ensureKey(byMerchantDay, merchantDayKey).affiliateClicks += c.clicks;
     }
 
-    this.overlayRwPerformanceOrderCounts(clickRows, byKey, byMerchantDay);
+    this.overlayRwPerformanceDaily(clickRows, byKey, byMerchantDay);
 
     return { byKey, byMerchantDay };
   }
 
   /**
-   * RW 订单数覆盖：使用 Performance API 写入的 performanceOrders，与后台 Orders 一致
+   * RW 按天指标覆盖：orders + comm + clicks 均来自 medium/performance 逐日写入
    */
-  private overlayRwPerformanceOrderCounts(
+  private overlayRwPerformanceDaily(
     clickRows: Array<{
       merchantId: string;
       clickDate: Date;
       performanceOrders: number;
+      performanceCommission: unknown;
+      clicks: number;
       channelAccount: {
         affiliateAlias: string | null;
         platform?: { code: string };
@@ -829,6 +840,7 @@ export class ReportsService {
 
     if (byMerchantDay) {
       const ordersByMerchantDay = new Map<string, number>();
+      const commByMerchantDay = new Map<string, number>();
       for (const c of clickRows) {
         if (c.channelAccount.platform?.code !== 'rewardoo') continue;
         if (isLbClickPseudoMerchant(c.merchantId) || isRwClickPseudoMerchant(c.merchantId)) continue;
@@ -839,23 +851,32 @@ export class ReportsService {
           merchantDayKey,
           (ordersByMerchantDay.get(merchantDayKey) ?? 0) + c.performanceOrders,
         );
+        commByMerchantDay.set(
+          merchantDayKey,
+          (commByMerchantDay.get(merchantDayKey) ?? 0) + Number(c.performanceCommission),
+        );
       }
 
       for (const [merchantDayKey, orders] of ordersByMerchantDay) {
+        const commission = commByMerchantDay.get(merchantDayKey) ?? 0;
         ensure(byMerchantDay, merchantDayKey).orderCount = orders;
+        ensure(byMerchantDay, merchantDayKey).commission = commission;
         const [merchantId, dateStr] = merchantDayKey.split('|');
         for (const c of clickRows) {
           if (c.merchantId !== merchantId) continue;
           if (c.clickDate.toISOString().slice(0, 10) !== dateStr) continue;
           if (c.channelAccount.platform?.code !== 'rewardoo') continue;
           const alias = (c.channelAccount.affiliateAlias || '').toLowerCase();
-          ensure(byKey, `${merchantId}|${alias}|${dateStr}`).orderCount = orders;
+          const dayMetrics = ensure(byKey, `${merchantId}|${alias}|${dateStr}`);
+          dayMetrics.orderCount = orders;
+          dayMetrics.commission = commission;
         }
       }
     }
 
     if (byMerchantId) {
       const ordersByMerchant = new Map<string, number>();
+      const commByMerchant = new Map<string, number>();
       for (const c of clickRows) {
         if (c.channelAccount.platform?.code !== 'rewardoo') continue;
         if (isLbClickPseudoMerchant(c.merchantId) || isRwClickPseudoMerchant(c.merchantId)) continue;
@@ -864,15 +885,23 @@ export class ReportsService {
           c.merchantId,
           (ordersByMerchant.get(c.merchantId) ?? 0) + c.performanceOrders,
         );
+        commByMerchant.set(
+          c.merchantId,
+          (commByMerchant.get(c.merchantId) ?? 0) + Number(c.performanceCommission),
+        );
       }
 
       for (const [merchantId, orders] of ordersByMerchant) {
+        const commission = commByMerchant.get(merchantId) ?? 0;
         ensure(byMerchantId, merchantId).orderCount = orders;
+        ensure(byMerchantId, merchantId).commission = commission;
         for (const c of clickRows) {
           if (c.merchantId !== merchantId) continue;
           if (c.channelAccount.platform?.code !== 'rewardoo') continue;
           const alias = (c.channelAccount.affiliateAlias || '').toLowerCase();
-          ensure(byKey, `${merchantId}|${alias}`).orderCount = orders;
+          const rangeMetrics = ensure(byKey, `${merchantId}|${alias}`);
+          rangeMetrics.orderCount = orders;
+          rangeMetrics.commission = commission;
         }
       }
     }

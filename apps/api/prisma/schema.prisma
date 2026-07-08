@@ -175,6 +175,8 @@ model AffiliateMerchantClickDaily {
   clicks           Int      @default(0)
   /** RW Performance 看板 Orders（Transaction Date 口径，与 transaction_details 行数无关） */
   performanceOrders Int     @default(0) @map("performance_orders")
+  /** RW Performance 看板 Comm.（Transaction Date 口径，与 medium/performance 一致） */
+  performanceCommission Decimal @default(0) @map("performance_commission") @db.Decimal(12, 2)
   /** api=采集写入；manual=后台导出校准，同步时不覆盖 */
   source           AffiliateClickSource @default(api) @map("source")
   updatedAt        DateTime @updatedAt @map("updated_at")

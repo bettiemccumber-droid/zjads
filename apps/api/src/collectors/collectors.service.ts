@@ -24,12 +24,11 @@ import {
 import { buildLbMcidToMidMap, fetchLinkBuxClicks } from './linkbux-clicks';
 import { fetchLinkHaitaoClicks, buildLhMcidToMidMap } from './linkhaitao-clicks';
 import {
-  deriveRwPerformanceOrdersFromDetailRows,
   fetchRewardooCommissions,
   normalizeRewardooOrders,
   summarizeRwCommissionApi,
 } from './rewardoo.collector';
-import { fetchRewardooClicks, fetchRewardooPerformanceSummaryAggs, buildRwMerchantsByDateFromOrders, expandRwPerformanceAggsForRange } from './rewardoo-clicks';
+import { fetchRewardooPerformanceSummaryAggs, buildRwMerchantsByDateFromOrders, expandRwPerformanceAggsForRange } from './rewardoo-clicks';
 import { ensurePlatformStatusMappings } from '../common/platform-status-defaults.util';
 import {
   collectorNotReadyMessage,
@@ -239,7 +238,6 @@ export class CollectorsService {
           },
         );
         const range = { startDate, endDate };
-        const detailRows = [...rwBundle.rows];
         const summary = summarizeRwCommissionApi(rwBundle.rows, rwBundle.source, range);
         rwApi = {
           ...summary,
@@ -249,9 +247,9 @@ export class CollectorsService {
         normalized = normalizeRewardooOrders(rwBundle.rows, mappings, range);
         rwBundle.rows.length = 0;
 
-        await onProgress?.('正在采集 RW Performance 订单数（对齐后台 Orders）…');
+        await onProgress?.('正在采集 RW Performance（medium/performance 逐日，对齐后台）…');
         let perfOrderTotal = 0;
-        await this.clearPerformanceOrdersInRange(account.id, startDate, endDate);
+        await this.clearRwPerformanceDailyInRange(account.id, startDate, endDate);
         try {
           const merchantsByDate = buildRwMerchantsByDateFromOrders(
             normalized.map((o) => ({
@@ -267,117 +265,32 @@ export class CollectorsService {
             async (message) => {
               await onProgress?.(message);
             },
-            { merchantsByDate, detailRows },
+            { merchantsByDate },
           );
           perfOrderTotal = perfAggs.reduce((s, a) => s + a.performanceOrders, 0);
+          const perfCommTotal = perfAggs.reduce((s, a) => s + a.performanceCommission, 0);
           rwPerformanceOrderCount = perfOrderTotal;
-          if (perfOrderTotal > 0) {
-            await this.persistPerformanceOrders(
+          rwClickTotal = perfAggs.reduce((s, a) => s + a.clicks, 0);
+
+          if (perfAggs.length === 0) {
+            rwPerformanceOrderError = 'medium/performance 逐日无数据';
+            await onProgress?.(rwPerformanceOrderError);
+          } else {
+            await this.persistRwPerformanceDaily(
               account.id,
               expandRwPerformanceAggsForRange(perfAggs, startDate, endDate),
             );
             if (rwApi) {
               rwApi.orderCount = perfOrderTotal;
             }
-            await onProgress?.(`Performance 订单 ${perfOrderTotal} 单已写入`);
-          } else {
-            const derived = deriveRwPerformanceOrdersFromDetailRows(
-              detailRows,
-              startDate,
-              endDate,
+            await onProgress?.(
+              `Performance ${perfOrderTotal} 单 / $${perfCommTotal.toFixed(2)} / 点击 ${rwClickTotal} 已写入`,
             );
-            const derivedTotal = derived.reduce((s, a) => s + a.performanceOrders, 0);
-            if (derivedTotal > 0) {
-              perfOrderTotal = derivedTotal;
-              rwPerformanceOrderCount = derivedTotal;
-              await this.persistPerformanceOrders(
-                account.id,
-                expandRwPerformanceAggsForRange(
-                  derived.map((d) => ({
-                    merchantId: d.merchantId,
-                    merchantName: d.merchantName,
-                    clickDate: d.clickDate,
-                    clicks: 0,
-                    performanceOrders: d.performanceOrders,
-                  })),
-                  startDate,
-                  endDate,
-                ),
-              );
-              if (rwApi) {
-                rwApi.orderCount = derivedTotal;
-              }
-              await onProgress?.(
-                `Performance API 无数据，明细推导 ${derivedTotal} 单已写入`,
-              );
-            } else {
-              rwPerformanceOrderError = 'Performance 接口未返回有效 orders 汇总';
-              await onProgress?.(rwPerformanceOrderError);
-            }
           }
         } catch (perfErr) {
           const msg = perfErr instanceof Error ? perfErr.message : String(perfErr);
           rwPerformanceOrderError = msg.slice(0, 200);
-          await onProgress?.(`RW Performance 订单数采集失败: ${msg.slice(0, 120)}`);
-          const derived = deriveRwPerformanceOrdersFromDetailRows(
-            detailRows,
-            startDate,
-            endDate,
-          );
-          const derivedTotal = derived.reduce((s, a) => s + a.performanceOrders, 0);
-          if (derivedTotal > 0) {
-            perfOrderTotal = derivedTotal;
-            rwPerformanceOrderCount = derivedTotal;
-            await this.persistPerformanceOrders(
-              account.id,
-              expandRwPerformanceAggsForRange(
-                derived.map((d) => ({
-                  merchantId: d.merchantId,
-                  merchantName: d.merchantName,
-                  clickDate: d.clickDate,
-                  clicks: 0,
-                  performanceOrders: d.performanceOrders,
-                })),
-                startDate,
-                endDate,
-              ),
-            );
-            if (rwApi) {
-              rwApi.orderCount = derivedTotal;
-            }
-            await onProgress?.(`Performance 失败，明细推导 ${derivedTotal} 单已写入`);
-          }
-        }
-
-        if (options.includeClicks) {
-          await onProgress?.('订单已拉取，正在采集 RW 联盟点击（Performance 汇总 API）…');
-          try {
-            const clickAggs = await fetchRewardooClicks(
-              apiToken,
-              startDate,
-              endDate,
-              async (p) => {
-                if (p.phase === 'summary') {
-                  await onProgress?.(
-                    `RW 联盟点击 ${p.source}，已汇总 ${p.clicksSoFar} 次`,
-                  );
-                } else if (p.phase === 'user_click') {
-                  await onProgress?.(
-                    `RW user_click ${p.slotIndex}/${p.totalSlots} 日，已汇总 ${p.clicksSoFar} 次`,
-                  );
-                } else {
-                  await onProgress?.(
-                    `RW click_details 兜底 ${p.slotIndex}/${p.totalSlots} 小时片，已汇总 ${p.clicksSoFar} 次`,
-                  );
-                }
-              },
-            );
-            await this.replaceClicksInRange(account.id, startDate, endDate);
-            rwClickTotal = await this.persistClicks(account.id, clickAggs);
-          } catch (clickErr) {
-            rwClickError = clickErr instanceof Error ? clickErr.message : String(clickErr);
-            await onProgress?.(`RW 联盟点击采集失败（订单仍会写入）: ${rwClickError}`);
-          }
+          await onProgress?.(`RW Performance 采集失败: ${msg.slice(0, 120)}`);
         }
         break;
       }
@@ -426,8 +339,8 @@ export class CollectorsService {
     });
   }
 
-  /** 重采前清空区间内 API 写入的 Performance Orders，避免脏数据残留 */
-  private async clearPerformanceOrdersInRange(
+  /** 重采前清空区间内 RW Performance 日汇总（orders/comm/clicks） */
+  private async clearRwPerformanceDailyInRange(
     channelAccountId: number,
     startDate: string,
     endDate: string,
@@ -438,8 +351,65 @@ export class CollectorsService {
         source: AffiliateClickSource.api,
         clickDate: buildOrderDateRangeFilter(startDate, endDate)!,
       },
-      data: { performanceOrders: 0 },
+      data: { performanceOrders: 0, performanceCommission: 0, clicks: 0 },
     });
+  }
+
+  /**
+   * 写入 RW Performance 日汇总（orders + comm + clicks，与后台 Performance Daily 一致）
+   */
+  private async persistRwPerformanceDaily(
+    channelAccountId: number,
+    aggs: Array<{
+      merchantId: string;
+      merchantName: string;
+      statDate: string;
+      orders: number;
+      clicks: number;
+      commission: number;
+    }>,
+  ): Promise<void> {
+    for (const a of aggs) {
+      const clickDate = new Date(a.statDate);
+      const existing = await this.prisma.affiliateMerchantClickDaily.findUnique({
+        where: {
+          channelAccountId_merchantId_clickDate: {
+            channelAccountId,
+            merchantId: a.merchantId,
+            clickDate,
+          },
+        },
+      });
+      if (existing?.source === AffiliateClickSource.manual) {
+        continue;
+      }
+
+      await this.prisma.affiliateMerchantClickDaily.upsert({
+        where: {
+          channelAccountId_merchantId_clickDate: {
+            channelAccountId,
+            merchantId: a.merchantId,
+            clickDate,
+          },
+        },
+        create: {
+          channelAccountId,
+          merchantId: a.merchantId,
+          merchantName: a.merchantName,
+          clickDate,
+          clicks: a.clicks,
+          performanceOrders: a.orders,
+          performanceCommission: a.commission,
+          source: AffiliateClickSource.api,
+        },
+        update: {
+          merchantName: a.merchantName,
+          clicks: a.clicks,
+          performanceOrders: a.orders,
+          performanceCommission: a.commission,
+        },
+      });
+    }
   }
 
   /**
@@ -480,6 +450,7 @@ export class CollectorsService {
           clickDate,
           clicks: c.clicks,
           performanceOrders: 0,
+          performanceCommission: 0,
           source: AffiliateClickSource.api,
         },
         update: {
@@ -491,53 +462,6 @@ export class CollectorsService {
       total += c.clicks;
     }
     return total;
-  }
-
-  /**
-   * 写入 RW Performance 看板 Orders（按商家+日，不影响 clicks 字段）
-   */
-  private async persistPerformanceOrders(
-    channelAccountId: number,
-    aggs: Array<{ merchantId: string; merchantName: string; statDate: string; orders: number }>,
-  ): Promise<void> {
-    for (const a of aggs) {
-      const clickDate = new Date(a.statDate);
-      const existing = await this.prisma.affiliateMerchantClickDaily.findUnique({
-        where: {
-          channelAccountId_merchantId_clickDate: {
-            channelAccountId,
-            merchantId: a.merchantId,
-            clickDate,
-          },
-        },
-      });
-      if (existing?.source === AffiliateClickSource.manual) {
-        continue;
-      }
-
-      await this.prisma.affiliateMerchantClickDaily.upsert({
-        where: {
-          channelAccountId_merchantId_clickDate: {
-            channelAccountId,
-            merchantId: a.merchantId,
-            clickDate,
-          },
-        },
-        create: {
-          channelAccountId,
-          merchantId: a.merchantId,
-          merchantName: a.merchantName,
-          clickDate,
-          clicks: 0,
-          performanceOrders: a.orders,
-          source: AffiliateClickSource.api,
-        },
-        update: {
-          merchantName: a.merchantName,
-          performanceOrders: a.orders,
-        },
-      });
-    }
   }
 
   /**

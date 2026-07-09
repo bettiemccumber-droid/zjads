@@ -441,7 +441,7 @@ export function mergeRwPerformanceWithClickAggs(
 }
 
 /**
- * 合并明细与 Performance API：逐日 API 有 orders/clicks+comm 时整行采用 API（与 RW Daily 一致）
+ * 合并明细与 Performance 按日 API：佣金保留 transaction_details；仅补充 orders/clicks
  */
 export function mergeRwPerformancePreferApiDaily(
   detailAggs: RwMerchantClickAgg[],
@@ -452,26 +452,11 @@ export function mergeRwPerformancePreferApiDaily(
     map.set(`${a.merchantId}|${a.clickDate}`, { ...a });
   }
   for (const c of apiAggs) {
-    const hasApiPerf =
-      c.performanceOrders > 0 || c.performanceCommission > 0 || c.clicks > 0;
-    if (!hasApiPerf) continue;
+    if (c.performanceOrders <= 0 && c.clicks <= 0) continue;
 
     const key = `${c.merchantId}|${c.clickDate}`;
     const existing = map.get(key);
-    const hasApiDaily =
-      c.performanceCommission > 0 && (c.performanceOrders > 0 || c.clicks > 0);
-
-    if (hasApiDaily) {
-      map.set(key, {
-        merchantId: c.merchantId,
-        merchantName: c.merchantName || existing?.merchantName || '',
-        clickDate: c.clickDate,
-        clicks: c.clicks,
-        performanceOrders: c.performanceOrders,
-        performanceCommission: c.performanceCommission,
-      });
-      continue;
-    }
+    const detailComm = existing?.performanceCommission ?? 0;
 
     map.set(key, {
       merchantId: c.merchantId,
@@ -479,13 +464,13 @@ export function mergeRwPerformancePreferApiDaily(
       clickDate: c.clickDate,
       clicks: c.clicks > 0 ? c.clicks : (existing?.clicks ?? 0),
       performanceOrders:
-        c.performanceOrders > 0
-          ? c.performanceOrders
-          : (existing?.performanceOrders ?? 0),
+        c.performanceOrders > 0 ? c.performanceOrders : (existing?.performanceOrders ?? 0),
       performanceCommission:
-        c.performanceCommission > 0
-          ? c.performanceCommission
-          : (existing?.performanceCommission ?? 0),
+        detailComm > 0
+          ? detailComm
+          : c.performanceCommission > 0
+            ? c.performanceCommission
+            : 0,
     });
   }
   return [...map.values()];

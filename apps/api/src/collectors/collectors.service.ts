@@ -335,11 +335,7 @@ export class CollectorsService {
                 (s, a) => s + a.performanceOrders,
                 0,
               );
-              const apiCommTotal = dailyAggs.reduce(
-                (s, a) => s + a.performanceCommission,
-                0,
-              );
-              if (clickTotal > 0 || apiOrderTotal > 0 || apiCommTotal > 0) {
+              if (clickTotal > 0 || apiOrderTotal > 0) {
                 const merged = mergeRwPerformancePreferApiDaily(perfAggs, dailyAggs);
                 await this.persistRwPerformanceDaily(
                   account.id,

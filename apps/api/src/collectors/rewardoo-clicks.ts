@@ -2042,10 +2042,15 @@ const RW_PERFORMANCE_ORDER_FIELDS = [
   'sale_orders',
 ] as const;
 
-/** 读取汇总行顶层 Orders 字段（不递归，避免与明细行判断互相调用） */
+/** 读取汇总行顶层 Orders 字段（不调用 isRwTransactionDetailRow_，避免栈溢出） */
 function readRwAggregateOrdersField_(row: Record<string, unknown>): number {
+  const signId = row.sign_id;
+  const hasSignId =
+    signId != null && String(signId).trim() !== '' && String(signId) !== '0';
+
   for (const key of RW_PERFORMANCE_AGG_ORDER_FIELDS) {
-    if (key === 'order' && isRwTransactionDetailRow_(row)) continue;
+    /** 明细行 sign_id 的 order=1 是行级标记，非 Performance 汇总 Orders */
+    if (key === 'order' && hasSignId) continue;
     const n = parseRwClickCount_(row[key]);
     if (n > 0) return n;
   }

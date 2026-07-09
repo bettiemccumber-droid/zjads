@@ -72,7 +72,7 @@ export interface RwMerchantDayOrderAgg {
 }
 
 /**
- * 从 transaction_details 推导按日 Orders（与 affiliate orderMap 一致：order_id 合并拆单行）。
+ * 从 transaction_details 推导按日 Orders（RW Performance：sign_id 拆分行计单）
  */
 export function deriveRwPerformanceOrdersFromDetailRows(
   rows: RwCommissionRow[],
@@ -99,7 +99,7 @@ export function deriveRwPerformanceOrdersFromDetailRows(
     const clickDate = parseRwDetailStatDateStr(row, '');
     if (!clickDate || clickDate < startDate || clickDate > endDate) continue;
 
-    const dedupeKey = resolveRwOrderDedupeKey_(row);
+    const dedupeKey = resolveRwPerformanceOrderDedupeKey_(row);
     if (!dedupeKey) continue;
 
     const mapKey = `${merchantId}|${clickDate}`;
@@ -160,7 +160,7 @@ export function parseRwDetailStatDateStr(
 }
 
 /**
- * 从 transaction_details 按日+商家汇总（affiliate 口径，供报表快速写入）
+ * 从 transaction_details 按日+商家汇总（Performance 口径：佣金累加、sign_id 计单）
  */
 export function buildRwDailyMetricsFromDetailRows(
   rows: RwCommissionRow[],
@@ -200,13 +200,7 @@ export function buildRwDailyMetricsFromDetailRows(
     const clickDate = parseRwDetailStatDateStr(row, '');
     if (!clickDate || clickDate < startDate || clickDate > endDate) continue;
 
-    let dedupeKey = resolveRwOrderDedupeKey_(row);
-    if (!dedupeKey) {
-      const signId = row.sign_id ?? row.txn_id ?? row.transaction_id;
-      if (signId != null && String(signId).trim() !== '' && String(signId) !== '0') {
-        dedupeKey = `sign:${String(signId).trim()}`;
-      }
-    }
+    let dedupeKey = resolveRwPerformanceOrderDedupeKey_(row);
     if (!dedupeKey) continue;
 
     const mapKey = `${merchantId}|${clickDate}`;
@@ -556,6 +550,21 @@ function parseRwPerformanceStatDate_(row: RwCommissionRow, fallbackDate?: string
   }
 
   return parseRwOrderDate(row, fallbackDate);
+}
+
+/**
+ * RW Performance 计单去重（与后台 Daily Orders 一致：优先 sign_id 拆分行，无 sign_id 再用 order_id）
+ */
+function resolveRwPerformanceOrderDedupeKey_(row: RwCommissionRow): string {
+  const signId = row.sign_id ?? row.txn_id ?? row.transaction_id;
+  if (signId != null && String(signId).trim() !== '' && String(signId) !== '0') {
+    return `sign:${String(signId).trim()}`;
+  }
+  const orderId = row.order_id ?? row.rewardoo_id;
+  if (orderId != null && String(orderId).trim() !== '' && String(orderId) !== '0') {
+    return String(orderId).trim();
+  }
+  return '';
 }
 
 function resolveRwOrderDedupeKey_(row: RwCommissionRow): string {

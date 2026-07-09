@@ -376,7 +376,7 @@ export function mergeRwPerformanceWithClickAggs(
 }
 
 /**
- * 合并明细与 Performance API：API 有当日 orders/comm/clicks 时以 API 为准（Transaction Date 与后台一致）
+ * 合并明细与 Performance API：佣金/点击以 API 为准；订单 API 有值用 API，否则用明细 sign_id 计单
  */
 export function mergeRwPerformancePreferApiDaily(
   detailAggs: RwMerchantClickAgg[],
@@ -393,13 +393,18 @@ export function mergeRwPerformancePreferApiDaily(
 
     const key = `${c.merchantId}|${c.clickDate}`;
     const existing = map.get(key);
+    const detailOrders = existing?.performanceOrders ?? 0;
     map.set(key, {
       merchantId: c.merchantId,
       merchantName: c.merchantName || existing?.merchantName || '',
       clickDate: c.clickDate,
       clicks: c.clicks > 0 ? c.clicks : (existing?.clicks ?? 0),
       performanceOrders:
-        c.performanceOrders > 0 ? c.performanceOrders : (existing?.performanceOrders ?? 0),
+        c.performanceOrders > 0
+          ? c.performanceOrders
+          : c.performanceCommission > 0
+            ? detailOrders
+            : 0,
       performanceCommission:
         c.performanceCommission > 0
           ? c.performanceCommission
@@ -1529,7 +1534,7 @@ function mergeSummaryClickRow_(
   }
 }
 
-/** Daily 汇总行 Orders 字段（勿读 order/cps_order 等明细字段） */
+/** Daily 汇总行 Orders 字段（勿读 order 单数字段，避免明细行误判） */
 const RW_PERFORMANCE_AGG_ORDER_FIELDS = [
   'orders',
   'order_count',

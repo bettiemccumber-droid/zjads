@@ -314,7 +314,7 @@ export async function fetchRewardooClicksQuick(
 }
 
 /**
- * 按自然日逐日拉取 medium/performance CPS（与 RW 后台 Group by Daily 一致：orders + comm + clicks）
+ * 按自然日逐日拉取 medium/performance CPS（GET 优先，与 RW 后台 Group by Daily 一致）
  */
 export async function fetchRewardooPerformanceDailyAggs(
   apiToken: string,
@@ -324,57 +324,89 @@ export async function fetchRewardooPerformanceDailyAggs(
 ): Promise<RwMerchantClickAgg[]> {
   const agg = new Map<string, RwMerchantClickAgg>();
   const dates = listInclusiveDates_(startDate, endDate);
-  const spec = RW_CPS_DAILY_SOURCES[0];
-  const mids: Array<string | undefined> =
-    merchantIds && merchantIds.length > 0
-      ? [...merchantIds, undefined]
-      : [undefined];
+  const mids: string[] =
+    merchantIds && merchantIds.length > 0 ? merchantIds : [];
+  const singleMerchant = mids.length === 1 ? mids[0] : undefined;
 
   for (const dateStr of dates) {
-    let dayHasData = false;
-    for (const mid of mids) {
-      const specWithMid: RwClickSourceSpec = mid
-        ? {
-            ...spec,
-            dateParams: (b, e) => ({ ...spec.dateParams(b, e), ...rwMidParams_(mid) }),
+    let dayGotMetrics = false;
+
+    const targets = mids.length > 0 ? mids : [];
+    for (const mid of targets) {
+      const midParamVariants: Record<string, string>[] = [
+        {
+          begin_date: dateStr,
+          end_date: dateStr,
+          offer_type: 'CPS',
+          ...rwMidParams_(mid),
+        },
+        {
+          begin_date: dateStr,
+          end_date: dateStr,
+          ...rwMidParams_(mid),
+        },
+      ];
+      for (const params of midParamVariants) {
+        const ordersBefore = sumAggPerformanceOrders_(agg);
+        const clicksBefore = sumAggClicks_(agg);
+        await forEachRewardooGetPage_('medium', 'performance', apiToken, params, (rows) => {
+          for (const raw of rows) {
+            mergeRwPerformanceDailyRow_(
+              raw as Record<string, unknown>,
+              agg,
+              dateStr,
+              mid,
+            );
           }
-        : spec;
-      const ordersBefore = sumAggPerformanceOrders_(agg);
-      const clicksBefore = sumAggClicks_(agg);
-      const commBefore = sumAggPerformanceCommission_(agg);
-      await fetchClickSource_(
-        specWithMid,
-        apiToken,
-        dateStr,
-        dateStr,
-        agg,
-        startDate,
-        endDate,
-        dateStr,
-        { rwPerformanceDaily: true, forcedMid: mid },
-      );
-      if (
-        sumAggPerformanceOrders_(agg) > ordersBefore ||
-        sumAggClicks_(agg) > clicksBefore ||
-        sumAggPerformanceCommission_(agg) > commBefore
-      ) {
-        dayHasData = true;
+        });
+        if (
+          sumAggPerformanceOrders_(agg) > ordersBefore ||
+          sumAggClicks_(agg) > clicksBefore
+        ) {
+          dayGotMetrics = true;
+        }
       }
     }
-    if (!dayHasData && merchantIds && merchantIds.length > 0) {
-      await fetchClickSource_(
-        spec,
-        apiToken,
-        dateStr,
-        dateStr,
-        agg,
-        startDate,
-        endDate,
-        dateStr,
-        { rwPerformanceDaily: true },
-      );
+
+    if (!dayGotMetrics) {
+      let accountOrders = 0;
+      let accountClicks = 0;
+      const accountParamVariants: Record<string, string>[] = [
+        { begin_date: dateStr, end_date: dateStr, offer_type: 'CPS' },
+        { begin_date: dateStr, end_date: dateStr },
+      ];
+      for (const params of accountParamVariants) {
+        await forEachRewardooGetPage_('medium', 'performance', apiToken, params, (rows) => {
+          for (const raw of rows) {
+            const row = raw as Record<string, unknown>;
+            if (resolveRwClickMerchantId_(row)) {
+              mergeRwPerformanceDailyRow_(row, agg, dateStr);
+              dayGotMetrics = true;
+              continue;
+            }
+            const account = readRwAccountDailyMetrics_(row);
+            accountOrders = Math.max(accountOrders, account.orders);
+            accountClicks = Math.max(accountClicks, account.clicks);
+          }
+        });
+      }
+
+      if ((accountOrders > 0 || accountClicks > 0) && singleMerchant) {
+        const key = `${singleMerchant}|${dateStr}`;
+        const existing = agg.get(key);
+        agg.set(key, {
+          merchantId: singleMerchant,
+          merchantName: existing?.merchantName ?? '',
+          clickDate: dateStr,
+          clicks: Math.max(existing?.clicks ?? 0, accountClicks),
+          performanceOrders: Math.max(existing?.performanceOrders ?? 0, accountOrders),
+          performanceCommission: existing?.performanceCommission ?? 0,
+        });
+        dayGotMetrics = true;
+      }
     }
   }
+
   return [...agg.values()];
 }
 
@@ -624,8 +656,9 @@ function mergeRwPerformanceDailyRow_(
   row: Record<string, unknown>,
   agg: Map<string, RwMerchantClickAgg>,
   statDate: string,
+  forcedMid?: string,
 ): void {
-  const merchantId = resolveRwClickMerchantId_(row);
+  const merchantId = resolveRwClickMerchantId_(row) || forcedMid || '';
   if (!merchantId) return;
 
   const orders = extractRwPerformanceOrdersFromRow_(row);
@@ -652,6 +685,18 @@ function mergeRwPerformanceDailyRow_(
   existing.performanceOrders = Math.max(existing.performanceOrders, orders);
   existing.performanceCommission = Math.max(existing.performanceCommission, commission);
   existing.clicks = Math.max(existing.clicks, clicks);
+}
+
+/** 解析账号级按日 Performance 行（无 merchant_id） */
+function readRwAccountDailyMetrics_(
+  row: Record<string, unknown>,
+): { orders: number; clicks: number } {
+  const merchantId = resolveRwClickMerchantId_(row);
+  if (merchantId) return { orders: 0, clicks: 0 };
+  return {
+    orders: extractRwPerformanceOrdersFromRow_(row),
+    clicks: extractRwClickCountFromRow_(row),
+  };
 }
 
 function rwMidParams_(mid: string): Record<string, string> {
@@ -1596,7 +1641,7 @@ function mergeSummaryClickRow_(
   }
 }
 
-/** Daily 汇总行 Orders 字段（勿读 order 单数字段，避免明细行误判） */
+/** Daily 汇总行 Orders 字段（含部分接口返回的单数 order） */
 const RW_PERFORMANCE_AGG_ORDER_FIELDS = [
   'orders',
   'order_count',
@@ -1604,6 +1649,7 @@ const RW_PERFORMANCE_AGG_ORDER_FIELDS = [
   'cps_orders',
   'order_num',
   'order_nums',
+  'order',
 ] as const;
 
 /** Performance 汇总行中的 Orders 字段（点击采集等宽松口径） */
@@ -1618,6 +1664,7 @@ const RW_PERFORMANCE_ORDER_FIELDS = [
 /** 读取汇总行顶层 Orders 字段（不递归，避免与明细行判断互相调用） */
 function readRwAggregateOrdersField_(row: Record<string, unknown>): number {
   for (const key of RW_PERFORMANCE_AGG_ORDER_FIELDS) {
+    if (key === 'order' && isRwTransactionDetailRow_(row)) continue;
     const n = parseRwClickCount_(row[key]);
     if (n > 0) return n;
   }
@@ -1681,6 +1728,18 @@ function extractRwOrderCountFromRow_(row: Record<string, unknown>, depth = 0): n
 
 function extractRwClickCountFromRow_(row: Record<string, unknown>, depth = 0): number {
   if (depth > 4) return 0;
+
+  for (const key of [
+    'clicks',
+    'total_clicks',
+    'total_click',
+    'click_count',
+    'cps_clicks',
+    'click',
+  ] as const) {
+    const n = parseRwClickCount_(row[key]);
+    if (n > 0) return n;
+  }
 
   for (const [key, val] of Object.entries(row)) {
     if (!/click/i.test(key)) continue;

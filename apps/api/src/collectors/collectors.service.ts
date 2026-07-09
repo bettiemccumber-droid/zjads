@@ -346,10 +346,12 @@ export class CollectorsService {
                 rwClickTotal = merged.reduce((s, a) => s + a.clicks, 0);
                 if (rwApi) rwApi.orderCount = perfOrderTotal;
                 await onProgress?.(
-                  `已合并 Performance 按日：${perfOrderTotal} 单 / 点击 ${rwClickTotal}`,
+                  `已合并 Performance 按日 GET：${perfOrderTotal} 单 / 点击 ${rwClickTotal}（API ${apiOrderTotal} 单 / ${clickTotal} 点击）`,
                 );
               } else {
-                await onProgress?.('Performance 按日 API 无 orders/clicks，保留明细汇总');
+                await onProgress?.(
+                  `Performance 按日 GET 未解析到 orders/clicks（${dailyAggs.length} 条），保留明细汇总`,
+                );
               }
             } catch (clickErr) {
               const clickMsg =

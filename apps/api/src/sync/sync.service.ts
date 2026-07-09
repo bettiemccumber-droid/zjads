@@ -472,9 +472,13 @@ export class SyncService implements OnModuleInit {
       }
       if (result.rwClickTotal !== undefined) {
         parts.push(`RW 联盟点击 ${result.rwClickTotal}（${start}~${end}）`);
-      }
-      if (result.rwClickError) {
-        parts.push(`RW 联盟点击失败: ${result.rwClickError}`);
+      } else if (includeClicks) {
+        const clickHint = result.rwClickError
+          ? `RW 联盟点击未写入: ${result.rwClickError.slice(0, 100)}`
+          : 'RW 联盟点击未写入（Performance API 无点击数据，请确认已部署最新 API）';
+        parts.push(clickHint);
+      } else if (result.rwClickError) {
+        parts.push(`RW 联盟点击未写入: ${result.rwClickError.slice(0, 100)}`);
       }
       const pmNote = parts.length ? parts.join('；') : '采集完成（无订单数据）';
       await this.prisma.syncJobItem.update({

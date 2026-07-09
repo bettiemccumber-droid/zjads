@@ -1,5 +1,5 @@
 import { NormalizedStatus, PlatformStatusMapping } from '@prisma/client';
-import { parseAffiliateOrderDateUtc } from '../common/affiliate-order-date.util';
+import { parseAffiliateOrderDateUtc, parseRwPerformanceCalendarDay } from '../common/affiliate-order-date.util';
 import {
   fetchRewardooTransactionDetailPages,
   RW_TRANSACTION_DETAILS_OP,
@@ -96,7 +96,7 @@ export function deriveRwPerformanceOrdersFromDetailRows(
     );
     if (commission <= 0 && orderAmount <= 0) continue;
 
-    const clickDate = parseRwDetailStatDateStr(row, endDate);
+    const clickDate = parseRwDetailStatDateStr(row, '');
     if (!clickDate || clickDate < startDate || clickDate > endDate) continue;
 
     const dedupeKey = resolveRwOrderDedupeKey_(row);
@@ -124,10 +124,10 @@ export function deriveRwPerformanceOrdersFromDetailRows(
   }));
 }
 
-/** 明细行按日归因（RW Performance Transaction Date 优先，无效日期不回退「今天」） */
+/** 明细行按日归因（RW Performance Transaction Date 优先，时间戳按东八区，无有效日期则丢弃） */
 export function parseRwDetailStatDateStr(
   row: RwCommissionRow,
-  fallbackDate: string,
+  _fallbackDate: string,
 ): string | null {
   for (const key of [
     'transaction_date',
@@ -138,25 +138,25 @@ export function parseRwDetailStatDateStr(
   ] as const) {
     const v = row[key];
     if (v == null || String(v).trim() === '' || String(v) === 'null') continue;
-    const d = parseAffiliateOrderDateUtc(v).toISOString().slice(0, 10);
-    if (/^\d{4}-\d{2}-\d{2}$/.test(d)) return d;
+    const d = parseRwPerformanceCalendarDay(v);
+    if (d) return d;
   }
 
   for (const key of ['order_time', 'transaction_time'] as const) {
     const v = row[key];
     if (v == null || String(v).trim() === '') continue;
-    const d = parseAffiliateOrderDateUtc(v).toISOString().slice(0, 10);
-    if (/^\d{4}-\d{2}-\d{2}$/.test(d)) return d;
+    const d = parseRwPerformanceCalendarDay(v);
+    if (d) return d;
   }
 
   for (const key of ['validation_date', 'payment_ymd'] as const) {
     const v = row[key];
     if (v == null || String(v).trim() === '' || String(v) === 'null') continue;
-    const d = parseAffiliateOrderDateUtc(v).toISOString().slice(0, 10);
-    if (/^\d{4}-\d{2}-\d{2}$/.test(d)) return d;
+    const d = parseRwPerformanceCalendarDay(v);
+    if (d) return d;
   }
 
-  return /^\d{4}-\d{2}-\d{2}$/.test(fallbackDate) ? fallbackDate : null;
+  return null;
 }
 
 /**
@@ -197,7 +197,7 @@ export function buildRwDailyMetricsFromDetailRows(
     );
     if (commission <= 0 && orderAmount <= 0) continue;
 
-    const clickDate = parseRwDetailStatDateStr(row, endDate);
+    const clickDate = parseRwDetailStatDateStr(row, '');
     if (!clickDate || clickDate < startDate || clickDate > endDate) continue;
 
     let dedupeKey = resolveRwOrderDedupeKey_(row);

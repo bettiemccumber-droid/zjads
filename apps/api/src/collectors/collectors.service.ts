@@ -36,6 +36,7 @@ import {
   buildRwMerchantsByDateFromOrders,
   expandRwPerformanceAggsForRange,
   mergeRwPerformanceWithClickAggs,
+  mergeRwPerformancePreferApiDaily,
   rwDetailMetricsToClickAggs,
 } from './rewardoo-clicks';
 import { ensurePlatformStatusMappings } from '../common/platform-status-defaults.util';
@@ -334,7 +335,7 @@ export class CollectorsService {
                 0,
               );
               if (clickTotal > 0 || apiOrderTotal > 0 || apiCommTotal > 0) {
-                const merged = mergeRwPerformanceWithClickAggs(perfAggs, clickAggs);
+                const merged = mergeRwPerformancePreferApiDaily(perfAggs, clickAggs);
                 await this.persistRwPerformanceDaily(
                   account.id,
                   expandRwPerformanceAggsForRange(merged, startDate, endDate),
@@ -442,7 +443,7 @@ export class CollectorsService {
     }>,
   ): Promise<void> {
     for (const a of aggs) {
-      const clickDate = new Date(a.statDate);
+      const clickDate = new Date(`${a.statDate}T00:00:00.000Z`);
       const existing = await this.prisma.affiliateMerchantClickDaily.findUnique({
         where: {
           channelAccountId_merchantId_clickDate: {

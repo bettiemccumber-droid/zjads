@@ -12,6 +12,7 @@ import { resolveCampaignGroupKey } from '../common/campaign-group.util';
 import { suggestOperation } from '../common/operation-suggest.util';
 import { AuthUser, resolveOwnerUserId } from '../common/ownership.util';
 import { buildOrderDateRangeFilter } from '../common/order-date-range.util';
+import { formatCalendarDateUtc } from '../common/affiliate-order-date.util';
 import { isLbClickPseudoMerchant } from '../collectors/linkbux-clicks';
 import { isRwClickPseudoMerchant } from '../collectors/rewardoo-clicks';
 import { buildSheetCsvUrl, parseAdSheetCsv } from '../ad-sources/sheet-parser.util';
@@ -802,7 +803,7 @@ export class ReportsService {
       if (isLbClickPseudoMerchant(c.merchantId) || isRwClickPseudoMerchant(c.merchantId)) continue;
       const merchantId = c.merchantId;
       const alias = (c.channelAccount.affiliateAlias || '').toLowerCase();
-      const dateStr = c.clickDate.toISOString().slice(0, 10);
+      const dateStr = formatCalendarDateUtc(c.clickDate);
       const dayKey = `${merchantId}|${alias}|${dateStr}`;
       const merchantDayKey = `${merchantId}|${dateStr}`;
       ensureKey(byKey, dayKey).affiliateClicks += c.clicks;
@@ -845,7 +846,7 @@ export class ReportsService {
         if (c.channelAccount.platform?.code !== 'rewardoo') continue;
         if (isLbClickPseudoMerchant(c.merchantId) || isRwClickPseudoMerchant(c.merchantId)) continue;
 
-        const dateStr = c.clickDate.toISOString().slice(0, 10);
+        const dateStr = formatCalendarDateUtc(c.clickDate);
         const merchantDayKey = `${c.merchantId}|${dateStr}`;
         ordersByMerchantDay.set(
           merchantDayKey,
@@ -864,7 +865,7 @@ export class ReportsService {
         const [merchantId, dateStr] = merchantDayKey.split('|');
         for (const c of clickRows) {
           if (c.merchantId !== merchantId) continue;
-          if (c.clickDate.toISOString().slice(0, 10) !== dateStr) continue;
+          if (formatCalendarDateUtc(c.clickDate) !== dateStr) continue;
           if (c.channelAccount.platform?.code !== 'rewardoo') continue;
           const alias = (c.channelAccount.affiliateAlias || '').toLowerCase();
           const dayMetrics = ensure(byKey, `${merchantId}|${alias}|${dateStr}`);

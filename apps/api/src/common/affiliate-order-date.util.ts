@@ -48,6 +48,37 @@ export function parseAffiliateOrderDateUtc(
 }
 
 /**
+ * Rewardoo Performance Transaction Date → YYYY-MM-DD（东八区自然日，与 RW 后台 Daily 一致）
+ */
+export function parseRwPerformanceCalendarDay(
+  value: string | number | undefined | null,
+): string | null {
+  if (value == null || value === '') return null;
+
+  if (typeof value === 'string' && value.includes('-')) {
+    const day = value.split(' ')[0];
+    if (/^\d{4}-\d{2}-\d{2}$/.test(day)) return day;
+  }
+
+  const d = parseAffiliateOrderDateUtc8(value);
+  const y = d.getUTCFullYear();
+  const m = String(d.getUTCMonth() + 1).padStart(2, '0');
+  const day = String(d.getUTCDate()).padStart(2, '0');
+  const out = `${y}-${m}-${day}`;
+  return /^\d{4}-\d{2}-\d{2}$/.test(out) ? out : null;
+}
+
+/**
+ * PostgreSQL @db.Date 等日期字段格式化为 YYYY-MM-DD（避免 toISOString 时区偏移）
+ */
+export function formatCalendarDateUtc(d: Date): string {
+  const y = d.getUTCFullYear();
+  const m = String(d.getUTCMonth() + 1).padStart(2, '0');
+  const day = String(d.getUTCDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
+
+/**
  * 订单日期是否落在报表查询区间（与 merchantSummary / campaignSummary 一致）
  */
 export function isOrderDateInReportRange(

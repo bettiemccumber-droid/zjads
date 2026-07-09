@@ -1,5 +1,5 @@
 import axios from 'axios';
-import { parseAffiliateOrderDateUtc } from '../common/affiliate-order-date.util';
+import { parseRwPerformanceCalendarDay } from '../common/affiliate-order-date.util';
 import {
   forEachRewardooOffsetPage,
   forEachRewardooPageLimit,
@@ -371,6 +371,40 @@ export function mergeRwPerformanceWithClickAggs(
     } else {
       map.set(key, { ...c });
     }
+  }
+  return [...map.values()];
+}
+
+/**
+ * 合并明细与 Performance API：API 有当日 orders/comm/clicks 时以 API 为准（Transaction Date 与后台一致）
+ */
+export function mergeRwPerformancePreferApiDaily(
+  detailAggs: RwMerchantClickAgg[],
+  apiAggs: RwMerchantClickAgg[],
+): RwMerchantClickAgg[] {
+  const map = new Map<string, RwMerchantClickAgg>();
+  for (const a of detailAggs) {
+    map.set(`${a.merchantId}|${a.clickDate}`, { ...a });
+  }
+  for (const c of apiAggs) {
+    const hasApiPerf =
+      c.performanceOrders > 0 || c.performanceCommission > 0 || c.clicks > 0;
+    if (!hasApiPerf) continue;
+
+    const key = `${c.merchantId}|${c.clickDate}`;
+    const existing = map.get(key);
+    map.set(key, {
+      merchantId: c.merchantId,
+      merchantName: c.merchantName || existing?.merchantName || '',
+      clickDate: c.clickDate,
+      clicks: c.clicks > 0 ? c.clicks : (existing?.clicks ?? 0),
+      performanceOrders:
+        c.performanceOrders > 0 ? c.performanceOrders : (existing?.performanceOrders ?? 0),
+      performanceCommission:
+        c.performanceCommission > 0
+          ? c.performanceCommission
+          : (existing?.performanceCommission ?? 0),
+    });
   }
   return [...map.values()];
 }
@@ -1830,15 +1864,8 @@ function parseRwRowDate_(row: Record<string, unknown>): string {
   ] as const) {
     const v = row[key];
     if (v == null || String(v).trim() === '' || String(v) === 'null') continue;
-    const s = String(v).trim();
-    const iso = s.match(/^(\d{4}-\d{2}-\d{2})/);
-    if (iso) return iso[1];
-    try {
-      if (typeof v === 'object') continue;
-      return parseAffiliateOrderDateUtc(v as string | number).toISOString().slice(0, 10);
-    } catch {
-      continue;
-    }
+    const d = parseRwPerformanceCalendarDay(v as string | number);
+    if (d) return d;
   }
   return '';
 }

@@ -544,7 +544,7 @@ async function tryFetchPerformanceReportDaily_(
   ];
 
   for (const params of paramVariants) {
-    await forEachRewardooGetPage_(
+    const result = await forEachRewardooGetPage_(
       'performance',
       'report',
       apiToken,
@@ -582,6 +582,53 @@ async function tryFetchPerformanceReportDaily_(
       RW_CLICK_PAGE_SIZE,
       RW_SUPPLEMENT_MAX_PAGES,
     );
+    if (agg.size === 0 && result.rowCount === 0) {
+      await onProgress?.(
+        `performance/report GET code=${result.code} rows=0`,
+      );
+      /** 部分站点仅支持 POST */
+      const postAgg = new Map<string, RwMerchantClickAgg>();
+      try {
+        await forEachRewardooPageLimit(
+          'performance',
+          'report',
+          apiToken,
+          params,
+          (rows) => {
+            for (const raw of rows) {
+              mergeSummaryClickRow_(
+                raw as Record<string, unknown>,
+                postAgg,
+                startDate,
+                endDate,
+                undefined,
+                { rwPerformanceDaily: true },
+              );
+            }
+          },
+          RW_CLICK_PAGE_SIZE,
+        );
+      } catch {
+        /* POST 不可用 */
+      }
+      for (const row of postAgg.values()) {
+        if (row.performanceOrders <= 0 && row.clicks <= 0) continue;
+        const clickDate = row.clickDate;
+        if (!clickDate || clickDate < startDate || clickDate > endDate) continue;
+        let merchantId = row.merchantId;
+        if (!merchantId || isRwClickPseudoMerchant(merchantId)) {
+          const midsOnDay = merchantsByDate.get(clickDate);
+          if (!midsOnDay || midsOnDay.size !== 1) continue;
+          merchantId = [...midsOnDay][0]!;
+        }
+        if (merchantIds.length > 0 && !merchantIds.includes(merchantId)) continue;
+        mergeRwAggRow_(agg, {
+          ...row,
+          merchantId,
+          performanceCommission: 0,
+        });
+      }
+    }
     if (agg.size > 0) break;
   }
 
@@ -591,6 +638,41 @@ async function tryFetchPerformanceReportDaily_(
     );
   }
   return [...agg.values()];
+}
+
+/** 将 user_click 未解析商家的点击归因到当日唯一有佣金的商家 */
+function attributeRwUnmatchedClicks_(
+  clickAgg: Map<string, RwMerchantClickAgg>,
+  mids: string[],
+  merchantsByDate: Map<string, Set<string>>,
+): void {
+  for (const [key, row] of [...clickAgg.entries()]) {
+    if (!isRwClickPseudoMerchant(row.merchantId)) continue;
+    if (row.clicks <= 0) continue;
+
+    const day = row.clickDate;
+    let targetMid: string | undefined;
+    const dayMids = merchantsByDate.get(day);
+    if (dayMids?.size === 1) {
+      targetMid = [...dayMids][0];
+    } else if (mids.length === 1) {
+      targetMid = mids[0];
+    }
+    if (!targetMid) continue;
+
+    const toKey = `${targetMid}|${day}`;
+    const existing = clickAgg.get(toKey);
+    if (existing) {
+      existing.clicks += row.clicks;
+    } else {
+      clickAgg.set(toKey, {
+        ...row,
+        merchantId: targetMid,
+        merchantName: row.merchantName,
+      });
+    }
+    clickAgg.delete(key);
+  }
 }
 
 /** RW Performance 补充最长耗时（避免多源兜底卡死采集任务） */
@@ -643,20 +725,31 @@ export async function fetchRewardooPerformanceDailyAggs(
     mergeRows(reportRows);
   }
 
-  /** 2. cpc_performance 区间 + 商家维度（单次 GET） */
+  /** 2. cpc_performance 区间 + 商家维度（单次 GET/POST） */
   if (!isSatisfied() && !timedOut()) {
     await onProgress?.('RW Performance：cpc_performance 按日+商家…');
-    const got = await fetchRwCpcPerformanceDailyQuick_(
-      apiToken,
-      startDate,
-      endDate,
-      agg,
-      mids.length === 1 ? mids[0] : undefined,
-    );
-    if (got) {
-      await onProgress?.(
-        `cpc_performance → ${sumAggPerformanceOrders_(agg)} 单 / ${sumAggClicks_(agg)} 点击`,
+    const targetMids =
+      mids.length === 1
+        ? mids
+        : [...new Set([...merchantsByDate.values()].flatMap((s) => [...s]))];
+    const tryMids: Array<string | undefined> =
+      targetMids.length > 0 ? targetMids : [undefined];
+
+    for (const mid of tryMids) {
+      if (timedOut() || isSatisfied()) break;
+      const got = await fetchRwCpcPerformanceDailyQuick_(
+        apiToken,
+        startDate,
+        endDate,
+        agg,
+        mid,
       );
+      if (got) {
+        await onProgress?.(
+          `cpc_performance${mid ? ` mid=${mid}` : ''} → ${sumAggPerformanceOrders_(agg)} 单 / ${sumAggClicks_(agg)} 点击`,
+        );
+        break;
+      }
     }
   }
 
@@ -689,6 +782,7 @@ export async function fetchRewardooPerformanceDailyAggs(
       },
     );
     if (gotClicks) {
+      attributeRwUnmatchedClicks_(clickAgg, mids, merchantsByDate);
       for (const row of clickAgg.values()) {
         if (isRwClickPseudoMerchant(row.merchantId)) continue;
         if (mids.length > 0 && !mids.includes(row.merchantId)) continue;
@@ -698,6 +792,8 @@ export async function fetchRewardooPerformanceDailyAggs(
           performanceCommission: 0,
         });
       }
+    } else if (includeClicks) {
+      await onProgress?.('user_click 无有效点击（接口空或 merchant_id 未解析）');
     }
   }
 
@@ -758,9 +854,42 @@ async function fetchRwCpcPerformanceDailyQuick_(
     RW_SUPPLEMENT_MAX_PAGES,
   );
 
-  return (
-    sumAggPerformanceOrders_(agg) > ordersBefore || sumAggClicks_(agg) > clicksBefore
-  );
+  let got =
+    sumAggPerformanceOrders_(agg) > ordersBefore || sumAggClicks_(agg) > clicksBefore;
+
+  if (!got) {
+    const postAgg = new Map<string, RwMerchantClickAgg>();
+    try {
+      await forEachRewardooPageLimit(
+        'medium',
+        'cpc_performance',
+        apiToken,
+        params,
+        (rows) => {
+          for (const raw of rows) {
+            mergeSummaryClickRow_(
+              raw as Record<string, unknown>,
+              postAgg,
+              startDate,
+              endDate,
+              undefined,
+              { rwPerformanceDaily: true, forcedMid },
+            );
+          }
+        },
+        RW_CLICK_PAGE_SIZE,
+      );
+      for (const row of postAgg.values()) {
+        mergeRwAggRow_(agg, row);
+      }
+      got =
+        sumAggPerformanceOrders_(agg) > ordersBefore || sumAggClicks_(agg) > clicksBefore;
+    } catch {
+      /* POST 不可用 */
+    }
+  }
+
+  return got;
 }
 
 /** CPS 按天 Performance（与 fetchRewardooClicks 同源链路） */

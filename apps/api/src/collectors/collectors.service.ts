@@ -32,7 +32,7 @@ import {
 } from './rewardoo.collector';
 import {
   fetchRewardooPerformanceSummaryAggs,
-  fetchRewardooClicksQuick,
+  fetchRewardooPerformanceDailyAggs,
   buildRwMerchantsByDateFromOrders,
   expandRwPerformanceAggsForRange,
   mergeRwPerformanceWithClickAggs,
@@ -320,22 +320,27 @@ export class CollectorsService {
 
           if (rwPerformanceOrderCount && rwPerformanceOrderCount > 0) {
             try {
-              const clickAggs = await fetchRewardooClicksQuick(
+              const merchantIds = [
+                ...new Set(detailMetrics.map((m) => m.merchantId).filter(Boolean)),
+              ];
+              await onProgress?.('正在补充 RW Performance 按日 orders/clicks…');
+              const dailyAggs = await fetchRewardooPerformanceDailyAggs(
                 apiToken,
                 startDate,
                 endDate,
+                merchantIds,
               );
-              const clickTotal = clickAggs.reduce((s, a) => s + a.clicks, 0);
-              const apiOrderTotal = clickAggs.reduce(
+              const clickTotal = dailyAggs.reduce((s, a) => s + a.clicks, 0);
+              const apiOrderTotal = dailyAggs.reduce(
                 (s, a) => s + a.performanceOrders,
                 0,
               );
-              const apiCommTotal = clickAggs.reduce(
+              const apiCommTotal = dailyAggs.reduce(
                 (s, a) => s + a.performanceCommission,
                 0,
               );
               if (clickTotal > 0 || apiOrderTotal > 0 || apiCommTotal > 0) {
-                const merged = mergeRwPerformancePreferApiDaily(perfAggs, clickAggs);
+                const merged = mergeRwPerformancePreferApiDaily(perfAggs, dailyAggs);
                 await this.persistRwPerformanceDaily(
                   account.id,
                   expandRwPerformanceAggsForRange(merged, startDate, endDate),
@@ -345,8 +350,10 @@ export class CollectorsService {
                 rwClickTotal = merged.reduce((s, a) => s + a.clicks, 0);
                 if (rwApi) rwApi.orderCount = perfOrderTotal;
                 await onProgress?.(
-                  `已合并 Performance API：${perfOrderTotal} 单 / 点击 ${rwClickTotal}`,
+                  `已合并 Performance 按日：${perfOrderTotal} 单 / 点击 ${rwClickTotal}`,
                 );
+              } else {
+                await onProgress?.('Performance 按日 API 无 orders/clicks，保留明细汇总');
               }
             } catch (clickErr) {
               const clickMsg =

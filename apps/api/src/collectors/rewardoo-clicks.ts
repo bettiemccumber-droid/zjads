@@ -313,6 +313,71 @@ export async function fetchRewardooClicksQuick(
   return [...agg.values()];
 }
 
+/**
+ * 按自然日逐日拉取 medium/performance CPS（与 RW 后台 Group by Daily 一致：orders + comm + clicks）
+ */
+export async function fetchRewardooPerformanceDailyAggs(
+  apiToken: string,
+  startDate: string,
+  endDate: string,
+  merchantIds?: string[],
+): Promise<RwMerchantClickAgg[]> {
+  const agg = new Map<string, RwMerchantClickAgg>();
+  const dates = listInclusiveDates_(startDate, endDate);
+  const spec = RW_CPS_DAILY_SOURCES[0];
+  const mids: Array<string | undefined> =
+    merchantIds && merchantIds.length > 0
+      ? [...merchantIds, undefined]
+      : [undefined];
+
+  for (const dateStr of dates) {
+    let dayHasData = false;
+    for (const mid of mids) {
+      const specWithMid: RwClickSourceSpec = mid
+        ? {
+            ...spec,
+            dateParams: (b, e) => ({ ...spec.dateParams(b, e), ...rwMidParams_(mid) }),
+          }
+        : spec;
+      const ordersBefore = sumAggPerformanceOrders_(agg);
+      const clicksBefore = sumAggClicks_(agg);
+      const commBefore = sumAggPerformanceCommission_(agg);
+      await fetchClickSource_(
+        specWithMid,
+        apiToken,
+        dateStr,
+        dateStr,
+        agg,
+        startDate,
+        endDate,
+        dateStr,
+        { rwPerformanceDaily: true, forcedMid: mid },
+      );
+      if (
+        sumAggPerformanceOrders_(agg) > ordersBefore ||
+        sumAggClicks_(agg) > clicksBefore ||
+        sumAggPerformanceCommission_(agg) > commBefore
+      ) {
+        dayHasData = true;
+      }
+    }
+    if (!dayHasData && merchantIds && merchantIds.length > 0) {
+      await fetchClickSource_(
+        spec,
+        apiToken,
+        dateStr,
+        dateStr,
+        agg,
+        startDate,
+        endDate,
+        dateStr,
+        { rwPerformanceDaily: true },
+      );
+    }
+  }
+  return [...agg.values()];
+}
+
 /** CPS 按天 Performance（与 fetchRewardooClicks 同源链路） */
 const RW_CPS_DAILY_SOURCES: RwClickSourceSpec[] = [
   {
@@ -376,7 +441,7 @@ export function mergeRwPerformanceWithClickAggs(
 }
 
 /**
- * 合并明细与 Performance API：佣金/点击以 API 为准；订单 API 有值用 API，否则用明细 sign_id 计单
+ * 合并明细与 Performance API：逐日 API 有 orders/clicks+comm 时整行采用 API（与 RW Daily 一致）
  */
 export function mergeRwPerformancePreferApiDaily(
   detailAggs: RwMerchantClickAgg[],
@@ -393,7 +458,21 @@ export function mergeRwPerformancePreferApiDaily(
 
     const key = `${c.merchantId}|${c.clickDate}`;
     const existing = map.get(key);
-    const detailOrders = existing?.performanceOrders ?? 0;
+    const hasApiDaily =
+      c.performanceCommission > 0 && (c.performanceOrders > 0 || c.clicks > 0);
+
+    if (hasApiDaily) {
+      map.set(key, {
+        merchantId: c.merchantId,
+        merchantName: c.merchantName || existing?.merchantName || '',
+        clickDate: c.clickDate,
+        clicks: c.clicks,
+        performanceOrders: c.performanceOrders,
+        performanceCommission: c.performanceCommission,
+      });
+      continue;
+    }
+
     map.set(key, {
       merchantId: c.merchantId,
       merchantName: c.merchantName || existing?.merchantName || '',
@@ -402,9 +481,7 @@ export function mergeRwPerformancePreferApiDaily(
       performanceOrders:
         c.performanceOrders > 0
           ? c.performanceOrders
-          : c.performanceCommission > 0
-            ? detailOrders
-            : 0,
+          : (existing?.performanceOrders ?? 0),
       performanceCommission:
         c.performanceCommission > 0
           ? c.performanceCommission

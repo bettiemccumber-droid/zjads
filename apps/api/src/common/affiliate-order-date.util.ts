@@ -56,6 +56,10 @@ export function parseRwPerformanceCalendarDay(
   if (value == null || value === '') return null;
 
   if (typeof value === 'string') {
+    const compact = value.trim().match(/^(\d{4})(\d{2})(\d{2})$/);
+    if (compact) {
+      return `${compact[1]}-${compact[2]}-${compact[3]}`;
+    }
     const slash = value.trim().match(/^(\d{4})[/-](\d{1,2})[/-](\d{1,2})/);
     if (slash) {
       const m = String(Number(slash[2])).padStart(2, '0');

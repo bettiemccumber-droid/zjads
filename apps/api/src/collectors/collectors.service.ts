@@ -32,10 +32,9 @@ import {
 } from './rewardoo.collector';
 import {
   fetchRewardooPerformanceSummaryAggs,
-  fetchRewardooPerformanceDailyAggs,
+  fetchRewardooClicksSupplement,
   buildRwMerchantsByDateFromOrders,
   expandRwPerformanceAggsForRange,
-  mergeRwPerformanceWithClickAggs,
   mergeRwPerformancePreferApiDaily,
   rwDetailMetricsToClickAggs,
 } from './rewardoo-clicks';
@@ -139,6 +138,8 @@ export class CollectorsService {
     let rwClickError: string | undefined;
     let rwPerformanceOrderCount: number | undefined;
     let rwPerformanceOrderError: string | undefined;
+    let ordersPersistedEarly = false;
+    let orderPersistResult: CollectResult | undefined;
 
     /** LB 点击只采区间最后一天；PM/LH/RW API 随订单全区间采集 */
     const lbClickDay = endDate;
@@ -323,63 +324,45 @@ export class CollectorsService {
           }
 
           if (perfAggs.length > 0 && (perfCommTotal > 0 || perfOrderTotal > 0)) {
-            try {
-              const merchantsByDate = buildRwMerchantsByDateFromOrders(
-                normalized.map((o) => ({
-                  merchantId: o.merchantId,
-                  orderDate: o.orderDate,
-                  commission: o.commission,
-                })),
-              );
-              const merchantIds = [
-                ...new Set([
-                  ...detailMetrics.map((m) => m.merchantId).filter(Boolean),
-                  ...perfAggs.map((m) => m.merchantId).filter(Boolean),
-                ]),
-              ];
-              await onProgress?.('正在补充 RW Performance 按日 orders/clicks…');
-              const dailyAggs = await fetchRewardooPerformanceDailyAggs(
-                apiToken,
-                startDate,
-                endDate,
-                merchantIds,
-                async (message) => {
-                  await onProgress?.(message);
-                },
-                { merchantsByDate, includeClicks: options.includeClicks },
-              );
-              const clickTotal = dailyAggs.reduce((s, a) => s + a.clicks, 0);
-              const apiOrderTotal = dailyAggs.reduce(
-                (s, a) => s + a.performanceOrders,
-                0,
-              );
-              if (clickTotal > 0 || apiOrderTotal > 0) {
-                const merged = mergeRwPerformancePreferApiDaily(perfAggs, dailyAggs);
-                await this.persistRwPerformanceDaily(
-                  account.id,
-                  expandRwPerformanceAggsForRange(merged, startDate, endDate),
+            await this.replaceOrdersForCollect(account.id, normalized, startDate, endDate);
+            orderPersistResult = await this.persistOrders(account.id, normalized);
+            ordersPersistedEarly = true;
+            await onProgress?.(
+              `订单已写入 ${orderPersistResult.inserted} 条（Performance ${perfOrderTotal} 单 / $${perfCommTotal.toFixed(2)}）`,
+            );
+
+            if (options.includeClicks) {
+              try {
+                await onProgress?.('正在补充 RW 联盟点击…');
+                const clickAggs = await fetchRewardooClicksSupplement(
+                  apiToken,
+                  startDate,
+                  endDate,
+                  async (message) => {
+                    await onProgress?.(message);
+                  },
                 );
-                perfOrderTotal = merged.reduce((s, a) => s + a.performanceOrders, 0);
-                rwPerformanceOrderCount = perfOrderTotal;
-                rwClickTotal = merged.reduce((s, a) => s + a.clicks, 0);
-                if (rwApi) rwApi.orderCount = perfOrderTotal;
-                await onProgress?.(
-                  `已合并 Performance 按日：${perfOrderTotal} 单 / 点击 ${rwClickTotal}（API ${apiOrderTotal} 单 / ${clickTotal} 点击）`,
-                );
-              } else {
-                rwClickError = options.includeClicks
-                  ? `Performance API 未解析到 orders/clicks（${dailyAggs.length} 条商家日）`
-                  : undefined;
-                const msg = options.includeClicks
-                  ? `${rwClickError}，保留明细汇总 ${perfOrderTotal} 单`
-                  : `Performance 按日 orders 未从 API 解析（${dailyAggs.length} 条），保留明细 ${perfOrderTotal} 单`;
-                await onProgress?.(msg);
+                const clickTotal = clickAggs.reduce((s, a) => s + a.clicks, 0);
+                if (clickTotal > 0) {
+                  const merged = mergeRwPerformancePreferApiDaily(perfAggs, clickAggs);
+                  await this.persistRwPerformanceDaily(
+                    account.id,
+                    expandRwPerformanceAggsForRange(merged, startDate, endDate),
+                  );
+                  rwClickTotal = merged.reduce((s, a) => s + a.clicks, 0);
+                  await onProgress?.(`已合并联盟点击 ${rwClickTotal} 次`);
+                } else {
+                  rwClickError = '联盟点击 API 未解析到有效点击';
+                  await onProgress?.(`${rwClickError}，保留 Performance 汇总 ${perfOrderTotal} 单`);
+                }
+              } catch (clickErr) {
+                const clickMsg =
+                  clickErr instanceof Error ? clickErr.message : String(clickErr);
+                rwClickError = clickMsg.slice(0, 200);
+                await onProgress?.(`RW 联盟点击补充失败: ${clickMsg.slice(0, 80)}`);
               }
-            } catch (clickErr) {
-              const clickMsg =
-                clickErr instanceof Error ? clickErr.message : String(clickErr);
-              rwClickError = clickMsg.slice(0, 200);
-              await onProgress?.(`RW Performance 补充失败: ${clickMsg.slice(0, 80)}`);
+            } else {
+              await onProgress?.('Performance 已由 transaction_details 汇总，跳过慢速 API 补充');
             }
           } else {
             rwPerformanceOrderError =
@@ -401,8 +384,11 @@ export class CollectorsService {
         );
     }
 
-    await this.replaceOrdersForCollect(account.id, normalized, startDate, endDate);
-    const result = await this.persistOrders(account.id, normalized);
+    if (!ordersPersistedEarly) {
+      await this.replaceOrdersForCollect(account.id, normalized, startDate, endDate);
+      orderPersistResult = await this.persistOrders(account.id, normalized);
+    }
+    const result = orderPersistResult ?? { fetched: 0, inserted: 0, updated: 0 };
     return {
       ...result,
       pmApi,

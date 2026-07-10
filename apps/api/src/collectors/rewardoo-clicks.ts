@@ -303,6 +303,44 @@ export async function fetchRewardooPerformanceSummaryAggs(
   );
 }
 
+/** 联盟点击补充最长耗时（transaction_details 已提供 orders/comm 时用） */
+const RW_CLICK_SUPPLEMENT_BUDGET_MS = 90_000;
+
+/**
+ * 仅补充联盟点击（整段区间优先，避免逐日 medium/performance 拖慢采集）
+ */
+export async function fetchRewardooClicksSupplement(
+  apiToken: string,
+  startDate: string,
+  endDate: string,
+  onProgress?: (message: string) => void | Promise<void>,
+): Promise<RwMerchantClickAgg[]> {
+  const startedAt = Date.now();
+  const timedOut = () => Date.now() - startedAt > RW_CLICK_SUPPLEMENT_BUDGET_MS;
+
+  await onProgress?.('RW 联盟点击：区间 Performance 汇总…');
+  const quick = await fetchRewardooClicksQuick(apiToken, startDate, endDate);
+  const quickClicks = quick.reduce((s, a) => s + a.clicks, 0);
+  if (quickClicks > 0) {
+    await onProgress?.(`区间 Performance → ${quickClicks} 点击`);
+    return quick;
+  }
+
+  if (timedOut()) return [];
+
+  await onProgress?.('RW 联盟点击：user_click / click_details…');
+  const rows = await fetchRewardooClicks(apiToken, startDate, endDate, async (p) => {
+    await onProgress?.(
+      `${p.source ?? 'click'} ${p.slotIndex}/${p.totalSlots}，已汇总 ${p.clicksSoFar} 点击`,
+    );
+  });
+  const totalClicks = rows.reduce((s, a) => s + a.clicks, 0);
+  if (totalClicks > 0) {
+    await onProgress?.(`联盟点击 → ${totalClicks} 点击`);
+  }
+  return rows;
+}
+
 /**
  * 快速拉取 RW 点击/Performance（整段区间单次请求，避免逐日多源拖慢采集）
  */
@@ -670,8 +708,10 @@ async function trySourcesRwPerformanceRange_(
 export interface RwPerformanceDailyAggsOptions {
   /** 按日有佣金的 merchantId（用于账号级 orders/clicks 归因） */
   merchantsByDate?: Map<string, Set<string>>;
-  /** 为 false 时仅补 orders，不跑点击兜底（user_click / fetchRewardooClicks） */
+  /** 为 true 时才跑点击兜底（user_click / fetchRewardooClicks） */
   includeClicks?: boolean;
+  /** transaction_details 已写入 orders/comm 时跳过逐日 Performance 拉单 */
+  skipOrderFetch?: boolean;
 }
 
 /**
@@ -845,7 +885,8 @@ export async function fetchRewardooPerformanceDailyAggs(
   const mids = (merchantIds ?? []).filter((id) => id.trim() !== '');
   const merchantsByDate =
     options?.merchantsByDate ?? buildMerchantsByDateFromIds_(mids, startDate, endDate);
-  const includeClicks = options?.includeClicks !== false;
+  const includeClicks = options?.includeClicks === true;
+  const skipOrderFetch = options?.skipOrderFetch === true;
   const startedAt = Date.now();
   const timedOut = () => Date.now() - startedAt > RW_PERF_SUPPLEMENT_BUDGET_MS;
   const needOrders = () => sumAggPerformanceOrders_(agg) === 0;
@@ -862,8 +903,8 @@ export async function fetchRewardooPerformanceDailyAggs(
     }
   };
 
-  /** 1. 逐日 medium/performance + mid（与 RW 后台 Performance 同源，最可靠） */
-  if (!isSatisfied() && !timedOut()) {
+  /** 1. 逐日 medium/performance + mid（明细已汇总 orders/comm 时跳过，避免卡死） */
+  if (!skipOrderFetch && !isSatisfied() && !timedOut()) {
     await onProgress?.('RW Performance：逐日 medium/performance…');
     const perfRows = await fetchRwPerformanceDaily_(
       apiToken,

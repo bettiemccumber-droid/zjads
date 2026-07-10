@@ -55,9 +55,17 @@ export function parseRwPerformanceCalendarDay(
 ): string | null {
   if (value == null || value === '') return null;
 
-  if (typeof value === 'string' && value.includes('-')) {
-    const day = value.split(' ')[0];
-    if (/^\d{4}-\d{2}-\d{2}$/.test(day)) return day;
+  if (typeof value === 'string') {
+    const slash = value.trim().match(/^(\d{4})[/-](\d{1,2})[/-](\d{1,2})/);
+    if (slash) {
+      const m = String(Number(slash[2])).padStart(2, '0');
+      const d = String(Number(slash[3])).padStart(2, '0');
+      return `${slash[1]}-${m}-${d}`;
+    }
+    if (value.includes('-')) {
+      const day = value.split(' ')[0];
+      if (/^\d{4}-\d{2}-\d{2}$/.test(day)) return day;
+    }
   }
 
   const d = parseAffiliateOrderDateUtc8(value);

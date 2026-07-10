@@ -199,7 +199,18 @@ const RW_ACCOUNT_DAILY_PERFORMANCE_SOURCES: RwClickSourceSpec[] = [
     label: 'performance/report',
     mod: 'performance',
     op: 'report',
-    dateParams: (b, e) => ({ begin: b, end: e }),
+    dateParams: (b, e) => ({ begin: b, end: e, group_by: 'day' }),
+  },
+  {
+    label: 'medium/performance CPS daily',
+    mod: 'medium',
+    op: 'performance',
+    dateParams: (b, e) => ({
+      begin_date: b,
+      end_date: e,
+      offer_type: 'CPS',
+      dimension: 'day',
+    }),
   },
   {
     label: 'medium/performance',
@@ -711,7 +722,23 @@ export async function fetchRewardooPerformanceDailyAggs(
     }
   };
 
-  /** 1. performance/report 区间按日（与 RW 后台 Group by Daily 一致） */
+  /** 1. 账号 CPS Performance 按日（对齐 RW 后台 Performance 表） */
+  if (!isSatisfied() && !timedOut()) {
+    await onProgress?.('RW Performance：账号 CPS 按日汇总…');
+    const accountDaily = await fetchAccountDailyPerformanceMetrics_(
+      apiToken,
+      startDate,
+      endDate,
+      onProgress,
+    );
+    const accountRows = attributeAccountDailyPerformanceMetrics_(
+      accountDaily,
+      merchantsByDate,
+    );
+    mergeRows(accountRows);
+  }
+
+  /** 2. performance/report 区间按日（与 RW 后台 Group by Daily 一致） */
   if (!isSatisfied() && !timedOut()) {
     await onProgress?.('RW Performance：performance/report 按日…');
     const reportRows = await tryFetchPerformanceReportDaily_(
@@ -725,7 +752,7 @@ export async function fetchRewardooPerformanceDailyAggs(
     mergeRows(reportRows);
   }
 
-  /** 2. cpc_performance 区间 + 商家维度（单次 GET/POST） */
+  /** 3. cpc_performance 区间 + 商家维度（按 mid 单次 GET/POST） */
   if (!isSatisfied() && !timedOut()) {
     await onProgress?.('RW Performance：cpc_performance 按日+商家…');
     const targetMids =
@@ -753,7 +780,7 @@ export async function fetchRewardooPerformanceDailyAggs(
     }
   }
 
-  /** 3. medium/performance 区间（仅 orders 仍缺时，不跑逐日） */
+  /** 4. medium/performance 区间（仅 orders 仍缺时） */
   if (needOrders() && !timedOut()) {
     await onProgress?.('RW Performance：medium/performance 区间…');
     const orderRows = await tryFetchRwMediumPerformanceOrders_(
@@ -766,7 +793,7 @@ export async function fetchRewardooPerformanceDailyAggs(
     mergeRows(orderRows);
   }
 
-  /** 4. user_click 按日补点击（勾选联盟点击时） */
+  /** 5. user_click 按日补点击（勾选联盟点击时） */
   if (needClicks() && !timedOut()) {
     await onProgress?.('RW Performance：user_click 按日拉取点击…');
     const clickAgg = new Map<string, RwMerchantClickAgg>();
@@ -2092,12 +2119,16 @@ function mergeSummaryClickRow_(
   const orders = options?.performanceOrdersOnly
     ? extractRwPerformanceOrdersFromRow_(row)
     : extractRwOrderCountFromRow_(row);
-  if (options?.performanceOrdersOnly && orders <= 0) return;
+  const clicksForGate = extractRwClickCountFromRow_(row);
 
-  if (options?.performanceOrdersOnly && !merchantId && (options.accountDailyOrders || options.accountDailyMetrics)) {
+  if (
+    options?.performanceOrdersOnly &&
+    !merchantId &&
+    (options.accountDailyOrders || options.accountDailyMetrics)
+  ) {
     const clickDate = parseRwRowDate_(row) || defaultDate || '';
     if (!clickDate || clickDate < startDate || clickDate > endDate) return;
-    const clicks = extractRwClickCountFromRow_(row);
+    if (orders <= 0 && clicksForGate <= 0) return;
     if (options.accountDailyOrders) {
       options.accountDailyOrders.set(
         clickDate,
@@ -2108,11 +2139,13 @@ function mergeSummaryClickRow_(
       const prev = options.accountDailyMetrics.get(clickDate) ?? { orders: 0, clicks: 0 };
       options.accountDailyMetrics.set(clickDate, {
         orders: Math.max(prev.orders, orders),
-        clicks: Math.max(prev.clicks, clicks),
+        clicks: Math.max(prev.clicks, clicksForGate),
       });
     }
     return;
   }
+
+  if (options?.performanceOrdersOnly && orders <= 0 && clicksForGate <= 0) return;
 
   if (!merchantId) return;
 
@@ -2177,6 +2210,12 @@ function readRwAggregateOrdersField_(row: Record<string, unknown>): number {
     /** 明细行 sign_id 的 order=1 是行级标记，非 Performance 汇总 Orders */
     if (key === 'order' && hasSignId) continue;
     const n = parseRwClickCount_(row[key]);
+    if (n > 0) return n;
+  }
+  for (const [key, val] of Object.entries(row)) {
+    if (!/^orders?(_count)?$/i.test(key) && !/^total_orders$/i.test(key)) continue;
+    if (/^order$/i.test(key) && hasSignId) continue;
+    const n = parseRwClickCount_(val);
     if (n > 0) return n;
   }
   return 0;
@@ -2487,6 +2526,7 @@ function parseRwRowDate_(row: Record<string, unknown>): string {
     'order_ymd',
     'order_date',
     'date',
+    'Date',
     'ymd',
     'day_ymd',
     'click_date',

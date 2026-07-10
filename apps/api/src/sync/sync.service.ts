@@ -293,10 +293,11 @@ export class SyncService implements OnModuleInit {
     const end = job.endDate.toISOString().slice(0, 10);
     const includeClicks = job.includeClicks;
 
-    const results: ('completed' | 'failed')[] = [];
-    for (const item of job.items) {
-      results.push(await this.runJobItem(jobId, job.ownerUserId, item, start, end, includeClicks));
-    }
+    const results: ('completed' | 'failed')[] = await Promise.all(
+      job.items.map((item) =>
+        this.runJobItem(jobId, job.ownerUserId, item, start, end, includeClicks),
+      ),
+    );
 
     let completed = 0;
     let failed = 0;
@@ -372,7 +373,7 @@ export class SyncService implements OnModuleInit {
   }
 
   /**
-   * 单账号采集（多账号串行，降低内存峰值）
+   * 单账号采集（多账号并行，各平台独立 Token）
    */
   private async runJobItem(
     jobId: number,
@@ -470,14 +471,15 @@ export class SyncService implements OnModuleInit {
         }
         parts.push(lbClickMsg);
       }
+      const isRw = item.channelAccount.platform.code === 'rewardoo';
       if (result.rwClickTotal !== undefined) {
         parts.push(`RW 联盟点击 ${result.rwClickTotal}（${start}~${end}）`);
-      } else if (includeClicks) {
+      } else if (isRw && includeClicks) {
         const clickHint = result.rwClickError
           ? `RW 联盟点击未写入: ${result.rwClickError.slice(0, 100)}`
           : 'RW 联盟点击未写入（Performance API 无点击数据，请确认已部署最新 API）';
         parts.push(clickHint);
-      } else if (result.rwClickError) {
+      } else if (isRw && result.rwClickError) {
         parts.push(`RW 联盟点击未写入: ${result.rwClickError.slice(0, 100)}`);
       }
       const pmNote = parts.length ? parts.join('；') : '采集完成（无订单数据）';

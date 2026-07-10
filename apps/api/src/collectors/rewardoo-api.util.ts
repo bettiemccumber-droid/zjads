@@ -141,7 +141,7 @@ export function parseRwApiEnvelope(body: unknown): {
       '',
   ).trim();
 
-  const rows = extractRwRows(body);
+  const rows = extractRwRowsWithSummaries(body);
 
   return {
     code,
@@ -223,6 +223,40 @@ function extractRwRows(body: unknown): unknown[] {
   }
 
   return [];
+}
+
+/**
+ * 从 list 与 total/summary 等结构提取可解析行（LinkBux/RW 部分接口 list 为空但 total 有汇总）
+ */
+function extractRwRowsWithSummaries(body: unknown): unknown[] {
+  const rows = extractRwRows(body);
+  const root = body as Record<string, unknown>;
+  const payload = (root.payliad ?? root.payload ?? root.data ?? root) as Record<
+    string,
+    unknown
+  >;
+
+  const extras: unknown[] = [];
+  const total = payload.total;
+  if (total && typeof total === 'object' && !Array.isArray(total)) {
+    extras.push(total);
+  }
+
+  for (const key of ['summary', 'stat', 'stats'] as const) {
+    const nested = payload[key] ?? root[key];
+    if (nested && typeof nested === 'object' && !Array.isArray(nested)) {
+      extras.push(nested);
+    }
+  }
+
+  if (rows.length === 0 && extras.length === 0 && payload !== root) {
+    const hasMetric = ['clicks', 'orders', 'order', 'click', 'comm', 'commission'].some(
+      (k) => payload[k] != null && String(payload[k]) !== '0',
+    );
+    if (hasMetric) extras.push(payload);
+  }
+
+  return [...rows, ...extras];
 }
 
 /**

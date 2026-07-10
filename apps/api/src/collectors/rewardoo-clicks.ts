@@ -457,17 +457,19 @@ function flattenRwDailyRows_(rows: unknown[]): unknown[] {
   return out;
 }
 
-/** 合并账号级 Performance 按日行（无 merchant_id 的 Date/Orders/Clicks 汇总） */
+/** 合并账号级 Performance 按日行；可选仅归因到单一商家 */
 function mergeRwAccountDailyMetricsRow_(
   row: Record<string, unknown>,
   accountDaily: Map<string, RwAccountDailyMetrics>,
   startDate: string,
   endDate: string,
+  targetMid?: string,
 ): void {
   if (isRwTransactionDetailRow_(row)) return;
 
   const merchantId = resolveRwClickMerchantId_(row);
-  if (merchantId) return;
+  if (merchantId && targetMid && merchantId !== targetMid) return;
+  if (merchantId && !targetMid) return;
 
   const clickDate = parseRwRowDate_(row);
   if (!clickDate || clickDate < startDate || clickDate > endDate) return;
@@ -489,6 +491,7 @@ async function fetchAccountDailyPerformanceMetrics_(
   startDate: string,
   endDate: string,
   onProgress?: (message: string) => void | Promise<void>,
+  targetMid?: string,
 ): Promise<Map<string, RwAccountDailyMetrics>> {
   const accountDaily = new Map<string, RwAccountDailyMetrics>();
 
@@ -555,6 +558,7 @@ async function fetchAccountDailyPerformanceMetrics_(
             accountDaily,
             startDate,
             endDate,
+            targetMid,
           );
         }
       },
@@ -821,7 +825,7 @@ function attributeRwUnmatchedClicks_(
 }
 
 /** RW Performance 补充最长耗时（避免多源兜底卡死采集任务） */
-const RW_PERF_SUPPLEMENT_BUDGET_MS = 90_000;
+const RW_PERF_SUPPLEMENT_BUDGET_MS = 180_000;
 
 /** GET 分页上限（补充链路用，避免空数据时翻页过久） */
 const RW_SUPPLEMENT_MAX_PAGES = 3;
@@ -846,7 +850,9 @@ export async function fetchRewardooPerformanceDailyAggs(
   const timedOut = () => Date.now() - startedAt > RW_PERF_SUPPLEMENT_BUDGET_MS;
   const needOrders = () => sumAggPerformanceOrders_(agg) === 0;
   const needClicks = () => includeClicks && sumAggClicks_(agg) === 0;
-  const isSatisfied = () => !needOrders() && !needClicks();
+  /** 勾选点击时仍需尽量拉全 orders（API 口径可能大于 transaction_details） */
+  const isSatisfied = () =>
+    includeClicks ? !needClicks() && !needOrders() : !needOrders() && !needClicks();
 
   const mergeRows = (rows: RwMerchantClickAgg[]) => {
     for (const row of rows) {
@@ -856,14 +862,51 @@ export async function fetchRewardooPerformanceDailyAggs(
     }
   };
 
-  /** 1. 账号 CPS Performance 按日（对齐 RW 后台 Performance 表） */
+  /** 1. 逐日 medium/performance + mid（与 RW 后台 Performance 同源，最可靠） */
   if (!isSatisfied() && !timedOut()) {
+    await onProgress?.('RW Performance：逐日 medium/performance…');
+    const perfRows = await fetchRwPerformanceDaily_(
+      apiToken,
+      startDate,
+      endDate,
+      onProgress,
+      merchantsByDate,
+    );
+    mergeRows(perfRows);
+    if (perfRows.length > 0) {
+      await onProgress?.(
+        `逐日 Performance → ${sumAggPerformanceOrders_(agg)} 单 / ${sumAggClicks_(agg)} 点击`,
+      );
+    }
+  }
+
+  /** 2. 联盟点击汇总接口（medium/performance 整段） */
+  if (needClicks() && !timedOut()) {
+    await onProgress?.('RW Performance：汇总点击接口…');
+    const clickRows = await fetchRewardooClicks(apiToken, startDate, endDate, async (p) => {
+      await onProgress?.(
+        `${p.source ?? 'click'} ${p.slotIndex}/${p.totalSlots}，已汇总 ${p.clicksSoFar} 点击`,
+      );
+    });
+    for (const row of clickRows) {
+      if (mids.length > 0 && !mids.includes(row.merchantId)) continue;
+      if (row.clicks <= 0 && row.performanceOrders <= 0) continue;
+      mergeRwAggRow_(agg, {
+        ...row,
+        performanceCommission: 0,
+      });
+    }
+  }
+
+  /** 3. 账号 CPS Performance 按日 GET（对齐 RW 后台 Group by Daily 表） */
+  if ((needOrders() || needClicks()) && !timedOut()) {
     await onProgress?.('RW Performance：账号 CPS 按日汇总…');
     const accountDaily = await fetchAccountDailyPerformanceMetrics_(
       apiToken,
       startDate,
       endDate,
       onProgress,
+      mids.length === 1 ? mids[0] : undefined,
     );
     const accountRows = attributeAccountDailyPerformanceMetrics_(
       accountDaily,
@@ -873,7 +916,7 @@ export async function fetchRewardooPerformanceDailyAggs(
     mergeRows(accountRows);
   }
 
-  /** 2. performance/report 区间按日（与 RW 后台 Group by Daily 一致） */
+  /** 4. performance/report 区间按日 */
   if (!isSatisfied() && !timedOut()) {
     await onProgress?.('RW Performance：performance/report 按日…');
     const reportRows = await tryFetchPerformanceReportDaily_(
@@ -887,7 +930,7 @@ export async function fetchRewardooPerformanceDailyAggs(
     mergeRows(reportRows);
   }
 
-  /** 3. cpc_performance 区间 + 商家维度（按 mid 单次 GET/POST） */
+  /** 5. cpc_performance 区间 + 商家维度（按 mid 单次 GET/POST） */
   if (!isSatisfied() && !timedOut()) {
     await onProgress?.('RW Performance：cpc_performance 按日+商家…');
     const targetMids =
@@ -915,7 +958,7 @@ export async function fetchRewardooPerformanceDailyAggs(
     }
   }
 
-  /** 4. medium/performance 区间（仅 orders 仍缺时） */
+  /** 6. medium/performance 区间（仅 orders 仍缺时） */
   if (needOrders() && !timedOut()) {
     await onProgress?.('RW Performance：medium/performance 区间…');
     const orderRows = await tryFetchRwMediumPerformanceOrders_(
@@ -928,7 +971,7 @@ export async function fetchRewardooPerformanceDailyAggs(
     mergeRows(orderRows);
   }
 
-  /** 5. user_click 按日补点击（勾选联盟点击时） */
+  /** 7. user_click 按日补点击（勾选联盟点击时） */
   if (needClicks() && !timedOut()) {
     await onProgress?.('RW Performance：user_click 按日拉取点击…');
     const clickAgg = new Map<string, RwMerchantClickAgg>();
@@ -959,7 +1002,7 @@ export async function fetchRewardooPerformanceDailyAggs(
     }
   }
 
-  /** 6. medium/performance 逐日（GET 兜底，与 RW 后台单日查询一致） */
+  /** 8. medium/performance 逐日 GET 兜底 */
   if (!isSatisfied() && !timedOut()) {
     await onProgress?.('RW Performance：medium/performance 逐日…');
     const perDayRows = await tryFetchRwMediumPerformanceOrdersPerDay_(
@@ -1203,33 +1246,36 @@ async function fetchRwPerformanceDaily_(
     mid?: string,
     defaultDate?: string,
   ): Promise<boolean> => {
-    for (const spec of RW_CPS_DAILY_SOURCES) {
-      const ordersBefore = sumAggPerformanceOrders_(dayAgg);
-      const clicksBefore = sumAggClicks_(dayAgg);
-      const extraMid = mid ? rwMidParams_(mid) : {};
-      const specWithMid: RwClickSourceSpec = {
-        ...spec,
-        dateParams: (b, e) => ({ ...spec.dateParams(b, e), ...extraMid }),
-      };
-      if (
-        await fetchClickSource_(
-          specWithMid,
-          apiToken,
-          rangeBegin,
-          rangeEnd,
-          dayAgg,
-          startDate,
-          endDate,
-          defaultDate,
-          { rwPerformanceDaily: true, forcedMid: mid },
-        )
-      ) {
+    const sourceLists = [RW_CPS_DAILY_SOURCES, RW_PERFORMANCE_ORDER_SOURCES];
+    for (const sourceList of sourceLists) {
+      for (const spec of sourceList) {
+        const ordersBefore = sumAggPerformanceOrders_(dayAgg);
+        const clicksBefore = sumAggClicks_(dayAgg);
+        const extraMid = mid ? rwMidParams_(mid) : {};
+        const specWithMid: RwClickSourceSpec = {
+          ...spec,
+          dateParams: (b, e) => ({ ...spec.dateParams(b, e), ...extraMid }),
+        };
         if (
-          sumAggPerformanceOrders_(dayAgg) > ordersBefore ||
-          sumAggClicks_(dayAgg) > clicksBefore
+          await fetchClickSource_(
+            specWithMid,
+            apiToken,
+            rangeBegin,
+            rangeEnd,
+            dayAgg,
+            startDate,
+            endDate,
+            defaultDate,
+            { rwPerformanceDaily: true, forcedMid: mid },
+          )
         ) {
-          lastSource = spec.label;
-          return true;
+          if (
+            sumAggPerformanceOrders_(dayAgg) > ordersBefore ||
+            sumAggClicks_(dayAgg) > clicksBefore
+          ) {
+            lastSource = spec.label;
+            return true;
+          }
         }
       }
     }
@@ -2445,6 +2491,8 @@ function extractRwClickCountFromRow_(row: Record<string, unknown>, depth = 0): n
   for (const key of [
     'clicks',
     'Clicks',
+    'click_num',
+    'click_nums',
     'total_clicks',
     'total_click',
     'click_count',
@@ -2703,8 +2751,6 @@ function parseRwRowDate_(row: Record<string, unknown>): string {
     'day',
     'report_date',
     'report_ymd',
-    'begin_date',
-    'end_date',
   ] as const) {
     const v = row[key];
     if (v == null || String(v).trim() === '' || String(v) === 'null') continue;

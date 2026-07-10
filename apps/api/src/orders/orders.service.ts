@@ -6,6 +6,10 @@ import {
   PlatformCommissionSummary,
   summarizeMerchantsByPlatform,
 } from '../common/commission-aggregate.util';
+import {
+  aggregateRwPerformanceByMerchant,
+  applyRwPerformanceCommissionOverlay,
+} from '../common/rw-performance-settlement.util';
 import { renormalizeOrdersForAccounts } from '../common/platform-status-defaults.util';
 import { buildOrderDateRangeFilter } from '../common/order-date-range.util';
 import { AuthUser, isCompanyWideScope, resolveOwnerUserId } from '../common/ownership.util';
@@ -124,7 +128,7 @@ export class OrdersService {
   }
 
   /**
-   * 商家维度结算汇总（按订单号去重，与数据采集看板口径一致）
+   * 商家维度结算汇总（按订单号去重；RW 总佣金/订单数与看板一致，取 Performance 逐日汇总）
    * 管理员未指定 userId 时汇总全公司员工，并返回分员工明细
    */
   async settlementMerchantSummary(user: AuthUser, q: OrdersQuery) {
@@ -202,7 +206,20 @@ export class OrdersService {
       include: { channelAccount: { include: { platform: true } } },
     });
 
-    const merchants = aggregateAffiliateOrders(orders);
+    let merchants = aggregateAffiliateOrders(orders);
+    if (dateRange) {
+      const rwClickRows = await this.prisma.affiliateMerchantClickDaily.findMany({
+        where: {
+          channelAccountId: { in: accountIds },
+          clickDate: dateRange,
+          channelAccount: { platform: { code: 'rewardoo' } },
+        },
+        include: { channelAccount: { include: { platform: true } } },
+      });
+      const perfByKey = aggregateRwPerformanceByMerchant(rwClickRows);
+      merchants = applyRwPerformanceCommissionOverlay(merchants, perfByKey);
+    }
+
     const platformSummaries = mergePlatformCatalog(
       summarizeMerchantsByPlatform(merchants, new Set()),
       allAccounts.map((a) => ({

@@ -206,7 +206,9 @@ export class CollectorsService {
             await onProgress?.(`LB 订单 ${chunkIndex}/${totalChunks} 段…`);
           },
         );
-        normalized = normalizeLinkBuxOrders(raw, mappings);
+        normalized = normalizeLinkBuxOrders(raw, mappings).filter((o) =>
+          isOrderDateInReportRange(o.orderDate, startDate, endDate),
+        );
         const apiSum = summarizeLbTransactionApi(raw);
         const rangeSum = summarizeLbOrdersInRange(normalized, startDate, endDate);
         lbApi = {
@@ -255,7 +257,9 @@ export class CollectorsService {
           triedSources: rwBundle.triedSources,
           detailOrderCount: summary.orderCount,
         };
-        normalized = normalizeRewardooOrders(detailRows, mappings, range);
+        normalized = normalizeRewardooOrders(detailRows, mappings, range).filter((o) =>
+          isOrderDateInReportRange(o.orderDate, startDate, endDate),
+        );
 
         await onProgress?.('正在写入 RW 按日汇总（transaction_details）…');
         let perfOrderTotal = 0;

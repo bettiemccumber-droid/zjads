@@ -197,6 +197,7 @@ function order(
       {
         order_id: 'apl-1',
         mid: '247276',
+        order_time: 1783036800,
         sale_comm: 0,
         sale_amount: 0,
         status: 'Rejected',
@@ -204,6 +205,7 @@ function order(
       {
         order_id: 'apl-1',
         mid: '247276',
+        order_time: 1783036800,
         sale_comm: 17.64,
         sale_amount: 100,
         status: 'Pending',
@@ -211,6 +213,7 @@ function order(
       {
         order_id: 'apl-2',
         mid: '247276',
+        order_time: 1783036800,
         sale_comm: 17.64,
         sale_amount: 100,
         status: 'Rejected',
@@ -251,6 +254,7 @@ function order(
       {
         order_id: 'rw-1',
         mid: '122341',
+        transaction_date: '2026-06-01',
         cashback: 1.76,
         sale_amount: 21.01,
         status: 'expired',
@@ -258,6 +262,7 @@ function order(
       {
         order_id: 'rw-2',
         mid: '122341',
+        transaction_date: '2026-06-02',
         cashback: 0,
         sale_amount: 0,
         status: 'expired',
@@ -265,6 +270,7 @@ function order(
       {
         order_id: 'rw-2',
         mid: '122341',
+        transaction_date: '2026-06-02',
         cashback: 0.6,
         sale_amount: 10,
         status: 'new',
@@ -313,6 +319,38 @@ function order(
   const payload = pmRows[0].rawPayload as { _commissionBreakdown?: { rejected: number; pending: number } };
   assert.equal(payload._commissionBreakdown?.rejected, 4.82);
   assert.equal(payload._commissionBreakdown?.pending, 10);
+}
+
+// RW Transaction Date 优先：与后台 Channel 报表筛选一致
+{
+  const rwMappings = [{ rawStatus: 'Pending', normalizedStatus: NormalizedStatus.pending }];
+  const inRange = normalizeRewardooOrders(
+    [
+      {
+        order_id: 'rw-tz-in',
+        mid: '1',
+        transaction_date: '2026-07-03',
+        order_time: 1783036800,
+        cashback: 10,
+        sale_amount: 100,
+        status: 'new',
+      },
+      {
+        order_id: 'rw-tz-out',
+        mid: '1',
+        transaction_date: '2026-07-02',
+        order_time: 1783036800,
+        cashback: 5,
+        sale_amount: 50,
+        status: 'new',
+      },
+    ],
+    rwMappings as never,
+    { startDate: '2026-07-03', endDate: '2026-07-09' },
+  );
+  assert.equal(inRange.length, 1);
+  assert.equal(inRange[0].externalOrderId, 'rw-tz-in');
+  assert.equal(inRange[0].orderDate.toISOString().slice(0, 10), '2026-07-03');
 }
 
 console.log('commission-monitor.accuracy: all passed');

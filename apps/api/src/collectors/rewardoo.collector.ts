@@ -6,7 +6,7 @@ import {
   mergeMixedOrderStatus,
 } from '../common/commission-breakdown-collector.util';
 import { CommissionBreakdown } from '../common/order-commission-buckets.util';
-import { parseAffiliateOrderDateUtc, parseRwPerformanceCalendarDay } from '../common/affiliate-order-date.util';
+import { parseRwPerformanceCalendarDay } from '../common/affiliate-order-date.util';
 import {
   fetchRewardooTransactionDetailPages,
   RW_TRANSACTION_DETAILS_OP,
@@ -285,9 +285,17 @@ export function normalizeRewardooOrders(
     const commission = parseMoney(
       row.cashback ?? row.sale_comm ?? row.commission ?? row.comm,
     );
-    if (commission <= 0 && orderAmount <= 0) continue;
+    const provisionalOrderId = resolveRwOrderId(row, range);
+    if (commission <= 0 && orderAmount <= 0 && !provisionalOrderId) continue;
 
-    const externalOrderId = resolveRwOrderId(row, range);
+    const txDay = parseRwDetailStatDateStr(row, '');
+    if (range) {
+      if (!txDay || txDay < range.startDate || txDay > range.endDate) continue;
+    }
+    const orderDate = parseRwOrderDate(row, txDay, range?.endDate);
+    if (!orderDate) continue;
+
+    const externalOrderId = provisionalOrderId;
     const orderCount = parseOrderCount(row);
 
     if (!externalOrderId && merchantId && orderCount > 1) {
@@ -309,7 +317,6 @@ export function normalizeRewardooOrders(
 
     const rawStatusStr = normalizeRwRawStatus(row.status);
     const { rawStatus, normalizedStatus } = normalizeStatus(rawStatusStr, mappings);
-    const orderDate = parseRwOrderDate(row, range?.endDate);
 
     mergeRwOrder(map, externalOrderId, {
       merchantId,
@@ -371,7 +378,10 @@ function expandAggregateOrders(
 ) {
   const rawStatusStr = normalizeRwRawStatus(row.status);
   const { rawStatus, normalizedStatus } = normalizeStatus(rawStatusStr, mappings);
-  const orderDate = parseRwOrderDate(row, range?.endDate);
+  const txDay = parseRwDetailStatDateStr(row, '');
+  if (range && (!txDay || txDay < range.startDate || txDay > range.endDate)) return;
+  const orderDate = parseRwOrderDate(row, txDay, range?.endDate);
+  if (!orderDate) return;
   const perComm = commission / orderCount;
   const perAmount = orderAmount > 0 ? orderAmount / orderCount : 0;
   const dateKey = range?.endDate ?? 'range';
@@ -528,58 +538,26 @@ function normalizeRwRawStatus(raw: string | number | undefined): string {
 }
 
 /**
- * 解析 RW 订单日期（与 affiliate collectRWOrders 一致：order_time 优先）
+ * 解析 RW 订单日期（与后台 Transaction Date / Channel 报表一致：transaction_date 优先，时间戳按东八区）
  */
-function parseRwOrderDate(row: RwCommissionRow, fallbackDate?: string): Date {
-  if (row.order_time != null && String(row.order_time).trim() !== '') {
-    return parseAffiliateOrderDateUtc(row.order_time);
-  }
+function parseRwOrderDate(
+  row: RwCommissionRow,
+  txDay?: string | null,
+  fallbackDate?: string,
+): Date | null {
+  const day = txDay ?? parseRwDetailStatDateStr(row, '');
+  if (day) return new Date(`${day}T00:00:00.000Z`);
 
-  for (const key of [
-    'transaction_date',
-    'order_ymd',
-    'order_date',
-    'date',
-    'ymd',
-  ] as const) {
-    const v = row[key];
-    if (v == null || String(v).trim() === '' || String(v) === 'null') continue;
-    return parseAffiliateOrderDateUtc(v);
+  if (fallbackDate && /^\d{4}-\d{2}-\d{2}$/.test(fallbackDate)) {
+    return new Date(`${fallbackDate}T00:00:00.000Z`);
   }
-
-  for (const key of ['transaction_time'] as const) {
-    const v = row[key];
-    if (v == null || String(v).trim() === '') continue;
-    return parseAffiliateOrderDateUtc(v);
-  }
-
-  for (const key of ['validation_date', 'payment_ymd'] as const) {
-    const v = row[key];
-    if (v == null || String(v).trim() === '' || String(v) === 'null') continue;
-    return parseAffiliateOrderDateUtc(v);
-  }
-
-  if (fallbackDate) {
-    return parseAffiliateOrderDateUtc(fallbackDate);
-  }
-  return new Date();
+  return null;
 }
 
 /** RW Performance 报表日期（Transaction Date 优先，与后台 Daily 一致） */
 function parseRwPerformanceStatDate_(row: RwCommissionRow, fallbackDate?: string): Date {
-  for (const key of [
-    'transaction_date',
-    'order_ymd',
-    'order_date',
-    'date',
-    'ymd',
-  ] as const) {
-    const v = row[key];
-    if (v == null || String(v).trim() === '' || String(v) === 'null') continue;
-    return parseAffiliateOrderDateUtc(v);
-  }
-
-  return parseRwOrderDate(row, fallbackDate);
+  const parsed = parseRwOrderDate(row, parseRwDetailStatDateStr(row, ''), fallbackDate);
+  return parsed ?? new Date();
 }
 
 /**

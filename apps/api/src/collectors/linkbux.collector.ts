@@ -119,6 +119,7 @@ export function normalizeLinkBuxOrders(
     const rawStatusStr = normalizeLbRawStatus(row.status);
     const { rawStatus, normalizedStatus } = normalizeStatus(rawStatusStr, mappings);
     const orderDate = parseLbOrderDate(row);
+    if (!orderDate) continue;
 
     const existing = map.get(externalOrderId);
     if (existing) {
@@ -270,16 +271,9 @@ function parseMoney(raw: string | number | undefined): number {
   return Number.isFinite(n) ? n : 0;
 }
 
-function parseLbOrderDate(row: LbTransactionRow): Date {
-  if (row.order_time != null && row.order_time !== '') {
-    return parseAffiliateOrderDateUtc8(row.order_time);
-  }
-
-  if (row.validation_date && row.validation_date !== 'null') {
-    return parseAffiliateOrderDateUtc8(row.validation_date);
-  }
-
-  return new Date();
+function parseLbOrderDate(row: LbTransactionRow): Date | null {
+  if (row.order_time == null || row.order_time === '') return null;
+  return parseAffiliateOrderDateUtc8(row.order_time);
 }
 
 function sleep(ms: number): Promise<void> {

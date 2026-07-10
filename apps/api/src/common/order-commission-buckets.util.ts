@@ -42,9 +42,12 @@ export function resolveOrderCommissionBuckets(order: OrderLike): CommissionBreak
   }
 
   const comm = round2(Number(order.commission));
+  const isPendingLike =
+    order.normalizedStatus === NormalizedStatus.pending ||
+    order.normalizedStatus === NormalizedStatus.unknown;
   return {
     approved: order.normalizedStatus === NormalizedStatus.approved ? comm : 0,
-    pending: order.normalizedStatus === NormalizedStatus.pending ? comm : 0,
+    pending: isPendingLike ? comm : 0,
     rejected: order.normalizedStatus === NormalizedStatus.rejected ? comm : 0,
   };
 }

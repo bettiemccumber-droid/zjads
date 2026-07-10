@@ -35,12 +35,20 @@ const RW_DEFAULTS: StatusMapping[] = [
   { raw: 'approved', norm: NormalizedStatus.approved },
   { raw: 'Approved', norm: NormalizedStatus.approved },
   { raw: 'APPROVED', norm: NormalizedStatus.approved },
+  { raw: 'effective', norm: NormalizedStatus.approved },
+  { raw: 'Effective', norm: NormalizedStatus.approved },
   { raw: 'pending', norm: NormalizedStatus.pending },
   { raw: 'Pending', norm: NormalizedStatus.pending },
   { raw: 'PENDING', norm: NormalizedStatus.pending },
+  { raw: 'new', norm: NormalizedStatus.pending },
+  { raw: 'New', norm: NormalizedStatus.pending },
+  { raw: 'pre_effective', norm: NormalizedStatus.pending },
+  { raw: 'pre_expired', norm: NormalizedStatus.pending },
   { raw: 'rejected', norm: NormalizedStatus.rejected },
   { raw: 'Rejected', norm: NormalizedStatus.rejected },
   { raw: 'REJECTED', norm: NormalizedStatus.rejected },
+  { raw: 'expired', norm: NormalizedStatus.rejected },
+  { raw: 'Expired', norm: NormalizedStatus.rejected },
 ];
 
 /**

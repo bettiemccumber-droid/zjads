@@ -242,7 +242,7 @@ export async function fetchLhByCommissionSlots<T>(
       slot.begin,
       slot.end,
       '佣金报表',
-      4000,
+      2000,
     );
     all.push(...rows);
     if (onProgress) {

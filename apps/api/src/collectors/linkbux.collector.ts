@@ -2,12 +2,19 @@ import axios from 'axios';
 
 import { NormalizedStatus, PlatformStatusMapping } from '@prisma/client';
 
-import { normalizeStatus } from './status-normalizer';
-
+import {
+  addToCommissionBreakdown,
+  attachCommissionBreakdownToPayload,
+  emptyCommissionBreakdown,
+  mergeMixedOrderStatus,
+} from '../common/commission-breakdown-collector.util';
+import { CommissionBreakdown } from '../common/order-commission-buckets.util';
 import {
   isOrderDateInReportRange,
   parseAffiliateOrderDateUtc8,
 } from '../common/affiliate-order-date.util';
+
+import { normalizeStatus } from './status-normalizer';
 
 import { NormalizedOrder } from './types';
 
@@ -37,6 +44,8 @@ export interface LbTransactionTotals {
   orderCount: number;
   totalCommission: number;
 }
+
+type LbMergeEntry = NormalizedOrder & { breakdown: CommissionBreakdown };
 
 /**
  * 将日期区间按 LinkBux API 上限（62 天）切分
@@ -91,13 +100,13 @@ export async function fetchLinkBuxOrders(
 }
 
 /**
- * 同一 order_id 合并多商品行（佣金累加）
+ * 同一 order_id 合并多商品行，并按子行 status 拆分失效/待确认/已确认佣金
  */
 export function normalizeLinkBuxOrders(
   rows: LbTransactionRow[],
   mappings: PlatformStatusMapping[],
 ): NormalizedOrder[] {
-  const map = new Map<string, NormalizedOrder>();
+  const map = new Map<string, LbMergeEntry>();
 
   for (const row of rows) {
     const externalOrderId = String(row.order_id ?? row.linkbux_id ?? '').trim();
@@ -116,17 +125,11 @@ export function normalizeLinkBuxOrders(
       existing.orderAmount += orderAmount;
       existing.commission += commission;
       existing.rawPayload = row;
-      if (normalizedStatus === NormalizedStatus.rejected) {
-        existing.normalizedStatus = NormalizedStatus.rejected;
-        existing.rawStatus = rawStatus;
-      } else if (
-        existing.normalizedStatus !== NormalizedStatus.rejected &&
-        normalizedStatus === NormalizedStatus.approved
-      ) {
-        existing.normalizedStatus = NormalizedStatus.approved;
-        existing.rawStatus = rawStatus;
-      }
+      addToCommissionBreakdown(existing.breakdown, normalizedStatus, commission);
+      mergeMixedOrderStatus(existing, { normalizedStatus, rawStatus });
     } else {
+      const breakdown = emptyCommissionBreakdown();
+      addToCommissionBreakdown(breakdown, normalizedStatus, commission);
       map.set(externalOrderId, {
         externalOrderId,
         merchantId,
@@ -140,16 +143,20 @@ export function normalizeLinkBuxOrders(
         normalizedStatus,
         orderDate,
         rawPayload: row,
+        breakdown,
       });
     }
   }
 
-  return [...map.values()];
+  return [...map.values()].map((entry) => {
+    const { breakdown, rawPayload, ...order } = entry;
+    return {
+      ...order,
+      rawPayload: attachCommissionBreakdownToPayload(rawPayload, breakdown),
+    };
+  });
 }
 
-/**
- * 统计 LinkBux API 汇总（合并后订单数与佣金）
- */
 /**
  * 按报表区间统计规范化订单（与商家汇总 orderDate 筛选一致）
  */
@@ -252,6 +259,9 @@ function normalizeLbRawStatus(raw: string | undefined): string {
   if (!s) return 'Pending';
   if (s === 'Approved' || s.toUpperCase() === 'APPROVED') return 'Approved';
   if (s === 'Rejected' || s.toUpperCase() === 'REJECTED') return 'Rejected';
+  if (s === 'Canceled' || s.toUpperCase() === 'CANCELED' || s.toUpperCase() === 'CANCELLED') {
+    return 'Rejected';
+  }
   return 'Pending';
 }
 

@@ -1,4 +1,11 @@
 import { NormalizedStatus, PlatformStatusMapping } from '@prisma/client';
+import {
+  addToCommissionBreakdown,
+  attachCommissionBreakdownToPayload,
+  emptyCommissionBreakdown,
+  mergeMixedOrderStatus,
+} from '../common/commission-breakdown-collector.util';
+import { CommissionBreakdown } from '../common/order-commission-buckets.util';
 import { parseAffiliateOrderDateUtc, parseRwPerformanceCalendarDay } from '../common/affiliate-order-date.util';
 import {
   fetchRewardooTransactionDetailPages,
@@ -62,6 +69,8 @@ export interface RwFetchBundle {
   source: string;
   triedSources: string[];
 }
+
+type RwMergeEntry = NormalizedOrder & { breakdown: CommissionBreakdown };
 
 /** RW Performance 按商家+日的 Orders（与后台 Daily 一致） */
 export interface RwMerchantDayOrderAgg {
@@ -265,7 +274,7 @@ export function normalizeRewardooOrders(
   mappings: PlatformStatusMapping[],
   range?: { startDate: string; endDate: string },
 ): NormalizedOrder[] {
-  const map = new Map<string, NormalizedOrder>();
+  const map = new Map<string, RwMergeEntry>();
 
   for (const row of rows) {
     const merchantId = resolveRwMerchantId(row);
@@ -315,7 +324,13 @@ export function normalizeRewardooOrders(
     });
   }
 
-  return [...map.values()];
+  return [...map.values()].map((entry) => {
+    const { breakdown, rawPayload, ...order } = entry;
+    return {
+      ...order,
+      rawPayload: attachCommissionBreakdownToPayload(rawPayload, breakdown),
+    };
+  });
 }
 
 /** 汇总 API 行数与佣金（对账用） */
@@ -344,7 +359,7 @@ export function summarizeRwCommissionApi(
 
 /** Performance 商家汇总：按 orders 字段拆分为多条 */
 function expandAggregateOrders(
-  map: Map<string, NormalizedOrder>,
+  map: Map<string, RwMergeEntry>,
   row: RwCommissionRow,
   merchantId: string,
   merchantName: string | null,
@@ -378,7 +393,7 @@ function expandAggregateOrders(
 }
 
 function mergeRwOrder(
-  map: Map<string, NormalizedOrder>,
+  map: Map<string, RwMergeEntry>,
   externalOrderId: string,
   next: Omit<NormalizedOrder, 'externalOrderId' | 'productId' | 'currency'>,
 ) {
@@ -387,19 +402,17 @@ function mergeRwOrder(
     existing.orderAmount += next.orderAmount;
     existing.commission += next.commission;
     existing.rawPayload = next.rawPayload;
-    if (next.normalizedStatus === NormalizedStatus.rejected) {
-      existing.normalizedStatus = NormalizedStatus.rejected;
-      existing.rawStatus = next.rawStatus;
-    } else if (
-      existing.normalizedStatus !== NormalizedStatus.rejected &&
-      next.normalizedStatus === NormalizedStatus.approved
-    ) {
-      existing.normalizedStatus = NormalizedStatus.approved;
-      existing.rawStatus = next.rawStatus;
-    }
+    addToCommissionBreakdown(existing.breakdown, next.normalizedStatus, next.commission);
+    mergeMixedOrderStatus(existing, {
+      normalizedStatus: next.normalizedStatus,
+      rawStatus: next.rawStatus,
+    });
+    if (!existing.merchantName && next.merchantName) existing.merchantName = next.merchantName;
     return;
   }
 
+  const breakdown = emptyCommissionBreakdown();
+  addToCommissionBreakdown(breakdown, next.normalizedStatus, next.commission);
   map.set(externalOrderId, {
     externalOrderId,
     merchantId: next.merchantId,
@@ -413,6 +426,7 @@ function mergeRwOrder(
     normalizedStatus: next.normalizedStatus,
     orderDate: next.orderDate,
     rawPayload: next.rawPayload,
+    breakdown,
   });
 }
 
@@ -485,14 +499,30 @@ function resolveRwMerchantSlug(row: RwCommissionRow): string | null {
   return /^\d+$/.test(s) ? null : s;
 }
 
-/** RW 原始状态 → 可读字符串 */
+/** RW 原始状态 → 可读字符串（与 Rewardoo API：new/effective/expired/pre_* 一致） */
 function normalizeRwRawStatus(raw: string | number | undefined): string {
   const s = String(raw ?? '').trim();
   if (!s) return 'Pending';
-  const upper = s.toUpperCase();
-  if (upper === 'APPROVED' || upper === 'EFFECTIVE' || s === '1') return 'Approved';
-  if (upper === 'REJECTED' || upper === 'CANCELED' || upper === 'CANCELLED' || s === '2') {
+  const lower = s.toLowerCase();
+  if (lower === 'approved' || lower === 'effective' || s === '1') {
+    return 'Approved';
+  }
+  if (
+    lower === 'rejected' ||
+    lower === 'expired' ||
+    lower === 'canceled' ||
+    lower === 'cancelled' ||
+    s === '2'
+  ) {
     return 'Rejected';
+  }
+  if (
+    lower === 'new' ||
+    lower === 'pending' ||
+    lower === 'pre_effective' ||
+    lower === 'pre_expired'
+  ) {
+    return 'Pending';
   }
   return 'Pending';
 }

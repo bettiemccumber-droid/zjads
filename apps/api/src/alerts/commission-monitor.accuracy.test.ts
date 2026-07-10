@@ -9,6 +9,9 @@ import {
 } from '../common/commission-aggregate.util';
 import { evaluateCommissionRisk, defaultMonitorRule } from './commission-monitor.util';
 import { normalizeLinkHaitaoOrders } from '../collectors/linkhaitao.collector';
+import { normalizeLinkBuxOrders } from '../collectors/linkbux.collector';
+import { normalizePartnerMaticOrders } from '../collectors/partnermatic.collector';
+import { normalizeRewardooOrders } from '../collectors/rewardoo.collector';
 
 const rule = defaultMonitorRule();
 
@@ -180,6 +183,136 @@ function order(
   assert.equal(pm2.confirmedCommission, 18.23);
   const pm3 = settlement.find((r) => r.affiliateAlias === 'pm3')!;
   assert.equal(pm3.rejectedCommission, 50);
+}
+
+// LB 同单混状态：失效佣金只计 Rejected 子行（APL 类多计修复）
+{
+  const lbMappings = [
+    { rawStatus: 'Rejected', normalizedStatus: NormalizedStatus.rejected },
+    { rawStatus: 'Pending', normalizedStatus: NormalizedStatus.pending },
+    { rawStatus: 'Approved', normalizedStatus: NormalizedStatus.approved },
+  ];
+  const lbRows = normalizeLinkBuxOrders(
+    [
+      {
+        order_id: 'apl-1',
+        mid: '247276',
+        sale_comm: 0,
+        sale_amount: 0,
+        status: 'Rejected',
+      },
+      {
+        order_id: 'apl-1',
+        mid: '247276',
+        sale_comm: 17.64,
+        sale_amount: 100,
+        status: 'Pending',
+      },
+      {
+        order_id: 'apl-2',
+        mid: '247276',
+        sale_comm: 17.64,
+        sale_amount: 100,
+        status: 'Rejected',
+      },
+    ],
+    lbMappings as never,
+  );
+  const agg = aggregateAffiliateOrders(
+    lbRows.map((o) => ({
+      channelAccountId: 1,
+      externalOrderId: o.externalOrderId,
+      merchantId: o.merchantId,
+      merchantName: o.merchantName,
+      commission: o.commission,
+      normalizedStatus: o.normalizedStatus,
+      rawPayload: o.rawPayload,
+      channelAccount: {
+        affiliateAlias: 'lb3',
+        platform: { code: 'linkbux', name: 'LinkBux' },
+      },
+    })),
+  );
+  assert.equal(agg.length, 1);
+  assert.equal(agg[0].rejectedCommission, 17.64);
+  assert.equal(agg[0].pendingCommission, 17.64);
+  assert.equal(agg[0].totalCommission, 35.28);
+}
+
+// RW expired 状态映射 + 混状态 breakdown
+{
+  const rwMappings = [
+    { rawStatus: 'Rejected', normalizedStatus: NormalizedStatus.rejected },
+    { rawStatus: 'Pending', normalizedStatus: NormalizedStatus.pending },
+    { rawStatus: 'Approved', normalizedStatus: NormalizedStatus.approved },
+  ];
+  const rwRows = normalizeRewardooOrders(
+    [
+      {
+        order_id: 'rw-1',
+        mid: '122341',
+        cashback: 1.76,
+        sale_amount: 21.01,
+        status: 'expired',
+      },
+      {
+        order_id: 'rw-2',
+        mid: '122341',
+        cashback: 0,
+        sale_amount: 0,
+        status: 'expired',
+      },
+      {
+        order_id: 'rw-2',
+        mid: '122341',
+        cashback: 0.6,
+        sale_amount: 10,
+        status: 'new',
+      },
+    ],
+    rwMappings as never,
+  );
+  assert.equal(rwRows.length, 2);
+  const expired = rwRows.find((o) => o.externalOrderId === 'rw-1')!;
+  assert.equal(expired.normalizedStatus, NormalizedStatus.rejected);
+  const mixed = rwRows.find((o) => o.externalOrderId === 'rw-2')!;
+  const payload = mixed.rawPayload as { _commissionBreakdown?: { rejected: number; pending: number } };
+  assert.equal(payload._commissionBreakdown?.rejected, 0);
+  assert.equal(payload._commissionBreakdown?.pending, 0.6);
+}
+
+// PM 同 oid 多行混状态
+{
+  const pmMappings = [
+    { rawStatus: 'Rejected', normalizedStatus: NormalizedStatus.rejected },
+    { rawStatus: 'Pending', normalizedStatus: NormalizedStatus.pending },
+    { rawStatus: 'Approved', normalizedStatus: NormalizedStatus.approved },
+  ];
+  const pmRows = normalizePartnerMaticOrders(
+    [
+      {
+        oid: 'pm-oid-1',
+        brand_id: '65065',
+        merchant_name: 'Grande',
+        order_time: '1749289879',
+        sale_comm: 4.82,
+        status: 'Rejected',
+      },
+      {
+        oid: 'pm-oid-1',
+        brand_id: '65065',
+        merchant_name: 'Grande',
+        order_time: '1749289879',
+        sale_comm: 10,
+        status: 'Pending',
+      },
+    ],
+    pmMappings as never,
+  );
+  assert.equal(pmRows.length, 1);
+  const payload = pmRows[0].rawPayload as { _commissionBreakdown?: { rejected: number; pending: number } };
+  assert.equal(payload._commissionBreakdown?.rejected, 4.82);
+  assert.equal(payload._commissionBreakdown?.pending, 10);
 }
 
 console.log('commission-monitor.accuracy: all passed');

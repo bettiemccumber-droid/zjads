@@ -1,4 +1,10 @@
-import { NormalizedStatus, PlatformStatusMapping } from '@prisma/client';
+import { PlatformStatusMapping } from '@prisma/client';
+import {
+  addToCommissionBreakdown,
+  attachCommissionBreakdownToPayload,
+  emptyCommissionBreakdown,
+  mergeMixedOrderStatus,
+} from '../common/commission-breakdown-collector.util';
 import { CommissionBreakdown } from '../common/order-commission-buckets.util';
 import { fetchLhByCommissionSlots } from './linkhaitao-api.util';
 import { NormalizedOrder } from './types';
@@ -76,20 +82,11 @@ export function normalizeLinkHaitaoOrders(
       existing.orderAmount += orderAmount;
       existing.commission += commission;
       existing.rawPayload = row;
-      addCommissionToBreakdown(existing.breakdown, normalizedStatus, commission);
-      if (normalizedStatus === NormalizedStatus.rejected) {
-        existing.normalizedStatus = NormalizedStatus.rejected;
-        existing.rawStatus = rawStatus;
-      } else if (
-        existing.normalizedStatus !== NormalizedStatus.rejected &&
-        normalizedStatus === NormalizedStatus.approved
-      ) {
-        existing.normalizedStatus = NormalizedStatus.approved;
-        existing.rawStatus = rawStatus;
-      }
+      addToCommissionBreakdown(existing.breakdown, normalizedStatus, commission);
+      mergeMixedOrderStatus(existing, { normalizedStatus, rawStatus });
     } else {
-      const breakdown = emptyBreakdown();
-      addCommissionToBreakdown(breakdown, normalizedStatus, commission);
+      const breakdown = emptyCommissionBreakdown();
+      addToCommissionBreakdown(breakdown, normalizedStatus, commission);
       map.set(externalOrderId, {
         externalOrderId,
         merchantId,
@@ -112,7 +109,7 @@ export function normalizeLinkHaitaoOrders(
     const { breakdown, rawPayload, ...order } = entry;
     return {
       ...order,
-      rawPayload: attachCommissionBreakdown(rawPayload, breakdown),
+      rawPayload: attachCommissionBreakdownToPayload(rawPayload, breakdown),
     };
   });
 }
@@ -128,39 +125,6 @@ export function summarizeLhCommissionApi(rows: LhCommissionRow[]): LhCommissionT
     orderCount: normalized.length,
     totalCommission: Math.round(totalCommission * 100) / 100,
   };
-}
-
-function emptyBreakdown(): CommissionBreakdown {
-  return { approved: 0, pending: 0, rejected: 0 };
-}
-
-function addCommissionToBreakdown(
-  breakdown: CommissionBreakdown,
-  status: NormalizedStatus,
-  commission: number,
-) {
-  if (status === NormalizedStatus.approved) breakdown.approved += commission;
-  else if (status === NormalizedStatus.rejected) breakdown.rejected += commission;
-  else breakdown.pending += commission;
-}
-
-function attachCommissionBreakdown(rawPayload: unknown, breakdown: CommissionBreakdown): unknown {
-  const base =
-    rawPayload && typeof rawPayload === 'object'
-      ? { ...(rawPayload as Record<string, unknown>) }
-      : {};
-  return {
-    ...base,
-    _commissionBreakdown: {
-      approved: roundMoney(breakdown.approved),
-      pending: roundMoney(breakdown.pending),
-      rejected: roundMoney(breakdown.rejected),
-    },
-  };
-}
-
-function roundMoney(n: number): number {
-  return Math.round(n * 100) / 100;
 }
 
 /** LH 原始状态 → 可读字符串（再交给 status-normalizer） */

@@ -177,10 +177,7 @@ export function aggregateAffiliateOrdersForMonitor(orders: OrderRow[]): Merchant
 
     const existing = orderAgg.get(dedupeKey);
     if (existing) {
-      existing.totalCommission += comm;
-      existing.confirmedCommission += buckets.approved;
-      existing.pendingCommission += buckets.pending;
-      existing.rejectedCommission += buckets.rejected;
+      /** 同平台同订单号只计一次（多渠道重复入库不叠加佣金） */
       if (orderHasRejectedCommission(o)) existing.hasRejected = true;
       if (!existing.merchantName && o.merchantName) existing.merchantName = o.merchantName;
       if (alias) existing.alias = mergeAliasList(existing.alias, alias);

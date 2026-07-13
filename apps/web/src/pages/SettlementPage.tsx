@@ -21,6 +21,7 @@ import type { Dayjs } from 'dayjs';
 import { api, type ApiResult } from '../api/client';
 import CommissionMonitor from '../components/CommissionMonitor';
 import SettlementSyncCollect from '../components/SettlementSyncCollect';
+import '../components/SyncAccountPicker.css';
 import { useAuth } from '../hooks/useAuth';
 import {
   adminDefaultDateRange,
@@ -352,7 +353,7 @@ export default function SettlementPage() {
           }
         />
       )}
-      <Space wrap style={{ marginBottom: 16 }} align="center">
+      <div className="sync-collect-toolbar" style={{ marginBottom: 16 }}>
         {isAdmin && (
           <Select
             style={{ width: 180 }}
@@ -366,7 +367,7 @@ export default function SettlementPage() {
         )}
         <RangePicker value={range} onChange={(v) => v && setRange(v as [Dayjs, Dayjs])} />
         {DATE_PRESETS.map((p) => (
-          <Button key={p.days} size="small" onClick={() => applyPreset(p.days)}>
+          <Button key={p.days} onClick={() => applyPreset(p.days)}>
             {p.label}
           </Button>
         ))}
@@ -381,7 +382,7 @@ export default function SettlementPage() {
           companyWideScope={scopeUserId == null && isAdmin}
           onCompleted={loadSettlement}
         />
-      </Space>
+      </div>
 
       <CommissionMonitor
         range={range}

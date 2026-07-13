@@ -241,7 +241,6 @@ export default function SettlementSyncCollect({
       <span>
         <Button
           type="primary"
-          size="large"
           icon={<SyncOutlined />}
           loading={syncing || jobActive}
           disabled={collectBlocked || jobActive}
@@ -275,8 +274,8 @@ export default function SettlementSyncCollect({
   if (inline) {
     return (
       <>
-        {collectButton}
         {clicksCheckbox}
+        <div className="sync-collect-actions">{collectButton}</div>
         {jobStatus ? (
           <div style={{ flexBasis: '100%', width: '100%' }}>{jobStatus}</div>
         ) : null}

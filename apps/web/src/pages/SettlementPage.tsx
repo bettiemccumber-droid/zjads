@@ -20,6 +20,7 @@ import type { ColumnsType } from 'antd/es/table';
 import type { Dayjs } from 'dayjs';
 import { api, type ApiResult } from '../api/client';
 import CommissionMonitor from '../components/CommissionMonitor';
+import SettlementSyncCollect from '../components/SettlementSyncCollect';
 import { useAuth } from '../hooks/useAuth';
 import {
   adminDefaultDateRange,
@@ -429,6 +430,16 @@ export default function SettlementPage() {
       )}
 
       <Card title={scopeUserId == null && isAdmin ? '结算查询（全公司）' : '结算查询'}>
+        <SettlementSyncCollect
+          startDate={range[0].format('YYYY-MM-DD')}
+          endDate={range[1].format('YYYY-MM-DD')}
+          platformCode={platformFilter}
+          channelAccountId={channelAccountFilter}
+          targetUserId={isAdmin ? scopeUserId : undefined}
+          isAdmin={isAdmin}
+          companyWideScope={scopeUserId == null && isAdmin}
+          onCompleted={loadSettlement}
+        />
         <Space wrap style={{ marginBottom: 16 }}>
           <Select
             style={{ width: 160 }}
@@ -461,14 +472,16 @@ export default function SettlementPage() {
         </Space>
 
         <Typography.Paragraph type="secondary" style={{ marginBottom: 12 }}>
-          按联盟订单 <Tag>orderDate</Tag> 与订单号去重汇总；下方按<strong>绑定的渠道账号</strong>
-          分列（同平台多账号可区分），商家明细与统计卡片随筛选收窄。
+          按联盟订单 <Tag>orderDate</Tag> 与订单号去重汇总；拒付/待确认等状态以<strong>最后一次采集</strong>
+          为准，「刷新结算」不重拉联盟 API，历史月份状态变更请用上方「重新采集」。
           {platformFilter !== 'all' ? (
             <Typography.Text type="warning" style={{ marginLeft: 8 }}>
               当前筛选：
               {platformOptions.find((o) => o.value === platformFilter)?.label ?? platformFilter}
             </Typography.Text>
           ) : null}
+          {' '}
+          下方按绑定的渠道账号分列，商家明细与统计卡片随筛选收窄。
         </Typography.Paragraph>
 
         {filteredChannelSummaries.length > 0 && (

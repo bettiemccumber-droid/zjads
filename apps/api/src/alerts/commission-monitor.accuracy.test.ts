@@ -25,6 +25,7 @@ function order(
     normalizedStatus: NormalizedStatus;
     rawPayload: unknown;
     alias: string;
+    displayName: string;
     platformCode: string;
     platformName: string;
   }>,
@@ -40,6 +41,7 @@ function order(
     rawPayload: partial.rawPayload,
     channelAccount: {
       affiliateAlias: partial.alias ?? 'lb2',
+      displayName: partial.displayName,
       platform: { code: platformCode, name: partial.platformName ?? 'LinkBux' },
     },
   };
@@ -70,6 +72,38 @@ function order(
   assert.equal(merged.length, 1);
   assert.equal(merged[0].orderCount, 1);
   assert.equal(merged[0].rejectedCommission, 50);
+}
+
+// 结算：同平台两账号（同 affiliateAlias）分别统计
+{
+  const orders = [
+    order({
+      channelAccountId: 10,
+      alias: 'lb3',
+      displayName: 'LinkBux · 账号A',
+      merchantId: '384942',
+      externalOrderId: 'e1',
+      commission: 100,
+    }),
+    order({
+      channelAccountId: 11,
+      alias: 'lb3',
+      displayName: 'LinkBux · 账号B',
+      merchantId: '384942',
+      externalOrderId: 'e2',
+      commission: 50,
+    }),
+  ];
+  const settlement = aggregateAffiliateOrders(orders, { groupByChannelAccount: true });
+  assert.equal(settlement.length, 2);
+  assert.equal(
+    settlement.reduce((s, r) => s + r.totalCommission, 0),
+    150,
+  );
+  const a = settlement.find((r) => r.channelAccountId === 10)!;
+  const b = settlement.find((r) => r.channelAccountId === 11)!;
+  assert.equal(a.totalCommission, 100);
+  assert.equal(b.totalCommission, 50);
 }
 
 // 金额阈值 + 浮点

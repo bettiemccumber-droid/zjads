@@ -14,6 +14,9 @@ export interface MerchantCommissionAgg {
   platformCode: string;
   platformName: string;
   affiliateAlias: string;
+  /** 结算按渠道账号拆分时填充 */
+  channelAccountId?: number;
+  channelDisplayName?: string;
   orderCount: number;
   rejectedOrderCount: number;
   totalCommission: number;
@@ -21,6 +24,27 @@ export interface MerchantCommissionAgg {
   pendingCommission: number;
   rejectedCommission: number;
   rejectionRate: number;
+}
+
+/** 分渠道账号结算/巡检汇总 */
+export interface ChannelAccountCommissionSummary {
+  channelAccountId: number;
+  displayName: string;
+  affiliateAlias: string;
+  platformCode: string;
+  platformName: string;
+  collectorImplemented: boolean;
+  orderCount: number;
+  totalCommission: number;
+  confirmedCommission: number;
+  pendingCommission: number;
+  rejectedCommission: number;
+  rejectionRate: number;
+}
+
+export interface AggregateAffiliateOrdersOptions {
+  /** 结算场景：同一平台绑定多账号时按 channelAccountId 分别汇总 */
+  groupByChannelAccount?: boolean;
 }
 
 /** 分平台监控/结算汇总 */
@@ -49,6 +73,7 @@ type OrderRow = {
   rawPayload?: unknown;
   channelAccount: {
     affiliateAlias: string | null;
+    displayName?: string;
     platform: { code: string; name: string };
   };
 };
@@ -56,7 +81,11 @@ type OrderRow = {
 /**
  * 联盟订单按商家+平台+渠道去重聚合
  */
-export function aggregateAffiliateOrders(orders: OrderRow[]): MerchantCommissionAgg[] {
+export function aggregateAffiliateOrders(
+  orders: OrderRow[],
+  options?: AggregateAffiliateOrdersOptions,
+): MerchantCommissionAgg[] {
+  const groupByChannelAccount = options?.groupByChannelAccount === true;
   const map = new Map<string, MerchantCommissionAgg>();
   const orderAgg = new Map<
     string,
@@ -67,6 +96,8 @@ export function aggregateAffiliateOrders(orders: OrderRow[]): MerchantCommission
       platformCode: string;
       platformName: string;
       alias: string;
+      channelAccountId?: number;
+      channelDisplayName?: string;
       totalCommission: number;
       confirmedCommission: number;
       pendingCommission: number;
@@ -82,7 +113,9 @@ export function aggregateAffiliateOrders(orders: OrderRow[]): MerchantCommission
     const platformCode = o.channelAccount.platform.code;
     const alias = (o.channelAccount.affiliateAlias || '').toLowerCase();
     const dedupeKey = `${o.channelAccountId}|${dedupeAffiliateOrderRecord(o)}`;
-    const merchantKey = `${mid}|${platformCode}|${alias}`;
+    const merchantKey = groupByChannelAccount
+      ? `${mid}|${platformCode}|${o.channelAccountId}`
+      : `${mid}|${platformCode}|${alias}`;
     const comm = Number(o.commission);
     const buckets = resolveOrderCommissionBuckets(o);
 
@@ -104,6 +137,10 @@ export function aggregateAffiliateOrders(orders: OrderRow[]): MerchantCommission
       platformCode,
       platformName: o.channelAccount.platform.name,
       alias,
+      channelAccountId: groupByChannelAccount ? o.channelAccountId : undefined,
+      channelDisplayName: groupByChannelAccount
+        ? o.channelAccount.displayName ?? ''
+        : undefined,
       totalCommission: comm,
       confirmedCommission: buckets.approved,
       pendingCommission: buckets.pending,
@@ -120,6 +157,8 @@ export function aggregateAffiliateOrders(orders: OrderRow[]): MerchantCommission
         platformCode: agg.platformCode,
         platformName: agg.platformName,
         affiliateAlias: agg.alias,
+        channelAccountId: agg.channelAccountId,
+        channelDisplayName: agg.channelDisplayName,
         orderCount: 0,
         rejectedOrderCount: 0,
         totalCommission: 0,
@@ -303,6 +342,65 @@ export function summarizeMerchantsByPlatform(
   }
 
   return [...map.values()].sort((a, b) => b.rejectedCommission - a.rejectedCommission);
+}
+
+/**
+ * 按绑定的渠道账号汇总（含无订单账号，便于区分同平台多账号）
+ */
+export function summarizeMerchantsByChannelAccount(
+  merchants: MerchantCommissionAgg[],
+  accounts: Array<{
+    id: number;
+    affiliateAlias: string;
+    displayName: string;
+    platform: { code: string; name: string };
+  }>,
+): ChannelAccountCommissionSummary[] {
+  const map = new Map<number, ChannelAccountCommissionSummary>();
+
+  for (const a of accounts) {
+    map.set(a.id, {
+      channelAccountId: a.id,
+      displayName: a.displayName,
+      affiliateAlias: a.affiliateAlias,
+      platformCode: a.platform.code,
+      platformName: a.platform.name,
+      collectorImplemented: isCollectorImplemented(a.platform.code),
+      orderCount: 0,
+      totalCommission: 0,
+      confirmedCommission: 0,
+      pendingCommission: 0,
+      rejectedCommission: 0,
+      rejectionRate: 0,
+    });
+  }
+
+  for (const m of merchants) {
+    if (m.channelAccountId == null) continue;
+    const row = map.get(m.channelAccountId);
+    if (!row) continue;
+    row.orderCount += m.orderCount;
+    row.totalCommission += m.totalCommission;
+    row.confirmedCommission += m.confirmedCommission;
+    row.pendingCommission += m.pendingCommission;
+    row.rejectedCommission += m.rejectedCommission;
+  }
+
+  for (const row of map.values()) {
+    row.totalCommission = round2(row.totalCommission);
+    row.confirmedCommission = round2(row.confirmedCommission);
+    row.pendingCommission = round2(row.pendingCommission);
+    row.rejectedCommission = round2(row.rejectedCommission);
+    row.rejectionRate =
+      row.totalCommission > 0 ? round1((row.rejectedCommission / row.totalCommission) * 100) : 0;
+  }
+
+  return [...map.values()].sort(
+    (a, b) =>
+      a.platformName.localeCompare(b.platformName) ||
+      a.displayName.localeCompare(b.displayName) ||
+      b.orderCount - a.orderCount,
+  );
 }
 
 /**

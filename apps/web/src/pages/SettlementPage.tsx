@@ -41,6 +41,19 @@ interface PlatformSummaryRow {
   atRiskMerchantCount?: number;
 }
 
+interface ChannelSummaryRow {
+  channelAccountId: number;
+  displayName: string;
+  affiliateAlias: string;
+  platformCode: string;
+  platformName: string;
+  collectorImplemented: boolean;
+  orderCount: number;
+  totalCommission: number;
+  rejectedCommission: number;
+  rejectionRate: number;
+}
+
 interface SettlementStats {
   totalOrders: number;
   totalCommission: number;
@@ -69,6 +82,8 @@ interface SettlementRow {
   platformName: string;
   platformCode: string;
   affiliateAlias: string;
+  channelAccountId?: number;
+  channelDisplayName?: string;
   orderCount: number;
   totalCommission: number;
   confirmedCommission: number;
@@ -110,8 +125,10 @@ export default function SettlementPage() {
   });
   const [items, setItems] = useState<SettlementRow[]>([]);
   const [platformSummaries, setPlatformSummaries] = useState<PlatformSummaryRow[]>([]);
+  const [channelSummaries, setChannelSummaries] = useState<ChannelSummaryRow[]>([]);
   const [loading, setLoading] = useState(false);
   const [platformFilter, setPlatformFilter] = useState<string>('all');
+  const [channelAccountFilter, setChannelAccountFilter] = useState<number | 'all'>('all');
   const [merchantSearch, setMerchantSearch] = useState('');
   const [highlightMerchantId, setHighlightMerchantId] = useState<string | null>(null);
   /** 管理员：null = 全公司，数字 = 指定员工 */
@@ -147,6 +164,7 @@ export default function SettlementPage() {
           items: SettlementRow[];
           stats: SettlementStats;
           platformSummaries: PlatformSummaryRow[];
+          channelSummaries?: ChannelSummaryRow[];
           scope?: 'company' | 'user';
           employeeSummaries?: SettlementEmployeeSummary[];
         }>
@@ -155,6 +173,7 @@ export default function SettlementPage() {
           startDate: range[0].format('YYYY-MM-DD'),
           endDate: range[1].format('YYYY-MM-DD'),
           ...(platformFilter !== 'all' ? { platformCode: platformFilter } : {}),
+          ...(channelAccountFilter !== 'all' ? { channelAccountId: channelAccountFilter } : {}),
           ...(isAdmin && scopeUserId != null ? { userId: scopeUserId } : {}),
         },
       });
@@ -162,6 +181,7 @@ export default function SettlementPage() {
         setItems(data.data.items);
         setStats(data.data.stats);
         setPlatformSummaries(data.data.platformSummaries ?? []);
+        setChannelSummaries(data.data.channelSummaries ?? []);
         setDataScope(data.data.scope ?? 'user');
         setEmployeeSummaries(data.data.employeeSummaries ?? []);
       }
@@ -170,11 +190,33 @@ export default function SettlementPage() {
     } finally {
       setLoading(false);
     }
-  }, [range, platformFilter, isAdmin, scopeUserId]);
+  }, [range, platformFilter, channelAccountFilter, isAdmin, scopeUserId]);
 
   useEffect(() => {
     loadSettlement();
   }, [loadSettlement]);
+
+  const channelAccountOptions = useMemo(() => {
+    let rows = channelSummaries;
+    if (platformFilter !== 'all') {
+      rows = rows.filter((c) => c.platformCode === platformFilter);
+    }
+    return [
+      { value: 'all' as const, label: '全部渠道账号' },
+      ...rows.map((c) => ({
+        value: c.channelAccountId,
+        label: `${c.displayName}${c.affiliateAlias ? ` (${c.affiliateAlias})` : ''}`,
+      })),
+    ];
+  }, [channelSummaries, platformFilter]);
+
+  const filteredChannelSummaries = useMemo(() => {
+    let rows = channelSummaries;
+    if (platformFilter !== 'all') {
+      rows = rows.filter((c) => c.platformCode === platformFilter);
+    }
+    return rows;
+  }, [channelSummaries, platformFilter]);
 
   const platformOptions = useMemo(() => {
     const rows = platformSummaries.length
@@ -220,19 +262,28 @@ export default function SettlementPage() {
       render: (name: string, r) => name || r.merchantId || '—',
     },
     {
+      title: '渠道账号',
+      dataIndex: 'channelDisplayName',
+      width: 160,
+      ellipsis: true,
+      render: (name: string, r) =>
+        name ? (
+          <span>
+            {name}
+            {r.affiliateAlias ? (
+              <Typography.Text type="secondary" style={{ marginLeft: 4 }}>
+                ({r.affiliateAlias})
+              </Typography.Text>
+            ) : null}
+          </span>
+        ) : (
+          r.platformName
+        ),
+    },
+    {
       title: '平台',
       dataIndex: 'platformName',
-      width: 120,
-      render: (name: string, r) => (
-        <span>
-          {name}
-          {r.affiliateAlias ? (
-            <Typography.Text type="secondary" style={{ marginLeft: 4 }}>
-              ({r.affiliateAlias})
-            </Typography.Text>
-          ) : null}
-        </span>
-      ),
+      width: 100,
     },
     { title: '订单数', dataIndex: 'orderCount', width: 80, align: 'right' },
     {
@@ -383,7 +434,16 @@ export default function SettlementPage() {
             style={{ width: 160 }}
             value={platformFilter}
             options={platformOptions}
-            onChange={setPlatformFilter}
+            onChange={(v) => {
+              setPlatformFilter(v);
+              setChannelAccountFilter('all');
+            }}
+          />
+          <Select
+            style={{ width: 220 }}
+            value={channelAccountFilter}
+            options={channelAccountOptions}
+            onChange={(v) => setChannelAccountFilter(v)}
           />
           <Input.Search
             allowClear
@@ -401,7 +461,8 @@ export default function SettlementPage() {
         </Space>
 
         <Typography.Paragraph type="secondary" style={{ marginBottom: 12 }}>
-          按联盟订单 <Tag>orderDate</Tag> 与订单号去重汇总；下方为全平台汇总（含未接入平台渠道），筛选后仅商家明细与统计卡片收窄。
+          按联盟订单 <Tag>orderDate</Tag> 与订单号去重汇总；下方按<strong>绑定的渠道账号</strong>
+          分列（同平台多账号可区分），商家明细与统计卡片随筛选收窄。
           {platformFilter !== 'all' ? (
             <Typography.Text type="warning" style={{ marginLeft: 8 }}>
               当前筛选：
@@ -410,7 +471,93 @@ export default function SettlementPage() {
           ) : null}
         </Typography.Paragraph>
 
-        {platformSummaries.length > 0 && (
+        {filteredChannelSummaries.length > 0 && (
+          <Table
+            size="small"
+            style={{ marginBottom: 16 }}
+            rowKey="channelAccountId"
+            pagination={false}
+            dataSource={filteredChannelSummaries}
+            columns={[
+              {
+                title: '渠道账号',
+                dataIndex: 'displayName',
+                ellipsis: true,
+                render: (name: string, r: ChannelSummaryRow) => (
+                  <span>
+                    {name}
+                    {r.affiliateAlias ? (
+                      <Typography.Text type="secondary" style={{ marginLeft: 4 }}>
+                        ({r.affiliateAlias})
+                      </Typography.Text>
+                    ) : null}
+                  </span>
+                ),
+              },
+              {
+                title: '平台',
+                dataIndex: 'platformName',
+                width: 120,
+                render: (name: string, r: ChannelSummaryRow) => (
+                  <span>
+                    {name}
+                    {r.collectorImplemented === false ? (
+                      <Tag color="default" style={{ marginLeft: 6 }}>
+                        未接入
+                      </Tag>
+                    ) : null}
+                  </span>
+                ),
+              },
+              { title: '订单', dataIndex: 'orderCount', width: 72, align: 'right' },
+              {
+                title: '总佣金',
+                dataIndex: 'totalCommission',
+                width: 96,
+                align: 'right',
+                render: (v: number) => (v > 0 ? money(v) : '—'),
+              },
+              {
+                title: '已拒绝',
+                dataIndex: 'rejectedCommission',
+                width: 96,
+                align: 'right',
+                render: (v: number) =>
+                  v > 0 ? <Typography.Text type="danger">{money(v)}</Typography.Text> : '—',
+              },
+              {
+                title: '拒付率',
+                dataIndex: 'rejectionRate',
+                width: 80,
+                align: 'right',
+                render: (v: number) =>
+                  v >= 25 ? (
+                    <Typography.Text type="danger">{pct(v)}</Typography.Text>
+                  ) : (
+                    pct(v)
+                  ),
+              },
+              {
+                title: '操作',
+                width: 72,
+                render: (_, r: ChannelSummaryRow) => (
+                  <Button
+                    type="link"
+                    size="small"
+                    onClick={() => {
+                      setPlatformFilter(r.platformCode);
+                      setChannelAccountFilter(r.channelAccountId);
+                    }}
+                  >
+                    筛选
+                  </Button>
+                ),
+              },
+            ]}
+          />
+        )}
+
+        {platformSummaries.length > 0 && filteredChannelSummaries.length === 0 && (
           <Table
             size="small"
             style={{ marginBottom: 16 }}

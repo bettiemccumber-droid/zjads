@@ -4,6 +4,8 @@ import {
   aggregateAffiliateOrders,
   mergePlatformCatalog,
   PlatformCommissionSummary,
+  ChannelAccountCommissionSummary,
+  summarizeMerchantsByChannelAccount,
   summarizeMerchantsByPlatform,
 } from '../common/commission-aggregate.util';
 import {
@@ -35,6 +37,8 @@ export interface SettlementMerchantRow {
   platformName: string;
   platformCode: string;
   affiliateAlias: string;
+  channelAccountId?: number;
+  channelDisplayName?: string;
   orderCount: number;
   totalAmount: number;
   totalCommission: number;
@@ -191,6 +195,7 @@ export class OrdersService {
         items: [] as SettlementMerchantRow[],
         stats: this.emptyStats(),
         platformSummaries: [] as PlatformCommissionSummary[],
+        channelSummaries: [] as ChannelAccountCommissionSummary[],
       };
     }
 
@@ -206,7 +211,7 @@ export class OrdersService {
       include: { channelAccount: { include: { platform: true } } },
     });
 
-    let merchants = aggregateAffiliateOrders(orders);
+    let merchants = aggregateAffiliateOrders(orders, { groupByChannelAccount: true });
     if (dateRange) {
       const rwClickRows = await this.prisma.affiliateMerchantClickDaily.findMany({
         where: {
@@ -229,9 +234,22 @@ export class OrdersService {
       })),
     );
 
+    const channelSummaries = summarizeMerchantsByChannelAccount(
+      merchants,
+      allAccounts.map((a) => ({
+        id: a.id,
+        affiliateAlias: a.affiliateAlias,
+        displayName: a.displayName,
+        platform: a.platform,
+      })),
+    );
+
     let scoped = merchants;
     if (q.platformCode) {
-      scoped = merchants.filter((m) => m.platformCode === q.platformCode);
+      scoped = scoped.filter((m) => m.platformCode === q.platformCode);
+    }
+    if (q.channelAccountId) {
+      scoped = scoped.filter((m) => m.channelAccountId === q.channelAccountId);
     }
 
     const items = scoped
@@ -245,7 +263,7 @@ export class OrdersService {
 
     const stats = this.aggregateSettlementStats(items);
 
-    return { items, stats, platformSummaries };
+    return { items, stats, platformSummaries, channelSummaries };
   }
 
   private toSettlementRow(m: ReturnType<typeof aggregateAffiliateOrders>[number]): SettlementMerchantRow {
@@ -255,6 +273,8 @@ export class OrdersService {
       platformName: m.platformName,
       platformCode: m.platformCode,
       affiliateAlias: m.affiliateAlias,
+      channelAccountId: m.channelAccountId,
+      channelDisplayName: m.channelDisplayName,
       orderCount: m.orderCount,
       totalAmount: 0,
       totalCommission: m.totalCommission,

@@ -38,6 +38,26 @@ interface ImportResult {
   campaignCount: number;
 }
 
+interface BatchImportResult {
+  success: number;
+  failed: number;
+  totalUpserted: number;
+  results: Array<{
+    sourceId: number;
+    sourceName: string;
+    ok: boolean;
+    upserted?: number;
+    dateFrom?: string;
+    dateTo?: string;
+    campaignCount?: number;
+    coverageWarning?: string;
+    message?: string;
+  }>;
+}
+
+/** 弹窗模式：正数=单条导入，-1=按日期清空，-2=批量导入 */
+type RangeModalMode = number;
+
 interface EmployeeOption {
   id: number;
   username: string;
@@ -70,8 +90,9 @@ export default function AdSourcesPage({ adminMode = false }: AdSourcesPageProps)
   const [employees, setEmployees] = useState<EmployeeOption[]>([]);
   const [loading, setLoading] = useState(false);
   const [importingId, setImportingId] = useState<number | null>(null);
+  const [batchImporting, setBatchImporting] = useState(false);
   const [rangeModalOpen, setRangeModalOpen] = useState(false);
-  const [rangeTargetId, setRangeTargetId] = useState<number | null>(null);
+  const [rangeTargetId, setRangeTargetId] = useState<RangeModalMode | null>(null);
   const [customRange, setCustomRange] = useState<[Dayjs, Dayjs] | null>(null);
   const [form] = Form.useForm();
 
@@ -186,6 +207,69 @@ export default function AdSourcesPage({ adminMode = false }: AdSourcesPageProps)
     await runImport(id, undefined, undefined, 'Sheet 全量');
   };
 
+  const runBatchImport = async (startDate?: string, endDate?: string, label?: string) => {
+    if (!list.length) {
+      message.warning('暂无广告数据源');
+      return;
+    }
+    if (adminMode && !scopeUserId) {
+      message.warning('请先选择员工');
+      return;
+    }
+
+    setBatchImporting(true);
+    try {
+      const params: Record<string, string> = {};
+      if (startDate) params.startDate = startDate;
+      if (endDate) params.endDate = endDate;
+      if (scopeUserId != null) params.userId = String(scopeUserId);
+
+      const { data } = await api.post<ApiResult<BatchImportResult>>(
+        '/ad-sources/import/batch',
+        null,
+        { params },
+      );
+
+      if (data.success) {
+        const { success, failed, totalUpserted, results } = data.data;
+        const rangeLabel = label ?? (startDate && endDate ? `${startDate} ~ ${endDate}` : '全量');
+        const failedNames = results.filter((r) => !r.ok).map((r) => r.sourceName);
+        const warnings = results
+          .filter((r) => r.ok && r.coverageWarning)
+          .map((r) => `${r.sourceName}：${r.coverageWarning}`);
+
+        if (failed === 0) {
+          message.success(
+            `批量导入完成：${success} 个 Sheet，共 ${totalUpserted} 条（${rangeLabel}）`,
+            warnings.length ? 8 : 4,
+          );
+        } else {
+          message.warning(
+            `批量导入：成功 ${success}，失败 ${failed}（${failedNames.join('、')}）`,
+            6,
+          );
+        }
+        warnings.forEach((w) => message.warning(w, 8));
+        void load();
+      } else {
+        message.error(data.message);
+      }
+    } catch {
+      message.error('批量导入失败，请确认 Sheet 已公开可读');
+    } finally {
+      setBatchImporting(false);
+    }
+  };
+
+  const onBatchImportRecent = async () => {
+    const { start, end } = getImportDateRange(DEFAULT_LOOKBACK_DAYS);
+    await runBatchImport(start, end, `${start} ~ ${end}`);
+  };
+
+  const onBatchImportAll = async () => {
+    await runBatchImport(undefined, undefined, '全量');
+  };
+
   const openRangeModal = (id: number) => {
     const { start, end } = getImportDateRange(DEFAULT_LOOKBACK_DAYS);
     setRangeTargetId(id);
@@ -194,9 +278,15 @@ export default function AdSourcesPage({ adminMode = false }: AdSourcesPageProps)
   };
 
   const onConfirmRangeImport = async () => {
-    if (!rangeTargetId || !customRange) return;
+    if (!customRange) return;
     const [start, end] = customRange;
     setRangeModalOpen(false);
+    if (rangeTargetId === -2) {
+      await runBatchImport(start.format('YYYY-MM-DD'), end.format('YYYY-MM-DD'));
+      setRangeTargetId(null);
+      return;
+    }
+    if (!rangeTargetId || rangeTargetId < 0) return;
     await runImport(
       rangeTargetId,
       start.format('YYYY-MM-DD'),
@@ -334,7 +424,39 @@ export default function AdSourcesPage({ adminMode = false }: AdSourcesPageProps)
       <Card
         title={`${ownerLabel} 广告数据源`}
         extra={
-          <Space>
+          <Space wrap>
+            <Button
+              type="primary"
+              loading={batchImporting}
+              disabled={!list.length || (adminMode && !scopeUserId)}
+              onClick={() => void onBatchImportRecent()}
+            >
+              批量导入近 {DEFAULT_LOOKBACK_DAYS} 天
+            </Button>
+            <Button
+              loading={batchImporting}
+              disabled={!list.length || (adminMode && !scopeUserId)}
+              onClick={() => {
+                const { start, end } = getImportDateRange(DEFAULT_LOOKBACK_DAYS);
+                setCustomRange([dayjs(start), dayjs(end)]);
+                setRangeTargetId(-2);
+                setRangeModalOpen(true);
+              }}
+            >
+              批量自定义日期
+            </Button>
+            <Popconfirm
+              title="批量导入全部 Sheet 中的全部日数据？"
+              disabled={!list.length || (adminMode && !scopeUserId)}
+              onConfirm={() => void onBatchImportAll()}
+            >
+              <Button
+                loading={batchImporting}
+                disabled={!list.length || (adminMode && !scopeUserId)}
+              >
+                批量全量
+              </Button>
+            </Popconfirm>
             <Popconfirm
               title={`清空${adminMode ? '该员工' : ''}全部已导入的广告数据？`}
               description="仅删除库内广告日数据，不影响联盟订单。"
@@ -439,7 +561,13 @@ export default function AdSourcesPage({ adminMode = false }: AdSourcesPageProps)
       </Card>
 
       <Modal
-        title={rangeTargetId === -1 ? '按日期清空广告导入数据' : '按日期导入广告数据'}
+        title={
+          rangeTargetId === -1
+            ? '按日期清空广告导入数据'
+            : rangeTargetId === -2
+              ? '批量按日期导入广告数据'
+              : '按日期导入广告数据'
+        }
         open={rangeModalOpen}
         onCancel={() => {
           setRangeModalOpen(false);
@@ -453,13 +581,18 @@ export default function AdSourcesPage({ adminMode = false }: AdSourcesPageProps)
           void onConfirmRangeImport();
         }}
         okText={rangeTargetId === -1 ? '确认清空' : '开始导入'}
-        okButtonProps={rangeTargetId === -1 ? { danger: true } : undefined}
+        okButtonProps={{
+          danger: rangeTargetId === -1,
+          loading: rangeTargetId === -2 ? batchImporting : false,
+        }}
         destroyOnClose
       >
         <Typography.Paragraph type="secondary">
           {rangeTargetId === -1
             ? '将删除所选日期区间内已导入的全部广告日数据（联盟订单不受影响）。'
-            : '建议区间不窄于工作台查询日期。'}
+            : rangeTargetId === -2
+              ? `将依次导入列表中全部 ${list.length} 个 Sheet 的所选日期数据。`
+              : '建议区间不窄于工作台查询日期。'}
         </Typography.Paragraph>
         <DatePicker.RangePicker
           value={customRange}

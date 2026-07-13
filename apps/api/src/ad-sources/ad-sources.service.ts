@@ -133,6 +133,72 @@ export class AdSourcesService {
   }
 
   /**
+   * 批量导入某员工全部已启用 Sheet
+   */
+  async importAllForOwner(
+    user: AuthUser,
+    startDate?: string,
+    endDate?: string,
+    queryUserId?: number,
+  ) {
+    if (user.role === UserRole.VIEWER) {
+      throw new BadRequestException('只读账号无法导入广告数据');
+    }
+
+    const ownerUserId = this.resolveOwnerUserId(user, queryUserId);
+    const sources = await this.prisma.adDataSource.findMany({
+      where: { ownerUserId, isActive: true },
+      orderBy: { updatedAt: 'desc' },
+    });
+
+    if (!sources.length) {
+      throw new BadRequestException('暂无广告数据源，请先添加 Sheet');
+    }
+
+    const results: Array<{
+      sourceId: number;
+      sourceName: string;
+      ok: boolean;
+      upserted?: number;
+      dateFrom?: string;
+      dateTo?: string;
+      campaignCount?: number;
+      coverageWarning?: string;
+      message?: string;
+    }> = [];
+
+    for (const source of sources) {
+      try {
+        const r = await this.importSourceData(source, startDate, endDate);
+        results.push({
+          sourceId: source.id,
+          sourceName: source.name,
+          ok: true,
+          upserted: r.upserted,
+          dateFrom: r.dateFrom,
+          dateTo: r.dateTo,
+          campaignCount: r.campaignCount,
+          coverageWarning: r.coverageWarning,
+        });
+      } catch (e) {
+        const message = e instanceof Error ? e.message : String(e);
+        results.push({
+          sourceId: source.id,
+          sourceName: source.name,
+          ok: false,
+          message,
+        });
+      }
+    }
+
+    const success = results.filter((r) => r.ok).length;
+    const failed = results.filter((r) => !r.ok).length;
+    const totalUpserted = results.reduce((sum, r) => sum + (r.upserted ?? 0), 0);
+
+    return { success, failed, totalUpserted, results };
+  }
+
+  /**
    * 从 Google Sheet 拉取 CSV 并写入 ad_campaign_daily
    */
   async importFromSource(user: AuthUser, sourceId: number, startDate?: string, endDate?: string) {
@@ -196,13 +262,15 @@ export class AdSourcesService {
     }
 
     const datesInBatch = [...new Set(rows.map((r) => r.date))].sort();
+    const customerIdsInBatch = [...new Set(rows.map((r) => r.customerId))];
 
-    /** 仅清空本次 Sheet 实际包含的日期，避免 Sheet 未到 endDate 时误删库内末段数据 */
+    /** 仅清空本 Sheet 涉及日期与子账号，避免多 Sheet 批量导入时互相覆盖 */
     for (const dateStr of datesInBatch) {
       await this.prisma.adCampaignDaily.deleteMany({
         where: {
           ownerUserId,
           date: buildOrderDateRangeFilter(dateStr, dateStr),
+          customerId: { in: customerIdsInBatch },
         },
       });
     }

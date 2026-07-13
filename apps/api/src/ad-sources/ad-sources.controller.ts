@@ -56,6 +56,13 @@ class ImportQuery {
   endDate?: string;
 }
 
+class BatchImportQuery extends ImportQuery {
+  /** 管理员代员工批量导入 */
+  @IsOptional()
+  @IsInt()
+  userId?: number;
+}
+
 class PurgeImportedQuery {
   @IsOptional()
   @IsDateString()
@@ -104,6 +111,21 @@ export class AdSourcesController {
       }),
       '已清空导入的广告数据',
     );
+  }
+
+  @Post('import/batch')
+  async batchImport(@CurrentUser() user: AuthUser, @Query() q: BatchImportQuery) {
+    const result = await this.adSources.importAllForOwner(
+      user,
+      q.startDate,
+      q.endDate,
+      q.userId != null ? Number(q.userId) : undefined,
+    );
+    const msg =
+      result.failed === 0
+        ? `批量导入完成：${result.success} 个 Sheet，共 ${result.totalUpserted} 条`
+        : `批量导入：成功 ${result.success}，失败 ${result.failed}`;
+    return ok(result, msg);
   }
 
   @Delete(':id')

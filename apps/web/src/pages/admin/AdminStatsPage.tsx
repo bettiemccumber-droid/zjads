@@ -11,6 +11,7 @@ import { Link } from 'react-router-dom';
 import { api, type ApiResult } from '../../api/client';
 
 import { exportPlatformOverviewExcel } from '../../utils/exportExcel';
+import { adminDefaultDateRange, lastNDaysToYesterday } from '../../utils/date-range.util';
 
 import AdminMerchantAnalysis from './AdminMerchantAnalysis';
 
@@ -99,9 +100,7 @@ interface OverviewData {
 
 
 function defaultRange(): [Dayjs, Dayjs] {
-
-  return [dayjs().subtract(30, 'day'), dayjs().subtract(1, 'day')];
-
+  return adminDefaultDateRange();
 }
 
 
@@ -112,7 +111,7 @@ const DATE_PRESETS: Array<{ label: string; range: () => [Dayjs, Dayjs] }> = [
 
   { label: '昨天', range: () => [dayjs().subtract(1, 'day'), dayjs().subtract(1, 'day')] },
 
-  { label: '近7天', range: () => [dayjs().subtract(7, 'day'), dayjs().subtract(1, 'day')] },
+  { label: '近7天', range: () => lastNDaysToYesterday(7) },
 
   { label: '近30天', range: () => [dayjs().subtract(30, 'day'), dayjs().subtract(1, 'day')] },
 

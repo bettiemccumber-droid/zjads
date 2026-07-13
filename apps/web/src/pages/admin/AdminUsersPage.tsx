@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Button, Card, DatePicker, Input, Space, Table, Tag, message } from 'antd';
-import dayjs, { Dayjs } from 'dayjs';
+import type { Dayjs } from 'dayjs';
 import { Link } from 'react-router-dom';
 import { api, type ApiResult } from '../../api/client';
 import {
@@ -8,6 +8,7 @@ import {
   SheetCollectionCell,
 } from '../../components/CollectionStatusCells';
 import { formatCollectionTime, formatRelativeTime } from '../../utils/collection-display';
+import { adminDefaultDateRange } from '../../utils/date-range.util';
 
 const { RangePicker } = DatePicker;
 
@@ -37,7 +38,7 @@ interface UserSummaryRow {
 }
 
 function defaultRange(): [Dayjs, Dayjs] {
-  return [dayjs().subtract(30, 'day'), dayjs().subtract(1, 'day')];
+  return adminDefaultDateRange();
 }
 
 export default function AdminUsersPage() {

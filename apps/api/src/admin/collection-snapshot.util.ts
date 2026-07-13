@@ -13,6 +13,44 @@ export interface AffiliateCollectionSnapshot {
 export interface SheetCollectionSnapshot {
   sourceName: string | null;
   importedAt: string | null;
+  sheetNames: string[];
+  sheetCount: number;
+  nameSummary: string | null;
+}
+
+export type SheetSourcePick = {
+  name: string;
+  updatedAt: Date;
+};
+
+/**
+ * 将员工多个 Sheet 数据源转为管理员可读摘要
+ */
+export function buildSheetSnapshot(sources: SheetSourcePick[]): SheetCollectionSnapshot {
+  if (!sources.length) {
+    return {
+      sourceName: null,
+      importedAt: null,
+      sheetNames: [],
+      sheetCount: 0,
+      nameSummary: null,
+    };
+  }
+
+  const sorted = [...sources].sort((a, b) => b.updatedAt.getTime() - a.updatedAt.getTime());
+  const sheetNames = sorted.map((s) => s.name);
+  const importedAt = sorted[0].updatedAt.toISOString();
+  const sourceName = sorted[0].name;
+  const nameSummary =
+    sources.length > 1 ? `${sources.length} 个：${sheetNames.join('、')}` : sourceName;
+
+  return {
+    sourceName,
+    importedAt,
+    sheetNames,
+    sheetCount: sources.length,
+    nameSummary,
+  };
 }
 
 export type SyncJobPick = {

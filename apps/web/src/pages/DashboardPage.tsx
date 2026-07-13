@@ -33,7 +33,7 @@ import {
   Space,
 } from 'antd';
 
-import dayjs, { Dayjs } from 'dayjs';
+import type { Dayjs } from 'dayjs';
 
 import { api, type ApiResult } from '../api/client';
 
@@ -52,6 +52,8 @@ import '../components/CampaignReportToolbar.css';
 import { inferPlatformNameFromAlias } from '../utils/campaign-name.util';
 
 
+
+import { employeeDefaultDateRange } from '../utils/date-range.util';
 
 const { RangePicker } = DatePicker;
 
@@ -236,16 +238,12 @@ export default function DashboardPage() {
     adSourceCount: number;
     lastSheetImportAt: string | null;
     lastSheetName: string | null;
+    sheetNames?: string[];
+    lastSheetNameSummary?: string | null;
   } | null>(null);
   const [importingSheet, setImportingSheet] = useState(false);
 
-  const [range, setRange] = useState<[Dayjs, Dayjs]>([
-
-    dayjs().subtract(7, 'day'),
-
-    dayjs().subtract(1, 'day'),
-
-  ]);
+  const [range, setRange] = useState<[Dayjs, Dayjs]>(employeeDefaultDateRange);
 
   const [loading, setLoading] = useState(false);
 
@@ -389,6 +387,8 @@ export default function DashboardPage() {
             adSourceCount: number;
             lastSheetImportAt: string | null;
             lastSheetName: string | null;
+            sheetNames?: string[];
+            lastSheetNameSummary?: string | null;
           }>
         >
       >('/admin/collection-status');
@@ -399,6 +399,8 @@ export default function DashboardPage() {
           adSourceCount: row.adSourceCount,
           lastSheetImportAt: row.lastSheetImportAt,
           lastSheetName: row.lastSheetName,
+          sheetNames: row.sheetNames,
+          lastSheetNameSummary: row.lastSheetNameSummary,
         });
       }
     })();
@@ -502,18 +504,33 @@ export default function DashboardPage() {
     setImportingSheet(true);
     try {
       const { data } = await api.post<
-        ApiResult<{ success: number; failed: number; results: unknown[] }>
+        ApiResult<{
+          sheetSuccess: number;
+          sheetFailed: number;
+          totalUpserted: number;
+          byUser: Array<{
+            sheetCount: number;
+            success: number;
+            failed: number;
+            totalUpserted: number;
+            ok: boolean;
+            message?: string;
+          }>;
+        }>
       >('/admin/import/sheets/batch', {
         startDate: range[0].format('YYYY-MM-DD'),
         endDate: range[1].format('YYYY-MM-DD'),
         userIds: [viewUserId],
       });
       if (data.success) {
-        if (data.data.success > 0) {
-          message.success('Sheet 导入完成，正在刷新报表');
+        const row = data.data.byUser[0];
+        if (row?.ok) {
+          message.success(
+            `已导入 ${row.success}/${row.sheetCount} 个 Sheet，共 ${row.totalUpserted} 条，正在刷新报表`,
+          );
           void loadReport();
         } else {
-          message.error('Sheet 导入失败，请检查员工是否已配置 Sheet');
+          message.error(row?.message ?? 'Sheet 导入失败，请检查员工是否已配置 Sheet');
         }
         const statusRes = await api.get<
           ApiResult<
@@ -522,6 +539,8 @@ export default function DashboardPage() {
               adSourceCount: number;
               lastSheetImportAt: string | null;
               lastSheetName: string | null;
+              sheetNames?: string[];
+              lastSheetNameSummary?: string | null;
             }>
           >
         >('/admin/collection-status');
@@ -532,6 +551,8 @@ export default function DashboardPage() {
               adSourceCount: row.adSourceCount,
               lastSheetImportAt: row.lastSheetImportAt,
               lastSheetName: row.lastSheetName,
+              sheetNames: row.sheetNames,
+              lastSheetNameSummary: row.lastSheetNameSummary,
             });
           }
         }
@@ -1018,7 +1039,7 @@ export default function DashboardPage() {
                   disabled={employeeSheetStatus.adSourceCount === 0}
                   onClick={() => void importSheetForEmployee()}
                 >
-                  导入 Sheet（当前查询区间）
+                  导入全部 Sheet（当前查询区间）
                 </Button>
                 <Link
                   to={`/admin/ad-sources?userId=${viewUserId}&username=${encodeURIComponent(viewUsername)}`}
@@ -1073,7 +1094,7 @@ export default function DashboardPage() {
 
         <p className="sync-collect-hint">
           已接入 PM / LH / LB / RW 订单；PM/LH/LB/RW 联盟点击随订单区间采集（LB 点击仅采区间<strong>最后一天</strong>，更早日期请用「点击校准导入」）。
-          仅选部分平台采集时<strong>不会</strong>重导 Google Sheet；全选采集后会自动同步 Sheet 广告费，再刷新报表。
+          仅选部分平台采集时<strong>不会</strong>重导 Google Sheet；全选采集后会自动同步<strong>全部</strong> Sheet 广告费，再刷新报表。
           {viewUserId
             ? ' 也可在上方「导入 Sheet」或侧边栏「广告数据源」手动导入。'
             : ' 也可在侧边栏「广告数据源」手动导入 Sheet。'}

@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Button, Card, Col, DatePicker, Descriptions, Row, Space, Statistic, Table, Tag } from 'antd';
-import dayjs, { Dayjs } from 'dayjs';
+import type { Dayjs } from 'dayjs';
 import { Link, useParams } from 'react-router-dom';
 import { api, type ApiResult } from '../../api/client';
 import {
@@ -8,6 +8,7 @@ import {
   affiliateStatusColor,
   formatCollectionTime,
 } from '../../utils/collection-display';
+import { adminDefaultDateRange } from '../../utils/date-range.util';
 
 const { RangePicker } = DatePicker;
 
@@ -67,7 +68,7 @@ interface SyncJobRow {
 }
 
 function defaultRange(): [Dayjs, Dayjs] {
-  return [dayjs().subtract(30, 'day'), dayjs().subtract(1, 'day')];
+  return adminDefaultDateRange();
 }
 
 export default function AdminUserDetailPage() {

@@ -21,6 +21,9 @@ export interface AffiliateCollectionFields {
 export interface SheetCollectionFields {
   lastSheetName?: string | null;
   lastSheetImportAt?: string | null;
+  adSourceCount?: number;
+  sheetNames?: string[];
+  lastSheetNameSummary?: string | null;
 }
 
 interface SyncJobRow {
@@ -198,16 +201,25 @@ export function SheetCollectionCell({ row }: { row: SheetCollectionFields }) {
   }
 
   const relative = formatRelativeTime(row.lastSheetImportAt);
+  const displayName =
+    row.lastSheetNameSummary ??
+    (row.sheetNames && row.sheetNames.length > 1
+      ? `${row.sheetNames.length} 个：${row.sheetNames.join('、')}`
+      : row.lastSheetName);
+  const nameTitle =
+    row.sheetNames && row.sheetNames.length > 1 ? row.sheetNames.join('、') : displayName ?? undefined;
 
   return (
     <div style={{ fontSize: 12, lineHeight: 1.55, minWidth: 120 }}>
       <Tooltip title={formatCollectionTime(row.lastSheetImportAt)}>
         <span style={{ color: '#666' }}>{relative}</span>
       </Tooltip>
-      {row.lastSheetName && (
-        <div style={{ color: '#888', maxWidth: 140, overflow: 'hidden', textOverflow: 'ellipsis' }}>
-          {row.lastSheetName}
-        </div>
+      {displayName && (
+        <Tooltip title={nameTitle}>
+          <div style={{ color: '#888', maxWidth: 160, overflow: 'hidden', textOverflow: 'ellipsis' }}>
+            {displayName}
+          </div>
+        </Tooltip>
       )}
     </div>
   );

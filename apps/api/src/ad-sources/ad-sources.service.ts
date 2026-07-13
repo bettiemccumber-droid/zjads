@@ -17,6 +17,36 @@ export interface CreateAdDataSourceDto {
   description?: string;
 }
 
+/** 单个 Sheet 导入结果 */
+export interface SheetImportItemResult {
+  sourceId: number;
+  sourceName: string;
+  ok: boolean;
+  upserted?: number;
+  dateFrom?: string;
+  dateTo?: string;
+  campaignCount?: number;
+  coverageWarning?: string;
+  message?: string;
+}
+
+/** 某员工全部 Sheet 批量导入汇总 */
+export interface OwnerSheetBatchImportResult {
+  sheetCount: number;
+  success: number;
+  failed: number;
+  totalUpserted: number;
+  dateFrom: string;
+  dateTo: string;
+  results: SheetImportItemResult[];
+}
+
+/** 采集任务完成后自动导入 Sheet 的返回 */
+export type OwnerSheetAutoImportResult =
+  | { skipped: true; reason: 'no_ad_source' }
+  | { skipped: true; reason: 'import_failed'; message: string }
+  | ({ skipped: false } & OwnerSheetBatchImportResult);
+
 @Injectable()
 export class AdSourcesService {
   constructor(private readonly prisma: PrismaService) {}
@@ -112,24 +142,36 @@ export class AdSourcesService {
   }
 
   /**
-   * 按员工自动导入已绑定的 Sheet（采集任务完成后调用，无需人工点导入）
+   * 按员工 ID 导入全部已启用 Sheet（采集任务 / 管理员批量导入）
    */
-  async importForOwner(ownerUserId: number, startDate?: string, endDate?: string) {
-    const source = await this.prisma.adDataSource.findFirst({
-      where: { ownerUserId, isActive: true },
-      orderBy: { updatedAt: 'desc' },
-    });
-    if (!source) {
-      return { skipped: true as const, reason: 'no_ad_source' as const };
-    }
+  async importBatchForOwnerId(
+    ownerUserId: number,
+    startDate?: string,
+    endDate?: string,
+  ): Promise<OwnerSheetBatchImportResult | null> {
+    return this.importAllSourcesForOwnerId(ownerUserId, startDate, endDate);
+  }
 
-    try {
-      const result = await this.importSourceData(source, startDate, endDate);
-      return { skipped: false as const, ...result };
-    } catch (e) {
-      const message = e instanceof Error ? e.message : String(e);
-      return { skipped: true as const, reason: 'import_failed' as const, message };
+  /**
+   * 按员工自动导入全部已绑定 Sheet（采集任务完成后调用）
+   */
+  async importForOwner(
+    ownerUserId: number,
+    startDate?: string,
+    endDate?: string,
+  ): Promise<OwnerSheetAutoImportResult> {
+    const batch = await this.importAllSourcesForOwnerId(ownerUserId, startDate, endDate);
+    if (!batch) {
+      return { skipped: true, reason: 'no_ad_source' };
     }
+    if (batch.success === 0) {
+      const failedNames = batch.results
+        .filter((r) => !r.ok)
+        .map((r) => `${r.sourceName}：${r.message ?? '未知错误'}`)
+        .join('；');
+      return { skipped: true, reason: 'import_failed', message: failedNames || '全部 Sheet 导入失败' };
+    }
+    return { skipped: false, ...batch };
   }
 
   /**
@@ -146,26 +188,68 @@ export class AdSourcesService {
     }
 
     const ownerUserId = this.resolveOwnerUserId(user, queryUserId);
+    const batch = await this.importAllSourcesForOwnerId(ownerUserId, startDate, endDate);
+    if (!batch) {
+      throw new BadRequestException('暂无广告数据源，请先添加 Sheet');
+    }
+
+    return batch;
+  }
+
+  /**
+   * 生成采集任务完成后的 Sheet 导入说明文案
+   */
+  formatOwnerSheetImportNote(
+    result: OwnerSheetAutoImportResult,
+    syncStart: string,
+    syncEnd: string,
+  ): string | null {
+    if (result.skipped) {
+      if (result.reason === 'no_ad_source') {
+        return '未配置广告数据源，已跳过 Sheet 导入';
+      }
+      return `Sheet 导入失败：${result.message}`;
+    }
+
+    const { sheetCount, success, failed, totalUpserted, dateFrom, dateTo, results } = result;
+    let note =
+      sheetCount === 1
+        ? `Sheet 已导入 ${totalUpserted} 行（${syncStart}~${syncEnd}，Sheet 实际 ${dateFrom}~${dateTo}）`
+        : `Sheet 已导入 ${success}/${sheetCount} 个数据源共 ${totalUpserted} 行（${syncStart}~${syncEnd}，实际 ${dateFrom}~${dateTo}）`;
+
+    if (failed > 0) {
+      const failedNames = results.filter((r) => !r.ok).map((r) => r.sourceName).join('、');
+      note += `；失败 ${failed}（${failedNames}）`;
+    }
+
+    const warnings = results
+      .filter((r) => r.ok && r.coverageWarning)
+      .map((r) => (sheetCount === 1 ? r.coverageWarning! : `${r.sourceName}：${r.coverageWarning}`));
+    if (warnings.length) {
+      note += `；⚠ ${warnings.join('；')}`;
+    }
+
+    return note;
+  }
+
+  /**
+   * 依次导入某员工全部已启用 Sheet
+   */
+  private async importAllSourcesForOwnerId(
+    ownerUserId: number,
+    startDate?: string,
+    endDate?: string,
+  ): Promise<OwnerSheetBatchImportResult | null> {
     const sources = await this.prisma.adDataSource.findMany({
       where: { ownerUserId, isActive: true },
       orderBy: { updatedAt: 'desc' },
     });
 
     if (!sources.length) {
-      throw new BadRequestException('暂无广告数据源，请先添加 Sheet');
+      return null;
     }
 
-    const results: Array<{
-      sourceId: number;
-      sourceName: string;
-      ok: boolean;
-      upserted?: number;
-      dateFrom?: string;
-      dateTo?: string;
-      campaignCount?: number;
-      coverageWarning?: string;
-      message?: string;
-    }> = [];
+    const results: SheetImportItemResult[] = [];
 
     for (const source of sources) {
       try {
@@ -194,8 +278,23 @@ export class AdSourcesService {
     const success = results.filter((r) => r.ok).length;
     const failed = results.filter((r) => !r.ok).length;
     const totalUpserted = results.reduce((sum, r) => sum + (r.upserted ?? 0), 0);
+    const okResults = results.filter((r) => r.ok && r.dateFrom && r.dateTo);
+    const dateFrom = okResults.length
+      ? okResults.map((r) => r.dateFrom!).sort()[0]
+      : startDate ?? '';
+    const dateTo = okResults.length
+      ? okResults.map((r) => r.dateTo!).sort().slice(-1)[0]
+      : endDate ?? '';
 
-    return { success, failed, totalUpserted, results };
+    return {
+      sheetCount: sources.length,
+      success,
+      failed,
+      totalUpserted,
+      dateFrom,
+      dateTo,
+      results,
+    };
   }
 
   /**

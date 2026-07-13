@@ -121,9 +121,13 @@ export class AdminController {
 
   @Post('import/sheets/batch')
   async batchImportSheets(@CurrentUser() user: AuthUser, @Body() dto: BatchImportDto) {
-    return ok(
-      await this.admin.batchImportSheets(user, dto.startDate, dto.endDate, dto.userIds),
-      '批量 Sheet 导入已完成',
-    );
+    const result = await this.admin.batchImportSheets(user, dto.startDate, dto.endDate, dto.userIds);
+    const msg =
+      dto.userIds?.length === 1
+        ? result.byUser[0]?.ok
+          ? `已导入 ${result.sheetSuccess}/${result.byUser[0]?.sheetCount ?? 0} 个 Sheet`
+          : result.byUser[0]?.message ?? 'Sheet 导入失败'
+        : `批量 Sheet 导入：${result.userSuccess} 人成功，共 ${result.sheetSuccess} 个 Sheet`;
+    return ok(result, msg);
   }
 }

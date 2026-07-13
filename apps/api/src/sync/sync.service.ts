@@ -321,22 +321,17 @@ export class SyncService implements OnModuleInit {
     let sheetImportNote: string | null = null;
     if (autoImportSheet) {
       const r = await this.adSources.importForOwner(job.ownerUserId, syncStart, syncEnd);
+      sheetImportNote = this.adSources.formatOwnerSheetImportNote(r, syncStart, syncEnd);
       if (r.skipped) {
-        if (r.reason === 'no_ad_source') {
-          sheetImportNote = '未配置广告数据源，已跳过 Sheet 导入';
-          console.log(`[sync] 任务 #${jobId} 跳过 Sheet 导入：未配置广告数据源`);
-        } else {
-          sheetImportNote = `Sheet 导入失败：${r.message ?? 'unknown'}`;
-          console.log(`[sync] 任务 #${jobId} Sheet 导入失败: ${r.message ?? 'unknown'}`);
-        }
+        console.log(`[sync] 任务 #${jobId} ${sheetImportNote}`);
       } else {
-        let note = `Sheet 已导入 ${r.upserted} 行（${syncStart}~${syncEnd}，Sheet 实际 ${r.dateFrom}~${r.dateTo}）`;
-        if (r.coverageWarning) {
-          note += `；⚠ ${r.coverageWarning}`;
-          console.log(`[sync] 任务 #${jobId} Sheet 覆盖告警: ${r.coverageWarning}`);
+        console.log(
+          `[sync] 任务 #${jobId} 已自动导入 Sheet：${r.success}/${r.sheetCount} 个数据源，共 ${r.totalUpserted} 行（${syncStart}~${syncEnd}）`,
+        );
+        const warnings = r.results.filter((item) => item.ok && item.coverageWarning);
+        for (const w of warnings) {
+          console.log(`[sync] 任务 #${jobId} Sheet 覆盖告警 ${w.sourceName}: ${w.coverageWarning}`);
         }
-        sheetImportNote = note;
-        console.log(`[sync] 任务 #${jobId} 已自动导入 Sheet：系列 ${r.upserted} 行（${syncStart}~${syncEnd}）`);
       }
     } else {
       const allCount = (

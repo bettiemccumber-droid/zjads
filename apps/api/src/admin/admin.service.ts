@@ -8,6 +8,7 @@ import { ReportsService } from '../reports/reports.service';
 import { SyncService } from '../sync/sync.service';
 import {
   buildAffiliateSnapshot,
+  buildSheetSnapshot,
   pickLatestJobByUser,
   type SyncJobPick,
 } from './collection-snapshot.util';
@@ -129,18 +130,18 @@ export class AdminService {
     ]);
 
     const lastJobByUser = pickLatestJobByUser(allJobs as SyncJobPick[]);
-    const lastSourceByUser = new Map<number, { name: string; updatedAt: Date }>();
+    const sourcesByUser = new Map<number, Array<{ name: string; updatedAt: Date }>>();
     for (const s of allSources) {
-      if (!lastSourceByUser.has(s.ownerUserId)) {
-        lastSourceByUser.set(s.ownerUserId, { name: s.name, updatedAt: s.updatedAt });
-      }
+      const list = sourcesByUser.get(s.ownerUserId) ?? [];
+      list.push({ name: s.name, updatedAt: s.updatedAt });
+      sourcesByUser.set(s.ownerUserId, list);
     }
 
     const rows = [];
     for (const u of users) {
       const lastJob = lastJobByUser.get(u.id);
       const affiliate = buildAffiliateSnapshot(lastJob);
-      const lastSource = lastSourceByUser.get(u.id);
+      const sheet = buildSheetSnapshot(sourcesByUser.get(u.id) ?? []);
 
       const [channelCount, adSourceCount, orderAgg, report, lastOrder] = await Promise.all([
         this.prisma.channelAccount.count({ where: { ownerUserId: u.id, isActive: true } }),
@@ -180,8 +181,10 @@ export class AdminService {
         lastSyncProgress: affiliate.progress,
         lastSyncError: affiliate.errorMessage,
         lastSyncJobId: affiliate.jobId,
-        lastSheetName: lastSource?.name ?? null,
-        lastSheetImportAt: lastSource?.updatedAt.toISOString() ?? null,
+        lastSheetName: sheet.sourceName,
+        lastSheetImportAt: sheet.importedAt,
+        sheetNames: sheet.sheetNames,
+        lastSheetNameSummary: sheet.nameSummary,
         lastOrderCollectedAt: lastOrder?.collectedAt.toISOString() ?? null,
       });
     }
@@ -239,7 +242,7 @@ export class AdminService {
       const lastJob = lastJobByUser.get(u.id);
       const affiliate = buildAffiliateSnapshot(lastJob);
       const sources = sourcesByUser.get(u.id) ?? [];
-      const lastSource = sources[0];
+      const sheet = buildSheetSnapshot(sources);
 
       const channels = await this.prisma.channelAccount.count({
         where: { ownerUserId: u.id, isActive: true },
@@ -258,8 +261,10 @@ export class AdminService {
         lastSyncProgress: affiliate.progress,
         lastSyncError: affiliate.errorMessage,
         lastSyncJobId: affiliate.jobId,
-        lastSheetImportAt: lastSource?.updatedAt.toISOString() ?? null,
-        lastSheetName: lastSource?.name ?? null,
+        lastSheetImportAt: sheet.importedAt,
+        lastSheetName: sheet.sourceName,
+        sheetNames: sheet.sheetNames,
+        lastSheetNameSummary: sheet.nameSummary,
       });
     }
     return rows;
@@ -359,22 +364,50 @@ export class AdminService {
     };
   }
 
-  /** 批量导入全员 Google Sheet 广告数据 */
+  /** 批量导入全员 Google Sheet 广告数据（按员工遍历全部 Sheet） */
   async batchImportSheets(
-    admin: AuthUser,
+    _admin: AuthUser,
     startDate?: string,
     endDate?: string,
     userIds?: number[],
   ) {
-    const where: { isActive: boolean; ownerUserId?: { in: number[] } } = { isActive: true };
-    if (userIds?.length) where.ownerUserId = { in: userIds };
+    let targetUserIds: number[];
+    if (userIds?.length) {
+      targetUserIds = userIds;
+    } else {
+      const rows = await this.prisma.adDataSource.findMany({
+        where: { isActive: true },
+        select: { ownerUserId: true },
+        distinct: ['ownerUserId'],
+      });
+      targetUserIds = rows.map((r) => r.ownerUserId);
+    }
 
-    const sources = await this.prisma.adDataSource.findMany({
-      where,
-      include: { ownerUser: { select: { username: true } } },
+    const users = await this.prisma.user.findMany({
+      where: { id: { in: targetUserIds } },
+      select: { id: true, username: true },
     });
+    const usernameById = new Map(users.map((u) => [u.id, u.username]));
 
-    const results: Array<{
+    const byUser: Array<{
+      userId: number;
+      username: string;
+      sheetCount: number;
+      success: number;
+      failed: number;
+      totalUpserted: number;
+      ok: boolean;
+      message?: string;
+      results: Array<{
+        sourceId: number;
+        sourceName: string;
+        ok: boolean;
+        upserted?: number;
+        message?: string;
+      }>;
+    }> = [];
+
+    const flatResults: Array<{
       sourceId: number;
       userId: number;
       username: string;
@@ -384,33 +417,73 @@ export class AdminService {
       message?: string;
     }> = [];
 
-    for (const source of sources) {
-      try {
-        const r = await this.adSources.importFromSource(admin, source.id, startDate, endDate);
-        results.push({
-          sourceId: source.id,
-          userId: source.ownerUserId,
-          username: source.ownerUser.username,
-          sourceName: source.name,
-          ok: true,
-          upserted: r.upserted,
-        });
-      } catch (e) {
-        results.push({
-          sourceId: source.id,
-          userId: source.ownerUserId,
-          username: source.ownerUser.username,
-          sourceName: source.name,
+    for (const ownerUserId of targetUserIds) {
+      const username = usernameById.get(ownerUserId) ?? `#${ownerUserId}`;
+      const batch = await this.adSources.importBatchForOwnerId(ownerUserId, startDate, endDate);
+
+      if (!batch) {
+        byUser.push({
+          userId: ownerUserId,
+          username,
+          sheetCount: 0,
+          success: 0,
+          failed: 0,
+          totalUpserted: 0,
           ok: false,
-          message: e instanceof Error ? e.message : String(e),
+          message: '未配置广告数据源',
+          results: [],
+        });
+        continue;
+      }
+
+      const userOk = batch.success > 0;
+      byUser.push({
+        userId: ownerUserId,
+        username,
+        sheetCount: batch.sheetCount,
+        success: batch.success,
+        failed: batch.failed,
+        totalUpserted: batch.totalUpserted,
+        ok: userOk,
+        results: batch.results.map((r) => ({
+          sourceId: r.sourceId,
+          sourceName: r.sourceName,
+          ok: r.ok,
+          upserted: r.upserted,
+          message: r.message,
+        })),
+      });
+
+      for (const r of batch.results) {
+        flatResults.push({
+          sourceId: r.sourceId,
+          userId: ownerUserId,
+          username,
+          sourceName: r.sourceName,
+          ok: r.ok,
+          upserted: r.upserted,
+          message: r.message,
         });
       }
     }
 
+    const sheetSuccess = flatResults.filter((r) => r.ok).length;
+    const sheetFailed = flatResults.filter((r) => !r.ok).length;
+    const userSuccess = byUser.filter((r) => r.ok).length;
+    const userFailed = byUser.filter((r) => !r.ok).length;
+    const totalUpserted = byUser.reduce((sum, r) => sum + r.totalUpserted, 0);
+
     return {
-      success: results.filter((r) => r.ok).length,
-      failed: results.filter((r) => !r.ok).length,
-      results,
+      userCount: targetUserIds.length,
+      userSuccess,
+      userFailed,
+      sheetSuccess,
+      sheetFailed,
+      totalUpserted,
+      success: sheetSuccess,
+      failed: sheetFailed,
+      results: flatResults,
+      byUser,
     };
   }
 

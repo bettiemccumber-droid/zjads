@@ -10,13 +10,14 @@ import {
   Tag,
   message,
 } from 'antd';
-import dayjs, { Dayjs } from 'dayjs';
+import type { Dayjs } from 'dayjs';
 import { Link } from 'react-router-dom';
 import { api, type ApiResult } from '../../api/client';
 import {
   AffiliateCollectionCell,
   SheetCollectionCell,
 } from '../../components/CollectionStatusCells';
+import { adminDefaultDateRange } from '../../utils/date-range.util';
 
 const { RangePicker } = DatePicker;
 
@@ -34,10 +35,33 @@ interface CollectionRow {
   lastSyncJobId: number | null;
   lastSheetImportAt: string | null;
   lastSheetName: string | null;
+  sheetNames?: string[];
+  lastSheetNameSummary?: string | null;
+}
+
+interface BatchImportResponse {
+  userCount: number;
+  userSuccess: number;
+  userFailed: number;
+  sheetSuccess: number;
+  sheetFailed: number;
+  totalUpserted: number;
+  success: number;
+  failed: number;
+  byUser: Array<{
+    userId: number;
+    username: string;
+    sheetCount: number;
+    success: number;
+    failed: number;
+    totalUpserted: number;
+    ok: boolean;
+    message?: string;
+  }>;
 }
 
 function defaultRange(): [Dayjs, Dayjs] {
-  return [dayjs().subtract(14, 'day'), dayjs().subtract(1, 'day')];
+  return adminDefaultDateRange();
 }
 
 export default function AdminSyncPage() {
@@ -87,20 +111,56 @@ export default function AdminSyncPage() {
     }
   };
 
+  const showBatchImportResult = (data: BatchImportResponse, singleUsername?: string) => {
+    const { userSuccess, userFailed, sheetSuccess, sheetFailed, totalUpserted, byUser } = data;
+    if (singleUsername) {
+      const row = byUser[0];
+      if (!row?.ok) {
+        message.error(row?.message ?? `${singleUsername} Sheet 导入失败`);
+        return;
+      }
+      if (row.failed > 0) {
+        message.warning(
+          `${singleUsername}：${row.success}/${row.sheetCount} 个 Sheet 成功，共 ${row.totalUpserted} 条`,
+        );
+      } else {
+        message.success(
+          `${singleUsername}：已导入 ${row.sheetCount} 个 Sheet，共 ${row.totalUpserted} 条`,
+        );
+      }
+      return;
+    }
+
+    if (sheetFailed === 0) {
+      message.success(
+        `Sheet 导入完成：${userSuccess} 人共 ${sheetSuccess} 个 Sheet，${totalUpserted} 条数据`,
+      );
+    } else {
+      message.warning(
+        `Sheet 导入：${userSuccess} 人成功，${sheetFailed} 个 Sheet 失败${userFailed ? `，${userFailed} 人未导入` : ''}`,
+        6,
+      );
+    }
+  };
+
   const batchImportSheets = async (userIds?: number[]) => {
     const isSingle = userIds?.length === 1;
+    const singleUsername = isSingle
+      ? rows.find((r) => r.userId === userIds![0])?.username
+      : undefined;
     if (isSingle) setImportingUserId(userIds![0]);
     else setImporting(true);
     try {
-      const { data } = await api.post<
-        ApiResult<{ success: number; failed: number; results: unknown[] }>
-      >('/admin/import/sheets/batch', {
-        startDate: range[0].format('YYYY-MM-DD'),
-        endDate: range[1].format('YYYY-MM-DD'),
-        ...(userIds?.length ? { userIds } : {}),
-      });
+      const { data } = await api.post<ApiResult<BatchImportResponse>>(
+        '/admin/import/sheets/batch',
+        {
+          startDate: range[0].format('YYYY-MM-DD'),
+          endDate: range[1].format('YYYY-MM-DD'),
+          ...(userIds?.length ? { userIds } : {}),
+        },
+      );
       if (data.success) {
-        message.success(`Sheet 导入成功 ${data.data.success} 个，失败 ${data.data.failed} 个`);
+        showBatchImportResult(data.data, singleUsername);
         void load();
       } else message.error(data.message);
     } finally {
@@ -124,7 +184,7 @@ export default function AdminSyncPage() {
         showIcon
         style={{ marginBottom: 16 }}
         message="管理员批量采集"
-        description="各员工订单采集完成后，平台会自动导入其 Google Sheet 广告费（同日期区间）。下方表格仍可单独操作。"
+        description="各员工订单采集完成后，平台会自动导入其全部 Google Sheet 广告费（同日期区间）。下方表格仍可单独操作。"
       />
 
       <Card title="快速操作" style={{ marginBottom: 16 }}>
@@ -138,12 +198,12 @@ export default function AdminSyncPage() {
             批量采集（含自动导入 Sheet）
           </Button>
           <Button loading={importing} onClick={() => void batchImportSheets()}>
-            仅导入 Sheet（不重采订单）
+            批量导入全部 Sheet
           </Button>
           <Link to="/admin/ad-sources">管理员工 Sheet →</Link>
         </Space>
         <p style={{ color: '#666', marginTop: 12, marginBottom: 0 }}>
-          Sheet 导入使用上方日期区间过滤；无日期则导入 Sheet 内全部行。
+          Sheet 导入使用上方日期区间过滤，每人会依次导入其全部广告 Sheet；无日期则导入 Sheet 内全部行。
         </p>
       </Card>
 
@@ -204,7 +264,7 @@ export default function AdminSyncPage() {
                     disabled={r.adSourceCount === 0}
                     onClick={() => void batchImportSheets([r.userId])}
                   >
-                    导入 Sheet
+                    导入全部 Sheet{r.adSourceCount > 1 ? ` (${r.adSourceCount})` : ''}
                   </Button>
                   <Link
                     to={`/admin/ad-sources?userId=${r.userId}&username=${encodeURIComponent(r.username)}`}

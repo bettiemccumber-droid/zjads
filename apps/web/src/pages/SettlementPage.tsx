@@ -17,10 +17,15 @@ import {
   Alert,
 } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
-import dayjs, { Dayjs } from 'dayjs';
+import type { Dayjs } from 'dayjs';
 import { api, type ApiResult } from '../api/client';
 import CommissionMonitor from '../components/CommissionMonitor';
 import { useAuth } from '../hooks/useAuth';
+import {
+  adminDefaultDateRange,
+  employeeDefaultDateRange,
+  lastNDaysToYesterday,
+} from '../utils/date-range.util';
 
 const { RangePicker } = DatePicker;
 
@@ -80,10 +85,6 @@ const DATE_PRESETS: { label: string; days: number }[] = [
   { label: '近30天', days: 30 },
 ];
 
-function defaultRange(): [Dayjs, Dayjs] {
-  return [dayjs().subtract(30, 'day'), dayjs().subtract(1, 'day')];
-}
-
 function money(v: number) {
   return `$${Number(v).toFixed(2)}`;
 }
@@ -94,7 +95,9 @@ function pct(v: number) {
 
 export default function SettlementPage() {
   const { isAdmin } = useAuth();
-  const [range, setRange] = useState<[Dayjs, Dayjs]>(defaultRange);
+  const [range, setRange] = useState<[Dayjs, Dayjs]>(() =>
+    isAdmin ? adminDefaultDateRange() : employeeDefaultDateRange(),
+  );
   const [stats, setStats] = useState<SettlementStats>({
     totalOrders: 0,
     totalCommission: 0,
@@ -205,7 +208,7 @@ export default function SettlementPage() {
   }, [items, merchantSearch]);
 
   const applyPreset = (days: number) => {
-    setRange([dayjs().subtract(days, 'day'), dayjs().subtract(1, 'day')]);
+    setRange(lastNDaysToYesterday(days));
   };
 
   const settlementColumns: ColumnsType<SettlementRow> = [

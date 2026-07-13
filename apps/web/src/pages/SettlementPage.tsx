@@ -352,7 +352,7 @@ export default function SettlementPage() {
           }
         />
       )}
-      <Space wrap style={{ marginBottom: 16 }}>
+      <Space wrap style={{ marginBottom: 16 }} align="center">
         {isAdmin && (
           <Select
             style={{ width: 180 }}
@@ -370,6 +370,17 @@ export default function SettlementPage() {
             {p.label}
           </Button>
         ))}
+        <SettlementSyncCollect
+          inline
+          startDate={range[0].format('YYYY-MM-DD')}
+          endDate={range[1].format('YYYY-MM-DD')}
+          platformCode={platformFilter}
+          channelAccountId={channelAccountFilter}
+          targetUserId={isAdmin ? scopeUserId : undefined}
+          isAdmin={isAdmin}
+          companyWideScope={scopeUserId == null && isAdmin}
+          onCompleted={loadSettlement}
+        />
       </Space>
 
       <CommissionMonitor
@@ -430,16 +441,6 @@ export default function SettlementPage() {
       )}
 
       <Card title={scopeUserId == null && isAdmin ? '结算查询（全公司）' : '结算查询'}>
-        <SettlementSyncCollect
-          startDate={range[0].format('YYYY-MM-DD')}
-          endDate={range[1].format('YYYY-MM-DD')}
-          platformCode={platformFilter}
-          channelAccountId={channelAccountFilter}
-          targetUserId={isAdmin ? scopeUserId : undefined}
-          isAdmin={isAdmin}
-          companyWideScope={scopeUserId == null && isAdmin}
-          onCompleted={loadSettlement}
-        />
         <Space wrap style={{ marginBottom: 16 }}>
           <Select
             style={{ width: 160 }}
@@ -466,7 +467,7 @@ export default function SettlementPage() {
               setHighlightMerchantId(null);
             }}
           />
-          <Button type="primary" loading={loading} onClick={loadSettlement}>
+          <Button loading={loading} onClick={loadSettlement}>
             刷新结算
           </Button>
         </Space>

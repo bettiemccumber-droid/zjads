@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Button, Checkbox, Space, Typography, message } from 'antd';
+import { SyncOutlined } from '@ant-design/icons';
+import { Button, Checkbox, Space, Tooltip, Typography, message } from 'antd';
 import { api, type ApiResult } from '../api/client';
 import SyncJobStatus, { type SyncJobDetail } from './SyncJobStatus';
 
@@ -21,6 +22,8 @@ export interface SettlementSyncCollectProps {
   isAdmin: boolean;
   companyWideScope: boolean;
   onCompleted?: () => void;
+  /** 与日期栏等同排；任务进度折行显示在工具栏下方 */
+  inline?: boolean;
 }
 
 /**
@@ -35,6 +38,7 @@ export default function SettlementSyncCollect({
   isAdmin,
   companyWideScope,
   onCompleted,
+  inline = false,
 }: SettlementSyncCollectProps) {
   const [syncAccounts, setSyncAccounts] = useState<SyncAccountPick[]>([]);
   const [includeClicks, setIncludeClicks] = useState(false);
@@ -228,35 +232,68 @@ export default function SettlementSyncCollect({
 
   const jobActive = syncJob != null && ['pending', 'running'].includes(syncJob.status);
 
-  return (
-    <div style={{ marginBottom: 16 }}>
-      <Space wrap align="center">
+  const collectHint = collectBlocked
+    ? '全公司视图请先选员工再采集'
+    : `将拉取 ${startDate} ~ ${endDate} · ${collectScopeLabel}（更新拒付/结算状态）`;
+
+  const collectButton = (
+    <Tooltip title={collectHint}>
+      <span>
         <Button
-          type="default"
+          type="primary"
+          size="large"
+          icon={<SyncOutlined />}
           loading={syncing || jobActive}
           disabled={collectBlocked || jobActive}
           onClick={() => void startCollect()}
         >
           重新采集
         </Button>
-        <Checkbox
-          checked={includeClicks}
-          disabled={jobActive}
-          onChange={(e) => setIncludeClicks(e.target.checked)}
-        >
-          含联盟点击
-        </Checkbox>
-        <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-          {collectBlocked
-            ? '全公司视图请先选员工再采集'
-            : `将拉取 ${startDate} ~ ${endDate} · ${collectScopeLabel}（更新拒付/结算状态）`}
-        </Typography.Text>
-      </Space>
+      </span>
+    </Tooltip>
+  );
+
+  const clicksCheckbox = (
+    <Checkbox
+      checked={includeClicks}
+      disabled={jobActive}
+      onChange={(e) => setIncludeClicks(e.target.checked)}
+    >
+      含联盟点击
+    </Checkbox>
+  );
+
+  const jobStatus =
+    syncJob != null ? (
       <SyncJobStatus
         job={syncJob}
         onCancel={jobActive ? cancelJob : undefined}
         cancelling={cancelling}
       />
+    ) : null;
+
+  if (inline) {
+    return (
+      <>
+        {collectButton}
+        {clicksCheckbox}
+        {jobStatus ? (
+          <div style={{ flexBasis: '100%', width: '100%' }}>{jobStatus}</div>
+        ) : null}
+      </>
+    );
+  }
+
+  return (
+    <div style={{ marginBottom: 16 }}>
+      <Space wrap align="center">
+        {collectButton}
+        {clicksCheckbox}
+        <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+          {collectHint}
+        </Typography.Text>
+      </Space>
+      {jobStatus}
     </div>
   );
 }

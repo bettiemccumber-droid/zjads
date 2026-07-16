@@ -7,6 +7,10 @@ import {
   filterCampaignDailyByGroupStatus,
   resolveCampaignStatusMode,
 } from '../common/campaign-status.util';
+import {
+  campaignAffiliateAttributionKey,
+  campaignCoversMerchantAffiliate,
+} from '../common/campaign-affiliate-attribution.util';
 import { parseCampaignName, inferPlatformNameFromAlias } from '../common/campaign-name.util';
 import { resolveCampaignGroupKey } from '../common/campaign-group.util';
 import { suggestOperation } from '../common/operation-suggest.util';
@@ -1385,9 +1389,7 @@ export class ReportsService {
       if (pipe < 0) continue;
       const merchantId = merchantKey.slice(0, pipe);
       const alias = merchantKey.slice(pipe + 1);
-      const hasCampaign = [...map.values()].some(
-        (r) => r.merchantId === merchantId && r.affiliateAlias === alias,
-      );
+      const hasCampaign = campaignCoversMerchantAffiliate([...map.values()], merchantId, alias);
       if (!hasCampaign) orphanMids.push(merchantId);
     }
 
@@ -1412,10 +1414,7 @@ export class ReportsService {
       if (pipe < 0) continue;
       const merchantId = merchantKey.slice(0, pipe);
       const alias = merchantKey.slice(pipe + 1);
-      const hasCampaign = [...map.values()].some(
-        (r) => r.merchantId === merchantId && r.affiliateAlias === alias,
-      );
-      if (hasCampaign) continue;
+      if (campaignCoversMerchantAffiliate([...map.values()], merchantId, alias)) continue;
 
       const label = nameByMid.get(merchantId) || `商家 ${merchantId}`;
       const orphanCampaignId = `orphan|${merchantId}|${alias}`;
@@ -1471,7 +1470,7 @@ export class ReportsService {
 
     rows.forEach((row, idx) => {
       if (row.orderCount <= 0 && row.commission <= 0) return;
-      const key = this.campaignAffiliateAttributionKey(row.merchantId, row.affiliateAlias);
+      const key = campaignAffiliateAttributionKey(row.merchantId, row.affiliateAlias);
       if (!key) return;
       const prevIdx = winnerByKey.get(key);
       if (prevIdx === undefined || this.campaignWinsAffiliateAttribution(rows[prevIdx], row)) {
@@ -1480,7 +1479,7 @@ export class ReportsService {
     });
 
     return rows.map((row, idx) => {
-      const key = this.campaignAffiliateAttributionKey(row.merchantId, row.affiliateAlias);
+      const key = campaignAffiliateAttributionKey(row.merchantId, row.affiliateAlias);
       const winnerIdx = key ? winnerByKey.get(key) : undefined;
       if (winnerIdx === undefined || winnerIdx === idx) return row;
 
@@ -1495,15 +1494,6 @@ export class ReportsService {
         operationSuggestion: suggestOperation(row.cost > 0 ? -1 : 0, 0, row.cost),
       };
     });
-  }
-
-  /** PM 按 merchantId；LH 等按 merchantId + alias */
-  private campaignAffiliateAttributionKey(merchantId: string, alias: string): string {
-    if (!merchantId) return '';
-    const a = (alias || '').toLowerCase();
-    if (a.startsWith('pm')) return `pm:${merchantId}`;
-    if (a.startsWith('rw')) return `rw:${merchantId}`;
-    return `${merchantId}|${a}`;
   }
 
   private campaignWinsAffiliateAttribution(

@@ -238,7 +238,7 @@ export default function AdminSyncPage() {
           </Button>
           <Popconfirm
             title="清理历史采集记录？"
-            description="仅删除任务日志（sync_jobs），联盟订单、Sheet 广告费不受影响。每人保留最近 30 条，进行中的任务不删。"
+            description="仅删除任务日志（sync_jobs），联盟订单、Sheet 广告费不受影响。每人保留最近 30 条，进行中任务不删。任务 ID 上限 1000，满后自动从 #1 重新编号。"
             okText="确认清理"
             cancelText="取消"
             onConfirm={() => void purgeSyncHistory()}

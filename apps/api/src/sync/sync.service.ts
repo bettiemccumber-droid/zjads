@@ -12,6 +12,7 @@ import { CollectorsService } from '../collectors/collectors.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { AdSourcesService } from '../ad-sources/ad-sources.service';
 import { AlertsService } from '../alerts/alerts.service';
+import { ensureSyncJobIdCapacity } from './sync-job-id.util';
 
 /** 超过此时长仍为 running 视为卡住（服务重启或点击采集异常） */
 const STALE_JOB_MS = 3 * 60 * 60 * 1000;
@@ -99,6 +100,8 @@ export class SyncService implements OnModuleInit {
       );
     }
 
+    await ensureSyncJobIdCapacity(this.prisma);
+
     const job = await this.prisma.syncJob.create({
       data: {
         ownerUserId: user.id,
@@ -146,6 +149,8 @@ export class SyncService implements OnModuleInit {
     if (!accounts.length) {
       throw new BadRequestException('该用户没有可采集的已启用平台账号');
     }
+
+    await ensureSyncJobIdCapacity(this.prisma);
 
     const job = await this.prisma.syncJob.create({
       data: {

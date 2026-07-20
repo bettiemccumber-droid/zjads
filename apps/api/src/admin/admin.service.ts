@@ -12,6 +12,7 @@ import {
   pickLatestJobByUser,
   type SyncJobPick,
 } from './collection-snapshot.util';
+import { alignSyncJobAutoIncrement } from '../sync/sync-job-id.util';
 
 export interface AdminDateRange {
   startDate: string;
@@ -367,6 +368,8 @@ export class AdminService {
       });
       deletedJobs += result.count;
     }
+
+    await alignSyncJobAutoIncrement(this.prisma);
 
     return { deletedJobs, keptJobs, keepPerUser };
   }

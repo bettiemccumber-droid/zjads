@@ -8,7 +8,8 @@ import {
 import { CommissionBreakdown } from '../common/order-commission-buckets.util';
 import { parseRwPerformanceCalendarDay } from '../common/affiliate-order-date.util';
 import {
-  fetchRewardooCommissionData,
+  fetchRewardooTransactionDetailPages,
+  isRw504Error,
   RW_TRANSACTION_DETAILS_OP,
 } from './rewardoo-api.util';
 import { NormalizedOrder } from './types';
@@ -245,7 +246,7 @@ export function buildRwDailyMetricsFromDetailRows(
 }
 
 /**
- * 拉取 Rewardoo 佣金（优先 transaction_details，504 时回退 commission/performance）
+ * 拉取 Rewardoo 佣金（medium/transaction_details，504 时按天拆分重试）
  */
 export async function fetchRewardooCommissions(
   apiToken: string,
@@ -253,29 +254,27 @@ export async function fetchRewardooCommissions(
   endDate: string,
   onProgress?: (message: string) => void | Promise<void>,
 ): Promise<RwFetchBundle> {
-  const result = await fetchRewardooCommissionData(
-    apiToken,
-    startDate,
-    endDate,
-    onProgress,
-  );
-
-  if (!result.rows.length) {
-    throw new Error(
-      `Rewardoo 采集失败：已尝试 ${result.triedSources.join(' → ')}，均无可用数据`,
+  const source = `medium/${RW_TRANSACTION_DETAILS_OP}`;
+  await onProgress?.(`RW ${source} 拉取中…`);
+  try {
+    const rows = await fetchRewardooTransactionDetailPages(
+      apiToken,
+      startDate,
+      endDate,
+      async (chunkIndex, totalChunks) => {
+        await onProgress?.(`RW ${source} ${chunkIndex}/${totalChunks} 段…`);
+      },
     );
+    return { source, rows: rows as RwCommissionRow[], triedSources: [source] };
+  } catch (err) {
+    if (isRw504Error(err)) {
+      const msg = err instanceof Error ? err.message : String(err);
+      throw new Error(
+        `${msg}（Rewardoo 平台 nginx 超时，非 token/账号配置问题；请缩短区间或 10 分钟后重试）`,
+      );
+    }
+    throw err;
   }
-
-  const primary = `medium/${RW_TRANSACTION_DETAILS_OP}`;
-  if (result.source !== primary) {
-    await onProgress?.(`RW 已回退至 ${result.source}（${primary} 不可用或超时）`);
-  }
-
-  return {
-    source: result.source,
-    rows: result.rows as RwCommissionRow[],
-    triedSources: result.triedSources,
-  };
 }
 
 /**

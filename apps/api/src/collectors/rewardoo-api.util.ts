@@ -103,11 +103,11 @@ async function throttleRwRequest() {
 }
 
 /** TransactionDetails 单次查询建议跨度（大区间易触发 nginx 504） */
-export const RW_TRANSACTION_DETAILS_MAX_DAYS = 7;
+export const RW_TRANSACTION_DETAILS_MAX_DAYS = 3;
 
 /** 504/超时等瞬时故障最多重试次数 */
-const RW_TRANSIENT_MAX_ATTEMPTS = 5;
-const RW_TRANSIENT_RETRY_BASE_MS = 10000;
+const RW_TRANSIENT_MAX_ATTEMPTS = 3;
+const RW_TRANSIENT_RETRY_BASE_MS = 8000;
 
 function sleep(ms: number) {
   return new Promise((r) => setTimeout(r, ms));
@@ -129,6 +129,23 @@ function isRwTransientFailure(body: unknown, err: unknown): boolean {
     return /504 Gateway Time-out|502 Bad Gateway|503 Service Unavailable/i.test(body);
   }
   return false;
+}
+
+/** 错误信息是否为 Rewardoo/nginx 504 超时 */
+export function isRw504Error(err: unknown): boolean {
+  const msg = err instanceof Error ? err.message : String(err);
+  return /504 Gateway Time-out|502 Bad Gateway|503 Service Unavailable/i.test(msg);
+}
+
+function listRwDateStrings(begin: string, end: string): string[] {
+  const out: string[] = [];
+  const cur = new Date(`${begin}T00:00:00.000Z`);
+  const endD = new Date(`${end}T00:00:00.000Z`);
+  while (cur <= endD) {
+    out.push(cur.toISOString().slice(0, 10));
+    cur.setUTCDate(cur.getUTCDate() + 1);
+  }
+  return out;
 }
 
 /**
@@ -698,7 +715,7 @@ export async function fetchRewardooTransactionDetailPages(
   return all;
 }
 
-async function fetchRewardooTransactionDetailChunk(
+async function fetchRewardooTransactionDetailChunkPaged(
   apiToken: string,
   beginDate: string,
   endDate: string,
@@ -741,6 +758,38 @@ async function fetchRewardooTransactionDetailChunk(
   }
 
   return all;
+}
+
+/**
+ * 拉取一段 transaction_details；504 时自动拆成按天请求（避免整段超时）
+ */
+async function fetchRewardooTransactionDetailChunk(
+  apiToken: string,
+  beginDate: string,
+  endDate: string,
+): Promise<unknown[]> {
+  try {
+    return await fetchRewardooTransactionDetailChunkPaged(apiToken, beginDate, endDate);
+  } catch (err) {
+    if (!isRw504Error(err)) throw err;
+    const days = listRwDateStrings(beginDate, endDate);
+    if (days.length <= 1) throw err;
+
+    const all: unknown[] = [];
+    for (const day of days) {
+      try {
+        all.push(...(await fetchRewardooTransactionDetailChunkPaged(apiToken, day, day)));
+      } catch (dayErr) {
+        if (isRw504Error(dayErr)) {
+          throw new Error(
+            `Rewardoo medium/transaction_details 平台超时（504），${day} 仍失败，请 10 分钟后重试或缩短采集区间`,
+          );
+        }
+        throw dayErr;
+      }
+    }
+    return all;
+  }
 }
 
 /**

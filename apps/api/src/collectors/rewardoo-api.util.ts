@@ -102,8 +102,30 @@ async function throttleRwRequest() {
   lastRequestAt = Date.now();
 }
 
+/** 504/超时等瞬时故障最多重试次数 */
+const RW_TRANSIENT_MAX_ATTEMPTS = 3;
+const RW_TRANSIENT_RETRY_BASE_MS = 8000;
+
 function sleep(ms: number) {
   return new Promise((r) => setTimeout(r, ms));
+}
+
+/** Rewardoo 网关/nginx 504 或网络超时，可重试 */
+function isRwTransientFailure(body: unknown, err: unknown): boolean {
+  if (axios.isAxiosError(err)) {
+    const code = err.code;
+    const status = err.response?.status;
+    if (code === 'ECONNABORTED' || code === 'ETIMEDOUT' || code === 'ERR_NETWORK') return true;
+    if (status === 502 || status === 503 || status === 504) return true;
+    const respData = err.response?.data;
+    if (typeof respData === 'string' && /Gateway Time-out|502 Bad Gateway|503 Service/i.test(respData)) {
+      return true;
+    }
+  }
+  if (typeof body === 'string') {
+    return /504 Gateway Time-out|502 Bad Gateway|503 Service Unavailable/i.test(body);
+  }
+  return false;
 }
 
 /**
@@ -260,34 +282,50 @@ function extractRwRowsWithSummaries(body: unknown): unknown[] {
 }
 
 /**
- * 调用 Rewardoo API（POST x-www-form-urlencoded）
+ * 调用 Rewardoo API（POST x-www-form-urlencoded）；504/超时自动重试
  */
 export async function postRewardooApi(
   mod: string,
   op: string,
   params: Record<string, string>,
 ): Promise<ReturnType<typeof parseRwApiEnvelope>> {
-  await throttleRwRequest();
+  const url = `${RW_API_BASE}?mod=${encodeURIComponent(mod)}&op=${encodeURIComponent(op)}`;
+  const body = new URLSearchParams(params).toString();
+  let lastErr: unknown;
 
-  const { data } = await axios.post<RwApiEnvelope | string>(
-    `${RW_API_BASE}?mod=${encodeURIComponent(mod)}&op=${encodeURIComponent(op)}`,
-    new URLSearchParams(params).toString(),
-    {
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      timeout: 120000,
-      validateStatus: () => true,
-    },
-  );
+  for (let attempt = 1; attempt <= RW_TRANSIENT_MAX_ATTEMPTS; attempt += 1) {
+    await throttleRwRequest();
+    try {
+      const { data } = await axios.post<RwApiEnvelope | string>(url, body, {
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        timeout: 120000,
+        validateStatus: () => true,
+      });
 
-  if (typeof data === 'string') {
-    const msg = data.trim();
-    if (/token error/i.test(msg)) {
-      return { code: 1001, message: msg, rows: [], offset: null, pageSize: null, totalPages: null };
+      if (typeof data === 'string') {
+        const msg = data.trim();
+        if (isRwTransientFailure(data, null) && attempt < RW_TRANSIENT_MAX_ATTEMPTS) {
+          await sleep(RW_TRANSIENT_RETRY_BASE_MS * attempt);
+          continue;
+        }
+        if (/token error/i.test(msg)) {
+          return { code: 1001, message: msg, rows: [], offset: null, pageSize: null, totalPages: null };
+        }
+        return { code: -1, message: msg, rows: [], offset: null, pageSize: null, totalPages: null };
+      }
+
+      return parseRwApiEnvelope(data);
+    } catch (err) {
+      lastErr = err;
+      if (isRwTransientFailure(undefined, err) && attempt < RW_TRANSIENT_MAX_ATTEMPTS) {
+        await sleep(RW_TRANSIENT_RETRY_BASE_MS * attempt);
+        continue;
+      }
+      throw err;
     }
-    return { code: -1, message: msg, rows: [], offset: null, pageSize: null, totalPages: null };
   }
 
-  return parseRwApiEnvelope(data);
+  throw lastErr instanceof Error ? lastErr : new Error(String(lastErr ?? 'Rewardoo API 请求失败'));
 }
 
 /** @deprecated 使用 postRewardooApi('commission', op, params) */

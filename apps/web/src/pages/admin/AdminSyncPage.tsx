@@ -5,6 +5,7 @@ import {
   Card,
   Checkbox,
   DatePicker,
+  Popconfirm,
   Space,
   Table,
   Tag,
@@ -73,6 +74,24 @@ export default function AdminSyncPage() {
   const [importing, setImporting] = useState(false);
   const [importingUserId, setImportingUserId] = useState<number | null>(null);
   const [includeClicks, setIncludeClicks] = useState(false);
+  const [purging, setPurging] = useState(false);
+
+  const purgeSyncHistory = async () => {
+    setPurging(true);
+    try {
+      const { data } = await api.post<
+        ApiResult<{ deletedJobs: number; keptJobs: number; keepPerUser: number }>
+      >('/admin/sync-jobs/purge', { keepPerUser: 30 });
+      if (data.success) {
+        message.success(data.message);
+        void load();
+      } else {
+        message.error(data.message);
+      }
+    } finally {
+      setPurging(false);
+    }
+  };
 
   const load = async () => {
     setLoading(true);
@@ -217,6 +236,17 @@ export default function AdminSyncPage() {
           <Button size="small" onClick={load}>
             刷新
           </Button>
+          <Popconfirm
+            title="清理历史采集记录？"
+            description="仅删除任务日志（sync_jobs），联盟订单、Sheet 广告费不受影响。每人保留最近 30 条，进行中的任务不删。"
+            okText="确认清理"
+            cancelText="取消"
+            onConfirm={() => void purgeSyncHistory()}
+          >
+            <Button size="small" danger loading={purging}>
+              清理历史采集记录
+            </Button>
+          </Popconfirm>
         </Space>
         <Table
           rowKey="userId"

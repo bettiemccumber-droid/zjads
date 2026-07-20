@@ -1,5 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import { UserRole } from '@prisma/client';
+import { SyncJobStatus, UserRole } from '@prisma/client';
 import { AdSourcesService } from '../ad-sources/ad-sources.service';
 import { AuthUser } from '../common/ownership.util';
 import { resolveOrderCommissionBuckets } from '../common/order-commission-buckets.util';
@@ -313,6 +313,62 @@ export class AdminService {
         errorMessage: item.errorMessage,
       })),
     }));
+  }
+
+  /**
+   * 清理历史采集任务记录（仅 sync_jobs / sync_job_items，不影响联盟订单与 Sheet 数据）
+   * @param keepPerUser 每位员工保留最近 N 条（不含 pending/running）
+   */
+  async purgeSyncJobHistory(opts: { keepPerUser?: number; userId?: number } = {}) {
+    await this.sync.recoverStaleJobs();
+
+    const keepPerUser = Math.max(5, Math.min(opts.keepPerUser ?? 30, 100));
+    const activeStatuses: SyncJobStatus[] = [SyncJobStatus.pending, SyncJobStatus.running];
+
+    const userIds = opts.userId
+      ? [opts.userId]
+      : (
+          await this.prisma.user.findMany({
+            where: { isActive: true, role: { not: UserRole.ADMIN } },
+            select: { id: true },
+          })
+        ).map((u) => u.id);
+
+    let deletedJobs = 0;
+    let keptJobs = 0;
+
+    for (const ownerUserId of userIds) {
+      const jobs = await this.prisma.syncJob.findMany({
+        where: { ownerUserId },
+        orderBy: { createdAt: 'desc' },
+        select: { id: true, status: true },
+      });
+
+      const keepIds = new Set<number>();
+      let finishedKept = 0;
+
+      for (const job of jobs) {
+        if (activeStatuses.includes(job.status)) {
+          keepIds.add(job.id);
+          continue;
+        }
+        if (finishedKept < keepPerUser) {
+          keepIds.add(job.id);
+          finishedKept += 1;
+        }
+      }
+
+      keptJobs += keepIds.size;
+      const deleteIds = jobs.filter((j) => !keepIds.has(j.id)).map((j) => j.id);
+      if (deleteIds.length === 0) continue;
+
+      const result = await this.prisma.syncJob.deleteMany({
+        where: { id: { in: deleteIds } },
+      });
+      deletedJobs += result.count;
+    }
+
+    return { deletedJobs, keptJobs, keepPerUser };
   }
 
   /** 批量为所有员工创建联盟订单采集任务 */

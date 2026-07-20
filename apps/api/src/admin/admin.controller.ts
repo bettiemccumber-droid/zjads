@@ -43,6 +43,18 @@ class BatchImportDto {
   userIds?: number[];
 }
 
+class PurgeSyncJobsDto {
+  /** 每位员工保留最近 N 条已完成/失败记录（默认 30） */
+  @IsOptional()
+  @IsInt()
+  keepPerUser?: number;
+
+  /** 仅清理指定员工 */
+  @IsOptional()
+  @IsInt()
+  userId?: number;
+}
+
 class MerchantAnalysisQuery extends AdminDateQuery {
   @IsOptional()
   @IsString()
@@ -129,5 +141,17 @@ export class AdminController {
           : result.byUser[0]?.message ?? 'Sheet 导入失败'
         : `批量 Sheet 导入：${result.userSuccess} 人成功，共 ${result.sheetSuccess} 个 Sheet`;
     return ok(result, msg);
+  }
+
+  @Post('sync-jobs/purge')
+  async purgeSyncJobs(@Body() dto: PurgeSyncJobsDto) {
+    const result = await this.admin.purgeSyncJobHistory({
+      keepPerUser: dto.keepPerUser,
+      userId: dto.userId,
+    });
+    return ok(
+      result,
+      `已清理 ${result.deletedJobs} 条历史采集记录（每人保留最近 ${result.keepPerUser} 条，进行中任务不删）`,
+    );
   }
 }

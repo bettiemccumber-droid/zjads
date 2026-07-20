@@ -142,6 +142,8 @@ const campaignColumns = [
     dataIndex: 'roi',
     width: 64,
     align: 'right' as const,
+    defaultSortOrder: 'descend' as const,
+    sorter: (a: CampaignRow, b: CampaignRow) => a.roi - b.roi,
     render: (v: number) => <span style={{ color: roiColor(v), fontWeight: 600 }}>{v.toFixed(2)}</span>,
   },
 ];
@@ -158,6 +160,7 @@ export default function AdminMerchantAnalysis({
   const [searchInput, setSearchInput] = useState('');
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(10);
+  const [sortBy, setSortBy] = useState<'roi' | 'commission'>('roi');
   const [loading, setLoading] = useState(false);
   const [exporting, setExporting] = useState(false);
   const [data, setData] = useState<MerchantAnalysisData | null>(null);
@@ -166,7 +169,7 @@ export default function AdminMerchantAnalysis({
     setLoading(true);
     try {
       const { data: res } = await api.get<ApiResult<MerchantAnalysisData>>('/admin/merchant-analysis', {
-        params: { startDate, endDate, search, page, pageSize },
+        params: { startDate, endDate, search, page, pageSize, sortBy },
       });
       if (res.success) setData(res.data);
     } finally {
@@ -174,7 +177,7 @@ export default function AdminMerchantAnalysis({
     }
     // startDate/endDate 随「查询」刷新，不单独作为依赖以免改日期即请求
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [search, page, pageSize]);
+  }, [search, page, pageSize, sortBy]);
 
   useEffect(() => {
     void load();
@@ -182,7 +185,7 @@ export default function AdminMerchantAnalysis({
 
   useEffect(() => {
     setPage(1);
-  }, [search, startDate, endDate]);
+  }, [search, startDate, endDate, sortBy]);
 
   const handleSearch = () => {
     setSearch(searchInput.trim());
@@ -194,7 +197,7 @@ export default function AdminMerchantAnalysis({
     setExporting(true);
     try {
       const { data: res } = await api.get<ApiResult<MerchantAnalysisData>>('/admin/merchant-analysis', {
-        params: { startDate, endDate, search, all: '1' },
+        params: { startDate, endDate, search, all: '1', sortBy },
       });
       if (!res.success || !res.data.items.length) {
         message.warning('暂无数据可导出');
@@ -226,6 +229,18 @@ export default function AdminMerchantAnalysis({
             {Math.min(data.page * data.pageSize, data.total)} 条
           </span>
         )}
+        <Select
+          value={sortBy}
+          style={{ width: 140 }}
+          options={[
+            { value: 'roi', label: '按 ROI 排序' },
+            { value: 'commission', label: '按佣金排序' },
+          ]}
+          onChange={(v) => {
+            setSortBy(v as 'roi' | 'commission');
+            setPage(1);
+          }}
+        />
         <Select
           value={pageSize}
           style={{ width: 120, marginLeft: 'auto' }}

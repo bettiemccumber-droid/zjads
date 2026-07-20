@@ -612,11 +612,19 @@ export class AdminService {
    */
   async merchantAnalysis(
     q: AdminDateRange,
-    opts: { search?: string; page?: number; pageSize?: number; exportAll?: boolean } = {},
+    opts: {
+      search?: string;
+      page?: number;
+      pageSize?: number;
+      exportAll?: boolean;
+      /** 商家排序：roi（默认）| commission */
+      sortBy?: 'roi' | 'commission';
+    } = {},
   ) {
     const page = Math.max(1, opts.page ?? 1);
     const pageSize = Math.min(50, Math.max(5, opts.pageSize ?? 10));
     const search = (opts.search ?? '').trim().toLowerCase();
+    const sortBy = opts.sortBy === 'commission' ? 'commission' : 'roi';
 
     const employees = await this.prisma.user.findMany({
       where: { isActive: true, role: { not: UserRole.ADMIN } },
@@ -715,7 +723,7 @@ export class AdminService {
 
     let merchants = [...merchantMap.values()].map((m) => {
       const campaigns = this.mergeMerchantCampaignRows(m.campaigns).sort(
-        (a, b) => b.commission - a.commission || b.cost - a.cost,
+        (a, b) => b.roi - a.roi || b.commission - a.commission || b.cost - a.cost,
       );
       const totalBudget = campaigns.reduce((s, c) => s + c.dailyBudget, 0);
       const totalCost = campaigns.reduce((s, c) => s + c.cost, 0);
@@ -735,7 +743,15 @@ export class AdminService {
       };
     });
 
-    merchants.sort((a, b) => b.totalCommission - a.totalCommission || b.totalCost - a.totalCost);
+    if (sortBy === 'commission') {
+      merchants.sort(
+        (a, b) => b.totalCommission - a.totalCommission || b.roi - a.roi || b.totalCost - a.totalCost,
+      );
+    } else {
+      merchants.sort(
+        (a, b) => b.roi - a.roi || b.totalCommission - a.totalCommission || b.totalCost - a.totalCost,
+      );
+    }
 
     const total = merchants.length;
     const formatItem = (

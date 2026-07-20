@@ -72,6 +72,11 @@ class MerchantAnalysisQuery extends AdminDateQuery {
   @IsOptional()
   @IsString()
   all?: string;
+
+  /** 排序：roi（默认）| commission */
+  @IsOptional()
+  @IsString()
+  sortBy?: string;
 }
 
 @Controller('admin')
@@ -93,6 +98,7 @@ export class AdminController {
         page: q.page ? parseInt(q.page, 10) : 1,
         pageSize: q.pageSize ? parseInt(q.pageSize, 10) : 10,
         exportAll: q.all === '1' || q.all === 'true',
+        sortBy: q.sortBy === 'commission' ? 'commission' : 'roi',
       }),
     );
   }

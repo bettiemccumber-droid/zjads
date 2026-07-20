@@ -26,7 +26,7 @@ export function campaignAffiliateAttributionKey(merchantId: string, alias: strin
   return `${merchantId}|${a}`;
 }
 
-/** Sheet 中是否已有系列可承接该商家的联盟归因（LH/LB 不限序号） */
+/** Sheet 中是否已有系列可承接该商家的联盟归因（同平台族不限序号；含暂停后重开的新系列） */
 export function campaignCoversMerchantAffiliate(
   campaigns: ReadonlyArray<{ merchantId: string; affiliateAlias: string }>,
   merchantId: string,

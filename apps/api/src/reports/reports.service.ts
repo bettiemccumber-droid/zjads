@@ -1330,6 +1330,7 @@ export class ReportsService {
 
       const affiliate = this.lookupAffiliateMetrics(affiliateMetrics, merchantId, alias);
       if (affiliate.orderCount === 0 && affiliate.commission === 0) continue;
+      if (campaignCoversMerchantAffiliate([...map.values()], merchantId, alias)) continue;
 
       map.set(groupKey, {
         campaignGroupKey: groupKey,
@@ -1487,7 +1488,7 @@ export class ReportsService {
         ...row,
         orderCount: 0,
         commission: 0,
-        /** 联盟点击已在 computeAffiliateClicksByCampaignKey / 按天归因中去重，勿在此处清零 */
+        affiliateClicks: 0,
         roi: row.cost > 0 ? -1 : 0,
         profit: -row.cost,
         epc: 0,

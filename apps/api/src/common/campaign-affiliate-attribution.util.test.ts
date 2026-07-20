@@ -21,6 +21,13 @@ function runTests() {
   assert.equal(campaignCoversMerchantAffiliate(campaigns, '159854', 'lb3'), false);
   assert.equal(campaignCoversMerchantAffiliate(campaigns, '999', 'lh5'), false);
 
+  const pmCampaigns = [{ merchantId: '126667', affiliateAlias: 'pm5' }];
+  assert.equal(campaignCoversMerchantAffiliate(pmCampaigns, '126667', 'pm5'), true);
+  assert.equal(
+    campaignAffiliateAttributionKey('126667', 'pm5'),
+    campaignAffiliateAttributionKey('126667', 'pm5'),
+  );
+
   console.log('campaign-affiliate-attribution.util.test.ts: all passed');
 }
 

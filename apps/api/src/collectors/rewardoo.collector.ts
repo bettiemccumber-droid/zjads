@@ -8,7 +8,7 @@ import {
 import { CommissionBreakdown } from '../common/order-commission-buckets.util';
 import { parseRwPerformanceCalendarDay } from '../common/affiliate-order-date.util';
 import {
-  fetchRewardooTransactionDetailPages,
+  fetchRewardooCommissionData,
   RW_TRANSACTION_DETAILS_OP,
 } from './rewardoo-api.util';
 import { NormalizedOrder } from './types';
@@ -245,7 +245,7 @@ export function buildRwDailyMetricsFromDetailRows(
 }
 
 /**
- * 拉取 Rewardoo 佣金（仅 transaction_details，与 affiliate collectRWOrders 一致）
+ * 拉取 Rewardoo 佣金（优先 transaction_details，504 时回退 commission/performance）
  */
 export async function fetchRewardooCommissions(
   apiToken: string,
@@ -253,17 +253,29 @@ export async function fetchRewardooCommissions(
   endDate: string,
   onProgress?: (message: string) => void | Promise<void>,
 ): Promise<RwFetchBundle> {
-  const source = `medium/${RW_TRANSACTION_DETAILS_OP}`;
-  await onProgress?.(`RW ${source} 拉取中…`);
-  const rows = await fetchRewardooTransactionDetailPages(
+  const result = await fetchRewardooCommissionData(
     apiToken,
     startDate,
     endDate,
-    async (chunkIndex, totalChunks) => {
-      await onProgress?.(`RW ${source} ${chunkIndex}/${totalChunks} 段…`);
-    },
+    onProgress,
   );
-  return { source, rows: rows as RwCommissionRow[], triedSources: [source] };
+
+  if (!result.rows.length) {
+    throw new Error(
+      `Rewardoo 采集失败：已尝试 ${result.triedSources.join(' → ')}，均无可用数据`,
+    );
+  }
+
+  const primary = `medium/${RW_TRANSACTION_DETAILS_OP}`;
+  if (result.source !== primary) {
+    await onProgress?.(`RW 已回退至 ${result.source}（${primary} 不可用或超时）`);
+  }
+
+  return {
+    source: result.source,
+    rows: result.rows as RwCommissionRow[],
+    triedSources: result.triedSources,
+  };
 }
 
 /**

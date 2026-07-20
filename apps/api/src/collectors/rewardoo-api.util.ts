@@ -102,9 +102,12 @@ async function throttleRwRequest() {
   lastRequestAt = Date.now();
 }
 
+/** TransactionDetails 单次查询建议跨度（大区间易触发 nginx 504） */
+export const RW_TRANSACTION_DETAILS_MAX_DAYS = 7;
+
 /** 504/超时等瞬时故障最多重试次数 */
-const RW_TRANSIENT_MAX_ATTEMPTS = 3;
-const RW_TRANSIENT_RETRY_BASE_MS = 8000;
+const RW_TRANSIENT_MAX_ATTEMPTS = 5;
+const RW_TRANSIENT_RETRY_BASE_MS = 10000;
 
 function sleep(ms: number) {
   return new Promise((r) => setTimeout(r, ms));
@@ -678,7 +681,7 @@ export async function fetchRewardooTransactionDetailPages(
   endDate: string,
   onProgress?: (chunkIndex: number, totalChunks: number) => void | Promise<void>,
 ): Promise<unknown[]> {
-  const chunks = buildRwDateChunks(startDate, endDate);
+  const chunks = buildRwDateChunks(startDate, endDate, RW_TRANSACTION_DETAILS_MAX_DAYS);
   const all: unknown[] = [];
 
   for (let i = 0; i < chunks.length; i += 1) {

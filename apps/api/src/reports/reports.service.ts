@@ -8,8 +8,11 @@ import {
   resolveCampaignStatusMode,
 } from '../common/campaign-status.util';
 import {
+  aggregateAffiliateMetricsByFamily,
+  aggregateAffiliateMetricsByFamilyForDay,
   campaignAffiliateAttributionKey,
   campaignCoversMerchantAffiliate,
+  isOrphanAffiliateCampaign,
 } from '../common/campaign-affiliate-attribution.util';
 import { parseCampaignName, inferPlatformNameFromAlias } from '../common/campaign-name.util';
 import { resolveCampaignGroupKey } from '../common/campaign-group.util';
@@ -930,12 +933,15 @@ export class ReportsService {
     if (exact) return exact;
 
     if (campaignAlias.startsWith('pm')) {
-      return index.byMerchantDay.get(`${merchantId}|${dateStr}`) ?? { ...EMPTY_AFFILIATE };
+      return aggregateAffiliateMetricsByFamilyForDay(index.byKey, merchantId, 'pm', dateStr);
     }
 
-    /** LB/LH 按天：同商家同序号精确匹配，否则回退到商家当日合计（与 PM 一致） */
-    if (campaignAlias.startsWith('lb') || campaignAlias.startsWith('lh')) {
-      return index.byMerchantDay.get(`${merchantId}|${dateStr}`) ?? { ...EMPTY_AFFILIATE };
+    if (campaignAlias.startsWith('lb')) {
+      return aggregateAffiliateMetricsByFamilyForDay(index.byKey, merchantId, 'lb', dateStr);
+    }
+
+    if (campaignAlias.startsWith('lh')) {
+      return aggregateAffiliateMetricsByFamilyForDay(index.byKey, merchantId, 'lh', dateStr);
     }
 
     return { ...EMPTY_AFFILIATE };
@@ -1240,6 +1246,7 @@ export class ReportsService {
     T extends {
       date: string;
       campaignId: string;
+      campaignName: string;
       merchantId: string;
       affiliateAlias: string;
       cost: number;
@@ -1454,6 +1461,7 @@ export class ReportsService {
   private dedupeAffiliateAttributionOnCampaigns<
     T extends {
       campaignId: string;
+      campaignName: string;
       merchantId: string;
       affiliateAlias: string;
       cost: number;
@@ -1498,15 +1506,19 @@ export class ReportsService {
   }
 
   private campaignWinsAffiliateAttribution(
-    current: { cost: number; clicks: number; campaignId: string },
-    candidate: { cost: number; clicks: number; campaignId: string },
+    current: { cost: number; clicks: number; campaignId: string; campaignName: string },
+    candidate: { cost: number; clicks: number; campaignId: string; campaignName: string },
   ): boolean {
+    const currentOrphan = isOrphanAffiliateCampaign(current.campaignId, current.campaignName);
+    const candidateOrphan = isOrphanAffiliateCampaign(candidate.campaignId, candidate.campaignName);
+    if (currentOrphan !== candidateOrphan) return !candidateOrphan;
+
     if (candidate.cost !== current.cost) return candidate.cost > current.cost;
     if (candidate.clicks !== current.clicks) return candidate.clicks > current.clicks;
     return candidate.campaignId.localeCompare(current.campaignId) > 0;
   }
 
-  /** 优先 merchantId+alias 精确匹配；PM 允许 pm1 账号匹配 pm2 广告系列；LH 等序号必须一致 */
+  /** 优先 merchantId+alias 精确匹配；PM/LH/LB 仅汇总同平台族订单，避免 LH 系列吃到 PM 佣金 */
   private lookupAffiliateMetrics(
     index: AffiliateMetricsIndex,
     merchantId: string,
@@ -1524,11 +1536,15 @@ export class ReportsService {
     if (exact) return exact;
 
     if (campaignAlias.startsWith('pm')) {
-      return index.byMerchantId.get(merchantId) ?? { ...EMPTY_AFFILIATE };
+      return aggregateAffiliateMetricsByFamily(index.byKey, merchantId, 'pm');
     }
 
-    if (campaignAlias.startsWith('lb') || campaignAlias.startsWith('lh')) {
-      return index.byMerchantId.get(merchantId) ?? { ...EMPTY_AFFILIATE };
+    if (campaignAlias.startsWith('lb')) {
+      return aggregateAffiliateMetricsByFamily(index.byKey, merchantId, 'lb');
+    }
+
+    if (campaignAlias.startsWith('lh')) {
+      return aggregateAffiliateMetricsByFamily(index.byKey, merchantId, 'lh');
     }
 
     return { ...EMPTY_AFFILIATE };

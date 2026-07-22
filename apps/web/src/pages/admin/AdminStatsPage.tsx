@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 
 import { Button, Card, Col, DatePicker, Row, Space, Statistic, Table, Tabs, message } from 'antd';
 
@@ -143,25 +143,26 @@ const DATE_PRESETS: Array<{ label: string; range: () => [Dayjs, Dayjs] }> = [
 
 export default function AdminStatsPage() {
 
+  /** 日期选择器当前值（未点「查询」前不驱动报表） */
   const [range, setRange] = useState<[Dayjs, Dayjs]>(defaultRange);
+  /** 已提交的查询区间，概览与商家分析共用 */
+  const [queryRange, setQueryRange] = useState<[Dayjs, Dayjs]>(defaultRange);
 
   const [data, setData] = useState<OverviewData | null>(null);
 
   const [loading, setLoading] = useState(false);
 
-  const [refreshKey, setRefreshKey] = useState(0);
-
   const [activeTab, setActiveTab] = useState('overview');
 
 
 
-  const startDate = range[0].format('YYYY-MM-DD');
+  const startDate = queryRange[0].format('YYYY-MM-DD');
 
-  const endDate = range[1].format('YYYY-MM-DD');
+  const endDate = queryRange[1].format('YYYY-MM-DD');
 
 
 
-  const loadOverview = async () => {
+  const loadOverview = useCallback(async () => {
 
     setLoading(true);
 
@@ -181,13 +182,12 @@ export default function AdminStatsPage() {
 
     }
 
-  };
+  }, [startDate, endDate]);
 
 
 
   const handleQuery = () => {
-    setRefreshKey((k) => k + 1);
-    void loadOverview();
+    setQueryRange([range[0], range[1]]);
   };
 
   const handleExportOverview = () => {
@@ -202,10 +202,8 @@ export default function AdminStatsPage() {
 
 
   useEffect(() => {
-
     void loadOverview();
-
-  }, []);
+  }, [loadOverview]);
 
 
 
@@ -476,7 +474,7 @@ export default function AdminStatsPage() {
 
               children: (
 
-                <AdminMerchantAnalysis startDate={startDate} endDate={endDate} refreshKey={refreshKey} />
+                <AdminMerchantAnalysis startDate={startDate} endDate={endDate} />
 
               ),
 

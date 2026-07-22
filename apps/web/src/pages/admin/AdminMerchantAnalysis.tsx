@@ -43,10 +43,9 @@ interface MerchantAnalysisData {
 }
 
 interface AdminMerchantAnalysisProps {
+  /** 父级点击「查询」后提交的日期区间 */
   startDate: string;
   endDate: string;
-  /** 父级点击「查询」时递增，触发重新加载 */
-  refreshKey: number;
 }
 
 /** ROI 颜色：正绿负红 */
@@ -154,7 +153,6 @@ const campaignColumns = [
 export default function AdminMerchantAnalysis({
   startDate,
   endDate,
-  refreshKey,
 }: AdminMerchantAnalysisProps) {
   const [search, setSearch] = useState('');
   const [searchInput, setSearchInput] = useState('');
@@ -175,13 +173,11 @@ export default function AdminMerchantAnalysis({
     } finally {
       setLoading(false);
     }
-    // startDate/endDate 随「查询」刷新，不单独作为依赖以免改日期即请求
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [search, page, pageSize, sortBy]);
+  }, [startDate, endDate, search, page, pageSize, sortBy]);
 
   useEffect(() => {
     void load();
-  }, [load, refreshKey]);
+  }, [load]);
 
   useEffect(() => {
     setPage(1);

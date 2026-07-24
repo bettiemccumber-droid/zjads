@@ -10,10 +10,11 @@ const platforms = [
   { code: 'linkhaitao', name: 'LinkHaitao', sortOrder: 2 },
   { code: 'linkbux', name: 'LinkBux', sortOrder: 3 },
   { code: 'rewardoo', name: 'Rewardoo', sortOrder: 4 },
-  { code: 'partnerboost', name: 'PartnerBoost', sortOrder: 5 },
-  { code: 'brandsparkhub', name: 'Brandsparkhub', sortOrder: 6 },
-  { code: 'creatorflare', name: 'Creatorflare', sortOrder: 7 },
-  { code: 'collabglow', name: 'CollabGlow', sortOrder: 8 },
+  { code: 'ultrainfluence', name: 'UltraInfluence', sortOrder: 5 },
+  { code: 'partnerboost', name: 'PartnerBoost', sortOrder: 6 },
+  { code: 'brandsparkhub', name: 'Brandsparkhub', sortOrder: 7 },
+  { code: 'creatorflare', name: 'Creatorflare', sortOrder: 8 },
+  { code: 'collabglow', name: 'CollabGlow', sortOrder: 9 },
 ];
 
 const pmStatusMappings: Array<{ raw: string; norm: 'approved' | 'pending' | 'rejected' }> = [
@@ -84,7 +85,7 @@ async function main() {
     });
 
     const mappings =
-      p.code === 'partnermatic'
+      p.code === 'partnermatic' || p.code === 'ultrainfluence'
         ? pmStatusMappings
         : p.code === 'linkhaitao'
           ? lhStatusMappings

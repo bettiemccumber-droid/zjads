@@ -1,13 +1,14 @@
 import { Button, Checkbox } from 'antd';
 import './SyncAccountPicker.css';
 
-const PLATFORM_CODES = ['partnermatic', 'linkhaitao', 'linkbux', 'rewardoo'] as const;
+const PLATFORM_CODES = ['partnermatic', 'linkhaitao', 'linkbux', 'rewardoo', 'ultrainfluence'] as const;
 
 const PLATFORM_SHORT: Record<string, string> = {
   partnermatic: 'PM',
   linkhaitao: 'LH',
   linkbux: 'LB',
   rewardoo: 'RW',
+  ultrainfluence: 'UI',
 };
 
 export interface SyncAccountPick {

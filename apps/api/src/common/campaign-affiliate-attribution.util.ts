@@ -9,7 +9,7 @@ export interface AffiliateMetricsSlice {
   affiliateClicks: number;
 }
 
-/** 两联盟序号是否同属一个平台族（PM/LH/LB/RW） */
+/** 两联盟序号是否同属一个平台族（PM/LH/LB/RW/UI） */
 export function affiliateAliasSamePlatformFamily(a: string, b: string): boolean {
   const left = (a || '').toLowerCase();
   const right = (b || '').toLowerCase();
@@ -17,11 +17,12 @@ export function affiliateAliasSamePlatformFamily(a: string, b: string): boolean 
   if (left.startsWith('lb') && right.startsWith('lb')) return true;
   if (left.startsWith('pm') && right.startsWith('pm')) return true;
   if (left.startsWith('rw') && right.startsWith('rw')) return true;
+  if (left.startsWith('ui') && right.startsWith('ui')) return true;
   return left === right;
 }
 
 /**
- * 广告系列归因去重键：PM/RW/LH/LB 各平台族内按 merchantId 只计一次
+ * 广告系列归因去重键：PM/RW/LH/LB/UI 各平台族内按 merchantId 只计一次
  */
 export function campaignAffiliateAttributionKey(merchantId: string, alias: string): string {
   if (!merchantId) return '';
@@ -30,6 +31,7 @@ export function campaignAffiliateAttributionKey(merchantId: string, alias: strin
   if (a.startsWith('rw')) return `rw:${merchantId}`;
   if (a.startsWith('lh')) return `lh:${merchantId}`;
   if (a.startsWith('lb')) return `lb:${merchantId}`;
+  if (a.startsWith('ui')) return `ui:${merchantId}`;
   return `${merchantId}|${a}`;
 }
 
@@ -39,7 +41,7 @@ export function campaignAffiliateAttributionKey(merchantId: string, alias: strin
 export function aggregateAffiliateMetricsByFamily(
   byKey: ReadonlyMap<string, AffiliateMetricsSlice>,
   merchantId: string,
-  familyPrefix: 'lh' | 'lb' | 'pm',
+  familyPrefix: 'lh' | 'lb' | 'pm' | 'ui',
 ): AffiliateMetricsSlice {
   const result: AffiliateMetricsSlice = { orderCount: 0, commission: 0, affiliateClicks: 0 };
   for (const [key, metrics] of byKey) {
@@ -61,7 +63,7 @@ export function aggregateAffiliateMetricsByFamily(
 export function aggregateAffiliateMetricsByFamilyForDay(
   byKey: ReadonlyMap<string, AffiliateMetricsSlice>,
   merchantId: string,
-  familyPrefix: 'lh' | 'lb' | 'pm',
+  familyPrefix: 'lh' | 'lb' | 'pm' | 'ui',
   dateStr: string,
 ): AffiliateMetricsSlice {
   const suffix = `|${dateStr}`;

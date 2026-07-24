@@ -426,6 +426,11 @@ export class SyncService implements OnModuleInit {
           `订单 ${result.lbApi.orderCount} 单 / $${result.lbApi.totalCommission.toFixed(2)}`,
         );
       }
+      if (result.uiApi) {
+        parts.push(
+          `订单 ${result.uiApi.orderCount} 单 / $${result.uiApi.totalCommission.toFixed(2)}`,
+        );
+      }
       if (result.rwApi) {
         const src =
           result.rwApi.apiSource && result.rwApi.apiSource !== 'none'
@@ -459,6 +464,12 @@ export class SyncService implements OnModuleInit {
       }
       if (result.pmClickError) {
         parts.push(`PM 联盟点击失败: ${result.pmClickError}`);
+      }
+      if (result.uiClickTotal !== undefined) {
+        parts.push(`UI 联盟点击 ${result.uiClickTotal}（${start}~${end}）`);
+      }
+      if (result.uiClickError) {
+        parts.push(`UI 联盟点击失败: ${result.uiClickError}`);
       }
       if (result.lhClickTotal !== undefined) {
         parts.push(`LH 联盟点击 ${result.lhClickTotal}（${start}~${end}）`);

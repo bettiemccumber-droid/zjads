@@ -51,6 +51,8 @@ const RW_DEFAULTS: StatusMapping[] = [
   { raw: 'Expired', norm: NormalizedStatus.rejected },
 ];
 
+const UI_DEFAULTS: StatusMapping[] = [...PM_DEFAULTS];
+
 /**
  * 各平台默认订单状态映射（与 prisma/seed 一致）
  */
@@ -58,6 +60,8 @@ export function defaultStatusMappingsForPlatform(platformCode: string): StatusMa
   switch (platformCode) {
     case 'partnermatic':
       return PM_DEFAULTS;
+    case 'ultrainfluence':
+      return UI_DEFAULTS;
     case 'linkhaitao':
       return LH_DEFAULTS;
     case 'linkbux':

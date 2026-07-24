@@ -936,6 +936,10 @@ export class ReportsService {
       return aggregateAffiliateMetricsByFamilyForDay(index.byKey, merchantId, 'pm', dateStr);
     }
 
+    if (campaignAlias.startsWith('ui')) {
+      return aggregateAffiliateMetricsByFamilyForDay(index.byKey, merchantId, 'ui', dateStr);
+    }
+
     if (campaignAlias.startsWith('lb')) {
       return aggregateAffiliateMetricsByFamilyForDay(index.byKey, merchantId, 'lb', dateStr);
     }
@@ -1539,6 +1543,10 @@ export class ReportsService {
       return aggregateAffiliateMetricsByFamily(index.byKey, merchantId, 'pm');
     }
 
+    if (campaignAlias.startsWith('ui')) {
+      return aggregateAffiliateMetricsByFamily(index.byKey, merchantId, 'ui');
+    }
+
     if (campaignAlias.startsWith('lb')) {
       return aggregateAffiliateMetricsByFamily(index.byKey, merchantId, 'lb');
     }
@@ -1563,6 +1571,17 @@ export class ReportsService {
     if (map.has(exact)) return exact;
 
     if (campaignAlias.startsWith('pm')) {
+      for (const [key, row] of map.entries()) {
+        if (row.merchantId === merchantId && (row.orderCount > 0 || row.totalCommission > 0)) {
+          return key;
+        }
+      }
+      for (const [key, row] of map.entries()) {
+        if (row.merchantId === merchantId) return key;
+      }
+    }
+
+    if (campaignAlias.startsWith('ui')) {
       for (const [key, row] of map.entries()) {
         if (row.merchantId === merchantId && (row.orderCount > 0 || row.totalCommission > 0)) {
           return key;

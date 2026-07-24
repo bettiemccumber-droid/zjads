@@ -9,8 +9,11 @@ import {
 } from './campaign-affiliate-attribution.util';
 
 function runTests() {
+  assert.equal(campaignAffiliateAttributionKey('159854', 'ui1'), 'ui:159854');
+  assert.equal(campaignAffiliateAttributionKey('159854', 'ui2'), 'ui:159854');
   assert.equal(campaignAffiliateAttributionKey('159854', 'lh5'), 'lh:159854');
   assert.equal(campaignAffiliateAttributionKey('159854', 'lh6'), 'lh:159854');
+  assert.equal(affiliateAliasSamePlatformFamily('ui1', 'ui2'), true);
   assert.notEqual(
     campaignAffiliateAttributionKey('87590', 'lh1'),
     campaignAffiliateAttributionKey('87590', 'pm1'),

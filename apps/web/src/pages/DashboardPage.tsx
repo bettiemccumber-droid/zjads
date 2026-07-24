@@ -62,6 +62,7 @@ const SYNC_PLATFORM_SHORT: Record<string, string> = {
   linkhaitao: 'LH',
   linkbux: 'LB',
   rewardoo: 'RW',
+  ultrainfluence: 'UI',
 };
 
 interface MerchantRow {
@@ -1088,12 +1089,12 @@ export default function DashboardPage() {
           />
         ) : (
           <Typography.Text type="secondary" className="sync-collect-hint" style={{ display: 'block' }}>
-            请先在「我的平台账号」添加并启用已接入采集的平台账号（PM / LH / LB / RW）
+            请先在「我的平台账号」添加并启用已接入采集的平台账号（PM / LH / LB / RW / UI）
           </Typography.Text>
         )}
 
         <p className="sync-collect-hint">
-          已接入 PM / LH / LB / RW 订单；PM/LH/LB/RW 联盟点击随订单区间采集（LB 点击仅采区间<strong>最后一天</strong>，更早日期请用「点击校准导入」）。
+          已接入 PM / LH / LB / RW / UI 订单；PM/LH/RW/UI 联盟点击随订单区间采集（LB 点击仅采区间<strong>最后一天</strong>，更早日期请用「点击校准导入」）。
           仅选部分平台采集时<strong>不会</strong>重导 Google Sheet；全选采集后会自动同步<strong>全部</strong> Sheet 广告费，再刷新报表。
           {viewUserId
             ? ' 也可在上方「导入 Sheet」或侧边栏「广告数据源」手动导入。'

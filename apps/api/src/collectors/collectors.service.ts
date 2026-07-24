@@ -11,6 +11,12 @@ import {
   PmMerchantClickAgg,
 } from './partnermatic-clicks';
 import {
+  fetchUltraInfluenceOrders,
+  normalizeUltraInfluenceOrders,
+  summarizeUiTransactionApi,
+} from './ultrainfluence.collector';
+import { fetchUltraInfluenceClicks } from './ultrainfluence-clicks';
+import {
   fetchLinkHaitaoCommissions,
   normalizeLinkHaitaoOrders,
   summarizeLhCommissionApi,
@@ -48,7 +54,7 @@ import { buildOrderDateRangeFilter } from '../common/order-date-range.util';
 import { CollectResult, NormalizedOrder } from './types';
 
 export interface CollectOptions {
-  /** 是否采集联盟点击（PM/LH/RW 随订单区间；LB 仅 endDate 单日，历史请导入校准） */
+  /** 是否采集联盟点击（PM/LH/RW/UI 随订单区间；LB 仅 endDate 单日，历史请导入校准） */
   includeClicks?: boolean;
 }
 
@@ -78,6 +84,11 @@ export interface CollectResultWithPmMeta extends CollectResult {
     detailOrderCount?: number;
     sampleOrder?: { merchantId: string | null; orderDate: string; merchantName: string | null };
   };
+  uiApi?: {
+    apiListRows: number;
+    orderCount: number;
+    totalCommission: number;
+  };
   /** RW Performance 看板 Orders 汇总（与报表一致） */
   rwPerformanceOrderCount?: number;
   rwPerformanceOrderError?: string;
@@ -91,6 +102,8 @@ export interface CollectResultWithPmMeta extends CollectResult {
   lbClickCollectDate?: string;
   /** PM 联盟点击采集失败时的错误信息（订单仍会写入） */
   pmClickError?: string;
+  uiClickTotal?: number;
+  uiClickError?: string;
   rwClickTotal?: number;
   /** RW 联盟点击采集失败时的错误信息（订单仍会写入） */
   rwClickError?: string;
@@ -128,12 +141,15 @@ export class CollectorsService {
     let lhApi: CollectResultWithPmMeta['lhApi'];
     let lbApi: CollectResultWithPmMeta['lbApi'];
     let rwApi: CollectResultWithPmMeta['rwApi'];
+    let uiApi: CollectResultWithPmMeta['uiApi'];
     let pmClickTotal: number | undefined;
     let lhClickTotal: number | undefined;
     let lbClickTotal: number | undefined;
     let lbClickEstimatedDays: number | undefined;
     let lbClickCollectDate: string | undefined;
     let pmClickError: string | undefined;
+    let uiClickTotal: number | undefined;
+    let uiClickError: string | undefined;
     let rwClickTotal: number | undefined;
     let rwClickError: string | undefined;
     let rwPerformanceOrderCount: number | undefined;
@@ -141,10 +157,32 @@ export class CollectorsService {
     let ordersPersistedEarly = false;
     let orderPersistResult: CollectResult | undefined;
 
-    /** LB 点击只采区间最后一天；PM/LH/RW API 随订单全区间采集 */
+    /** LB 点击只采区间最后一天；PM/LH/RW/UI API 随订单全区间采集 */
     const lbClickDay = endDate;
 
     switch (account.platform.code) {
+      case 'ultrainfluence': {
+        const raw = await fetchUltraInfluenceOrders(apiToken, startDate, endDate);
+        uiApi = summarizeUiTransactionApi(raw);
+        normalized = normalizeUltraInfluenceOrders(raw, mappings);
+
+        if (options.includeClicks) {
+          await onProgress?.('订单已拉取，正在采集 UI 联盟点击…');
+          try {
+            const clickAggs = await fetchUltraInfluenceClicks(apiToken, startDate, endDate, async (p) => {
+              await onProgress?.(
+                `UI 联盟点击 ${p.slotIndex}/${p.totalSlots}，已汇总 ${p.clicksSoFar} 次`,
+              );
+            });
+            await this.replaceClicksInRange(account.id, startDate, endDate);
+            uiClickTotal = await this.persistClicks(account.id, clickAggs);
+          } catch (clickErr) {
+            uiClickError = clickErr instanceof Error ? clickErr.message : String(clickErr);
+            await onProgress?.(`UI 联盟点击采集失败（订单仍会写入）: ${uiClickError}`);
+          }
+        }
+        break;
+      }
       case 'partnermatic': {
         const raw = await fetchPartnerMaticOrders(apiToken, startDate, endDate);
         pmApi = summarizePmTransactionApi(raw);
@@ -397,10 +435,13 @@ export class CollectorsService {
       lhClickTotal,
       lbApi,
       rwApi,
+      uiApi,
       lbClickTotal,
       lbClickEstimatedDays,
       lbClickCollectDate,
       pmClickError,
+      uiClickTotal,
+      uiClickError,
       rwClickTotal,
       rwClickError,
       rwPerformanceOrderCount,

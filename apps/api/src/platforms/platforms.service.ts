@@ -1,10 +1,23 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { isCollectorImplemented } from '../collectors/collectors.registry';
 import { PrismaService } from '../prisma/prisma.service';
+import { ensurePlatformCatalog } from './platform-catalog.util';
 
 @Injectable()
-export class PlatformsService {
+export class PlatformsService implements OnModuleInit {
+  private readonly logger = new Logger(PlatformsService.name);
+
   constructor(private readonly prisma: PrismaService) {}
+
+  async onModuleInit() {
+    try {
+      await ensurePlatformCatalog(this.prisma);
+    } catch (err) {
+      this.logger.error(
+        `平台目录同步失败: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+  }
 
   async listEnabled() {
     const rows = await this.prisma.platform.findMany({

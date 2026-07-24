@@ -152,7 +152,7 @@ export default function ChannelAccountsPage() {
               type="info"
               showIcon
               style={{ marginBottom: 12 }}
-              message={`${p.name} 订单采集开发中，账号可先保存；当前采集仅支持 PartnerMatic、LinkHaitao、LinkBux、Rewardoo`}
+              message={`${p.name} 订单采集开发中，账号可先保存；当前采集已支持 PartnerMatic、LinkHaitao、LinkBux、Rewardoo、UltraInfluence`}
             />
           ) : null}
           {p.code === 'linkbux' ? (
@@ -255,7 +255,7 @@ export default function ChannelAccountsPage() {
           <Form.Item
             name="affiliateAlias"
             label="联盟序号"
-            extra="须与 Google Ads 广告系列名中的序号一致，如 pm1、lh2"
+            extra="须与 Google Ads 广告系列名中的序号一致，如 pm1、lh2、ui1"
           >
             <Input placeholder="如 lh2" />
           </Form.Item>

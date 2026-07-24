@@ -1,48 +1,13 @@
 import { PrismaClient } from '@prisma/client';
 import * as bcrypt from 'bcryptjs';
 
+import {
+  PLATFORM_CATALOG,
+  buildPlatformCredentialSchema,
+} from '../src/platforms/platform-catalog.util';
+import { ensurePlatformStatusMappings } from '../src/common/platform-status-defaults.util';
+
 const prisma = new PrismaClient();
-
-/** @typedef {'approved' | 'pending' | 'rejected'} NormStatus */
-
-const platforms = [
-  { code: 'partnermatic', name: 'PartnerMatic', sortOrder: 1 },
-  { code: 'linkhaitao', name: 'LinkHaitao', sortOrder: 2 },
-  { code: 'linkbux', name: 'LinkBux', sortOrder: 3 },
-  { code: 'rewardoo', name: 'Rewardoo', sortOrder: 4 },
-  { code: 'ultrainfluence', name: 'UltraInfluence', sortOrder: 5 },
-  { code: 'partnerboost', name: 'PartnerBoost', sortOrder: 6 },
-  { code: 'brandsparkhub', name: 'Brandsparkhub', sortOrder: 7 },
-  { code: 'creatorflare', name: 'Creatorflare', sortOrder: 8 },
-  { code: 'collabglow', name: 'CollabGlow', sortOrder: 9 },
-];
-
-const pmStatusMappings: Array<{ raw: string; norm: 'approved' | 'pending' | 'rejected' }> = [
-  { raw: 'Approved', norm: 'approved' },
-  { raw: 'APPROVED', norm: 'approved' },
-  { raw: 'Pending', norm: 'pending' },
-  { raw: 'PENDING', norm: 'pending' },
-  { raw: 'Rejected', norm: 'rejected' },
-  { raw: 'REJECTED', norm: 'rejected' },
-  { raw: 'Canceled', norm: 'rejected' },
-  { raw: 'CANCELED', norm: 'rejected' },
-];
-
-const lhStatusMappings: Array<{ raw: string; norm: 'approved' | 'pending' | 'rejected' }> = [
-  { raw: 'EFFECTIVE', norm: 'approved' },
-  { raw: 'UNTREATED', norm: 'pending' },
-  { raw: 'EXPIRED', norm: 'rejected' },
-  { raw: 'REJECTED', norm: 'rejected' },
-];
-
-const lbStatusMappings: Array<{ raw: string; norm: 'approved' | 'pending' | 'rejected' }> = [
-  { raw: 'Approved', norm: 'approved' },
-  { raw: 'APPROVED', norm: 'approved' },
-  { raw: 'Pending', norm: 'pending' },
-  { raw: 'PENDING', norm: 'pending' },
-  { raw: 'Rejected', norm: 'rejected' },
-  { raw: 'REJECTED', norm: 'rejected' },
-];
 
 async function main() {
   let org = await prisma.organization.findFirst();
@@ -63,7 +28,7 @@ async function main() {
     },
   });
 
-  for (const p of platforms) {
+  for (const p of PLATFORM_CATALOG) {
     const platform = await prisma.platform.upsert({
       where: { code: p.code },
       update: { name: p.name, sortOrder: p.sortOrder },
@@ -71,40 +36,11 @@ async function main() {
         code: p.code,
         name: p.name,
         sortOrder: p.sortOrder,
-        credentialSchema: {
-          fields: [
-            { key: 'apiToken', label: 'API Token', required: true, secret: true },
-            {
-              key: 'externalChannelId',
-              label: 'Channel ID',
-              required: p.code === 'partnermatic',
-            },
-          ],
-        },
+        credentialSchema: buildPlatformCredentialSchema(p.code),
       },
     });
 
-    const mappings =
-      p.code === 'partnermatic' || p.code === 'ultrainfluence'
-        ? pmStatusMappings
-        : p.code === 'linkhaitao'
-          ? lhStatusMappings
-          : p.code === 'linkbux'
-            ? lbStatusMappings
-            : pmStatusMappings.slice(0, 4);
-    for (const m of mappings) {
-      await prisma.platformStatusMapping.upsert({
-        where: {
-          platformId_rawStatus: { platformId: platform.id, rawStatus: m.raw },
-        },
-        update: { normalizedStatus: m.norm },
-        create: {
-          platformId: platform.id,
-          rawStatus: m.raw,
-          normalizedStatus: m.norm,
-        },
-      });
-    }
+    await ensurePlatformStatusMappings(prisma, platform.id, p.code);
   }
 
   console.log('Seed OK: admin@company.local / Admin123!, platforms');

@@ -766,7 +766,7 @@ export default function MerchantStatusPage() {
                   <Alert
                     type="info"
                     showIcon
-                    message="表头需包含 MID / mcid / 网址 之一（不区分大小写）"
+                    message="支持联盟推荐表：自动跳过标题行，识别 mcid / MID / Website（网址）列"
                   />
                   {activeTab !== 'admin-summary' && accountSelector}
                 </Space>

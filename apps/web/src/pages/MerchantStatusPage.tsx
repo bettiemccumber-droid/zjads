@@ -127,6 +127,23 @@ const RELATIONSHIP_LABEL: Record<string, string> = {
   unknown: '未知',
 };
 
+/** 结果表账号关系筛选选项 */
+const RELATIONSHIP_FILTER_OPTIONS = [
+  { value: 'joined', label: '已加入' },
+  { value: 'pending', label: '审核中' },
+  { value: 'rejected', label: '已拒绝' },
+  { value: 'not_joined', label: '未加入' },
+  { value: 'not_found', label: '无商家' },
+  { value: 'unknown', label: '未知' },
+  { value: 'failed', label: '查询失败' },
+];
+
+/** 行对应的账号关系筛选键 */
+function getRelationshipFilterKey(row: MerchantStatusRow): string {
+  if (row.error) return 'failed';
+  return row.relationshipStatus;
+}
+
 const AVAILABILITY_LABEL: Record<string, string> = {
   online: '上架',
   offline: '下架',
@@ -267,7 +284,7 @@ export default function MerchantStatusPage() {
   const [loading, setLoading] = useState(false);
   const [rows, setRows] = useState<MerchantStatusRow[]>([]);
   const [summary, setSummary] = useState<SummaryCounts | null>(null);
-  const [actionFilter, setActionFilter] = useState<string>('all');
+  const [relationshipFilters, setRelationshipFilters] = useState<string[]>([]);
 
   const [singleInput, setSingleInput] = useState('');
   const [pasteText, setPasteText] = useState('');
@@ -444,18 +461,17 @@ export default function MerchantStatusPage() {
 
   const filteredRows = useMemo(() => {
     let list = rows;
-    if (actionFilter === 'actionable') list = rows.filter((r) => r.actionable);
-    else if (actionFilter === 'pending') list = rows.filter((r) => r.actionLabel === '待审核');
-    else if (actionFilter === 'blocked') list = rows.filter((r) => !r.actionable && !r.error);
-    else if (actionFilter === 'failed') list = rows.filter((r) => Boolean(r.error));
-    else if (actionFilter !== 'all') list = rows.filter((r) => r.actionLabel === actionFilter);
+    if (relationshipFilters.length > 0) {
+      const allowed = new Set(relationshipFilters);
+      list = rows.filter((r) => allowed.has(getRelationshipFilterKey(r)));
+    }
 
     return [...list].sort((a, b) => {
       const keyCmp = a.queryKey.localeCompare(b.queryKey, undefined, { numeric: true });
       if (keyCmp !== 0) return keyCmp;
       return a.platformName.localeCompare(b.platformName);
     });
-  }, [rows, actionFilter]);
+  }, [rows, relationshipFilters]);
 
   const queryKeyRowSpans = useMemo(
     () => buildRowSpanByKey(filteredRows, (r) => r.queryKey),
@@ -911,18 +927,14 @@ export default function MerchantStatusPage() {
           extra={
             <Space>
               <Select
-                value={actionFilter}
-                onChange={setActionFilter}
-                style={{ width: 140 }}
-                options={[
-                  { value: 'all', label: '全部' },
-                  { value: 'actionable', label: '仅可投' },
-                  { value: 'pending', label: '待审核' },
-                  { value: '已拒绝', label: '已拒绝' },
-                  { value: '无商家', label: '无商家' },
-                  { value: 'blocked', label: '不可投' },
-                  { value: 'failed', label: '查询失败' },
-                ]}
+                mode="multiple"
+                allowClear
+                placeholder="账号关系筛选"
+                value={relationshipFilters}
+                onChange={setRelationshipFilters}
+                style={{ minWidth: 220 }}
+                maxTagCount="responsive"
+                options={RELATIONSHIP_FILTER_OPTIONS}
               />
               <Button
                 onClick={() =>
@@ -935,7 +947,7 @@ export default function MerchantStatusPage() {
               >
                 导出 Excel
               </Button>
-              <Button onClick={() => { setRows([]); setSummary(null); setParsedPreview([]); }}>
+              <Button onClick={() => { setRows([]); setSummary(null); setParsedPreview([]); setRelationshipFilters([]); }}>
                 清除结果
               </Button>
             </Space>

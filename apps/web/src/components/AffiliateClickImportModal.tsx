@@ -114,20 +114,15 @@ export function AffiliateClickImportModal({
         type="info"
         showIcon
         style={{ marginBottom: 12 }}
-        message={isRw ? 'Rewardoo：单商家按日校准' : 'LinkBux 点击校准'}
+        message={isRw ? 'Rewardoo：单商家补漏导入（可选）' : 'LinkBux 点击校准'}
         description={
           isRw ? (
             <>
-              RW 后台无法同时导出「商家 × 按日」，请按下面<strong>两步</strong>操作：
+              <strong>日常请直接重采集</strong>，系统会自动批量拉取各商家×按日 Performance（等同你对每个商家分别
+              筛 Merchant + Group by Daily，但无需手工）。
               <br />
-              1. 在 Performance 顶部 <strong>Merchant &amp; ID 筛选该商家</strong>（如 Halfords）
-              <br />
-              2. Group by 选 <strong>Daily</strong> → View Report → 导出（只有 Date / Clicks /
-              Orders，无 MID 列）
-              <br />
-              3. 在下方填写该商家的 <strong>MID</strong> 后上传文件（与广告系列 merchantId 一致）
-              <br />
-              仅校准点击与订单，<strong>不改佣金</strong>。{' '}
+              仅当<strong>个别商家</strong>采集后仍不对时，再用本功能补漏：筛该商家 → Daily 导出 → 填 MID
+              上传。不改佣金。{' '}
               <a onClick={downloadTemplate}>下载按日模板</a>
             </>
           ) : (

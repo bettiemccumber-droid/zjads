@@ -170,7 +170,7 @@ export default function ChannelAccountsPage() {
               showIcon
               style={{ marginBottom: 12 }}
               message="Rewardoo Performance"
-              description="佣金由采集自动对齐。点击/订单若与后台不一致：先在 RW 筛商家 + Group by Daily 导出，再用「Performance 校准导入」填写 MID 上传（不改佣金）。"
+              description="佣金由采集自动对齐。采集会批量拉取各商家按日点击/订单；仅个别商家仍不对时用「Performance 校准导入」补漏（不改佣金）。"
             />
           ) : null}
           <Button type="primary" style={{ marginBottom: 12 }} onClick={() => openAdd(p)}>

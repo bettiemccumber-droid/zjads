@@ -7,3 +7,11 @@ body {
     sans-serif;
   background: #f0f2f5;
 }
+
+/** 商家状态查询：可投行浅绿底，失败行浅红底 */
+.merchant-status-row-actionable > td {
+  background: #f6ffed !important;
+}
+.merchant-status-row-failed > td {
+  background: #fff1f0 !important;
+}

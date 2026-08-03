@@ -141,6 +141,15 @@ const PLATFORM_CLASS: Record<string, string> = {
   ultrainfluence: 'ultrainfluence',
 };
 
+/** 平台账号快捷筛选 */
+const PLATFORM_QUICK_FILTERS: Array<{ code: string; label: string }> = [
+  { code: 'partnermatic', label: '仅 PM' },
+  { code: 'linkhaitao', label: '仅 LH' },
+  { code: 'linkbux', label: '仅 LB' },
+  { code: 'rewardoo', label: '仅 RW' },
+  { code: 'ultrainfluence', label: '仅 UI' },
+];
+
 function renderStatusPill(label: string, variant: string, size: 'sm' | 'md' = 'md') {
   return (
     <span className={`merchant-status-pill merchant-status-pill--${size} merchant-status-pill--${variant}`}>
@@ -304,6 +313,38 @@ export default function MerchantStatusPage() {
         }
       });
   }, [isAdmin]);
+
+  const supportedAccounts = useMemo(
+    () => accounts.filter((a) => a.statusQuerySupported),
+    [accounts],
+  );
+
+  const isAllAccountsSelected =
+    supportedAccounts.length > 0 &&
+    selectedAccountIds.length === supportedAccounts.length &&
+    supportedAccounts.every((a) => selectedAccountIds.includes(a.id));
+
+  const isPlatformOnlySelected = (platformCode: string) => {
+    const ids = supportedAccounts.filter((a) => a.platformCode === platformCode).map((a) => a.id);
+    return (
+      ids.length > 0 &&
+      selectedAccountIds.length === ids.length &&
+      ids.every((id) => selectedAccountIds.includes(id))
+    );
+  };
+
+  const selectAllAccounts = () => {
+    setSelectedAccountIds(supportedAccounts.map((a) => a.id));
+  };
+
+  const selectPlatformAccounts = (platformCode: string, label: string) => {
+    const ids = supportedAccounts.filter((a) => a.platformCode === platformCode).map((a) => a.id);
+    if (ids.length === 0) {
+      message.warning(`暂无 ${label.replace('仅 ', '')} 平台账号`);
+      return;
+    }
+    setSelectedAccountIds(ids);
+  };
 
   const runQuery = async (items: MerchantQueryItem[]) => {
     if (items.length === 0) {
@@ -596,13 +637,42 @@ export default function MerchantStatusPage() {
   ];
 
   const accountSelector = (
-    <Card size="small" title="平台账号" style={{ marginBottom: 16 }}>
+    <Card size="small" className="merchant-status-account-card" style={{ marginBottom: 16 }}>
+      <div className="merchant-status-account-toolbar">
+        <span className="merchant-status-account-title">平台账号</span>
+        <Space wrap size={[6, 6]} className="merchant-status-account-actions">
+          <Button
+            size="small"
+            type={isAllAccountsSelected ? 'primary' : 'default'}
+            onClick={selectAllAccounts}
+          >
+            全选
+          </Button>
+          {PLATFORM_QUICK_FILTERS.map((f) => {
+            const available = supportedAccounts.some((a) => a.platformCode === f.code);
+            return (
+              <Button
+                key={f.code}
+                size="small"
+                type={isPlatformOnlySelected(f.code) ? 'primary' : 'default'}
+                disabled={!available}
+                onClick={() => selectPlatformAccounts(f.code, f.label)}
+              >
+                {f.label}
+              </Button>
+            );
+          })}
+        </Space>
+        <span className="merchant-status-account-count">
+          已选 {selectedAccountIds.length}/{supportedAccounts.length}
+        </span>
+      </div>
       <Checkbox.Group
         value={selectedAccountIds}
         onChange={(vals) => setSelectedAccountIds(vals as number[])}
         style={{ width: '100%' }}
       >
-        <Space wrap>
+        <Space wrap size={[8, 8]}>
           {accounts.map((a) => (
             <Checkbox key={a.id} value={a.id} disabled={!a.statusQuerySupported}>
               {a.platformName} · {a.displayName}
@@ -615,6 +685,7 @@ export default function MerchantStatusPage() {
         <Alert
           type="warning"
           showIcon
+          style={{ marginTop: 12 }}
           message="暂无平台账号"
           description={
             <>

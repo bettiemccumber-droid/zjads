@@ -76,8 +76,37 @@
   background: #fafbfc !important;
 }
 
+/* ── 商家分组分隔 ── */
+.merchant-status-results .merchant-status-group-odd > td {
+  background-color: #fff;
+}
+
+.merchant-status-results .merchant-status-group-even > td {
+  background-color: #f8fafc;
+}
+
+.merchant-status-results .merchant-status-group-even .merchant-status-index-cell,
+.merchant-status-results .merchant-status-group-even .merchant-status-merchant-cell {
+  background-color: #eef2f7 !important;
+}
+
+.merchant-status-results .merchant-status-group-start > td {
+  border-top: 2px solid #cbd5e1 !important;
+  padding-top: 10px !important;
+}
+
+.merchant-status-results .merchant-status-group-end > td {
+  border-bottom: 2px solid #cbd5e1 !important;
+  padding-bottom: 10px !important;
+}
+
+.merchant-status-results .merchant-status-group-end .merchant-status-index-cell,
+.merchant-status-results .merchant-status-group-end .merchant-status-merchant-cell {
+  border-bottom: 2px solid #cbd5e1 !important;
+}
+
 .merchant-status-col-relationship {
-  background: #fafbfc !important;
+  background: transparent !important;
 }
 
 .merchant-status-row-no {
@@ -251,9 +280,17 @@
 }
 
 .merchant-status-row-actionable > td {
-  background: #f6ffed !important;
+  background: #f0fdf4 !important;
 }
 
 .merchant-status-row-failed > td {
-  background: #fffafa !important;
+  background: #fef2f2 !important;
+}
+
+.merchant-status-results .merchant-status-group-even.merchant-status-row-actionable > td {
+  background: #ecfdf5 !important;
+}
+
+.merchant-status-results .merchant-status-group-even.merchant-status-row-failed > td {
+  background: #fee2e2 !important;
 }

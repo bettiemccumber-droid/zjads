@@ -208,6 +208,21 @@ function buildMerchantGroupNumbers(rowSpans: number[]): number[] {
   return nums;
 }
 
+/** 商家分组元信息（首行/末行/组序号，用于分隔样式） */
+function buildMerchantGroupMeta(
+  rows: MerchantStatusRow[],
+): Array<{ groupNo: number; isFirst: boolean; isLast: boolean }> {
+  const meta: Array<{ groupNo: number; isFirst: boolean; isLast: boolean }> = [];
+  let groupNo = 0;
+  for (let i = 0; i < rows.length; i += 1) {
+    const isFirst = i === 0 || rows[i].queryKey !== rows[i - 1].queryKey;
+    const isLast = i === rows.length - 1 || rows[i].queryKey !== rows[i + 1].queryKey;
+    if (isFirst) groupNo += 1;
+    meta.push({ groupNo, isFirst, isLast });
+  }
+  return meta;
+}
+
 export default function MerchantStatusPage() {
   const { isAdmin } = useAuth();
   const [searchParams] = useSearchParams();
@@ -386,6 +401,24 @@ export default function MerchantStatusPage() {
     () => buildMerchantGroupNumbers(queryKeyRowSpans),
     [queryKeyRowSpans],
   );
+
+  const merchantGroupMeta = useMemo(
+    () => buildMerchantGroupMeta(filteredRows),
+    [filteredRows],
+  );
+
+  const getRowClassName = (r: MerchantStatusRow, index?: number) => {
+    const meta = merchantGroupMeta[index ?? 0];
+    if (!meta) return '';
+    const classes = [
+      meta.groupNo % 2 === 0 ? 'merchant-status-group-even' : 'merchant-status-group-odd',
+      meta.isFirst && meta.groupNo > 1 ? 'merchant-status-group-start' : '',
+      meta.isLast ? 'merchant-status-group-end' : '',
+    ];
+    if (r.error) classes.push('merchant-status-row-failed');
+    else if (r.actionable) classes.push('merchant-status-row-actionable');
+    return classes.filter(Boolean).join(' ');
+  };
 
   const detailColumns: ColumnsType<MerchantStatusRow> = [
     {
@@ -783,11 +816,7 @@ export default function MerchantStatusPage() {
             scroll={{ x: 820 }}
             pagination={{ pageSize: 50, showTotal: (t) => `共 ${t} 条`, size: 'small' }}
             size="small"
-            rowClassName={(r) => {
-              if (r.error) return 'merchant-status-row-failed';
-              if (r.actionable) return 'merchant-status-row-actionable';
-              return '';
-            }}
+            rowClassName={getRowClassName}
           />
         </Card>
       )}

@@ -35,10 +35,10 @@ const HEADER_ALIASES: Record<string, keyof ImportClickRow | 'skip'> = {
   total_orders: 'performanceOrders',
 };
 
-/** CSV 模板（下载用） */
-export const AFFILIATE_CLICK_CSV_TEMPLATE = `merchantId,merchantName,clickDate,clicks,orders
-388783,Divani.Store DE,2026-06-01,1071,12
-388783,Divani.Store DE,2026-06-02,3124,28`;
+/** LB 点击校准 CSV 模板（不含订单） */
+export const AFFILIATE_CLICK_CSV_TEMPLATE = `merchantId,merchantName,clickDate,clicks
+388783,Divani.Store DE,2026-06-01,1071
+388783,Divani.Store DE,2026-06-02,3124`;
 
 /** RW 按日导出（后台已筛商家，无 MID 列） */
 export const RW_DAILY_ONLY_CSV_TEMPLATE = `Date,Clicks,Orders

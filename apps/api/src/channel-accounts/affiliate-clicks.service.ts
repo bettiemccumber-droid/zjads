@@ -31,8 +31,8 @@ export class AffiliateClicksService {
   constructor(private readonly prisma: PrismaService) {}
 
   /**
-   * 手动导入 Performance 校准（点击 + 可选订单数；不修改 performanceCommission）
-   * 标记为 manual，后续 API 采集不会覆盖（与 LinkBux「点击校准导入」一致）
+   * 手动导入 Performance 校准（LB 仅点击；RW 点击 + 订单数；不修改 performanceCommission）
+   * 标记为 manual，后续 API 采集不会覆盖
    */
   async importManualClicks(
     user: AuthUser,
@@ -55,12 +55,19 @@ export class AffiliateClicksService {
     let minDate: string | null = null;
     let maxDate: string | null = null;
 
+    const platformCode = account.platform.code;
+    /** LB 校准导入仅写点击；RW 可写点击 + 订单数 */
+    const allowOrdersImport = platformCode === 'rewardoo';
+
     for (let i = 0; i < rows.length; i += 1) {
       const row = rows[i];
       const merchantId = String(row.merchantId ?? '').trim();
       const clickDate = String(row.clickDate ?? '').trim();
       const clicks = Number(row.clicks ?? 0);
-      const hasOrders = row.performanceOrders !== undefined && row.performanceOrders !== null;
+      const hasOrders =
+        allowOrdersImport &&
+        row.performanceOrders !== undefined &&
+        row.performanceOrders !== null;
       const performanceOrders = hasOrders ? Number(row.performanceOrders) : undefined;
 
       if (!merchantId) {

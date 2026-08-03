@@ -161,7 +161,7 @@ export default function ChannelAccountsPage() {
               showIcon
               style={{ marginBottom: 12 }}
               message="LinkBux 点击"
-              description="日常采集仅更新区间最后一天的 API 点击；历史或需与后台对齐的数据请用「Performance 校准导入」。"
+              description="日常采集仅更新区间最后一天的 API 点击。需与后台对齐时，请用「点击校准导入」——仅校准联盟点击数，不改订单与佣金。"
             />
           ) : null}
           {p.code === 'rewardoo' ? (
@@ -170,7 +170,7 @@ export default function ChannelAccountsPage() {
               showIcon
               style={{ marginBottom: 12 }}
               message="Rewardoo Performance"
-              description="未勾选「含联盟点击」时采集仅写订单与佣金；勾选后会尝试 API 拉取点击。与后台 Performance 不一致时可用「Performance 校准导入」（导入数据不会被采集覆盖）。"
+              description="日常采集写入订单与佣金；勾选「含联盟点击」会尝试 API 拉取点击。与后台 Performance 的点击/订单不一致时，请用「Performance 校准导入」对齐点击与订单数（不改佣金，导入后采集不覆盖）。"
             />
           ) : null}
           <Button type="primary" style={{ marginBottom: 12 }} onClick={() => openAdd(p)}>
@@ -196,7 +196,12 @@ export default function ChannelAccountsPage() {
                     <Button size="small" onClick={() => openEdit(row)}>
                       编辑
                     </Button>
-                    {(p.code === 'linkbux' || p.code === 'rewardoo') && user?.role !== 'VIEWER' ? (
+                    {p.code === 'linkbux' && user?.role !== 'VIEWER' ? (
+                      <Button size="small" onClick={() => setImportAccount(row)}>
+                        点击校准导入
+                      </Button>
+                    ) : null}
+                    {p.code === 'rewardoo' && user?.role !== 'VIEWER' ? (
                       <Button size="small" onClick={() => setImportAccount(row)}>
                         Performance 校准导入
                       </Button>

@@ -44,6 +44,9 @@ export function AffiliateClickImportModal({
   const submit = async (rows: ImportClickRow[]) => {
     setUploading(true);
     try {
+      const payload = isRw
+        ? rows
+        : rows.map(({ performanceOrders: _orders, ...rest }) => rest);
       const { data } = await api.post<
         ApiResult<{
           imported: number;
@@ -52,7 +55,7 @@ export function AffiliateClickImportModal({
           minDate: string | null;
           maxDate: string | null;
         }>
-      >(`/channel-accounts/${accountId}/clicks/import`, { rows });
+      >(`/channel-accounts/${accountId}/clicks/import`, { rows: payload });
       if (data.success) {
         message.success(data.message ?? '导入成功');
         resetAndClose();
@@ -75,9 +78,11 @@ export function AffiliateClickImportModal({
         defaultMerchantName: isRw ? merchantName.trim() : undefined,
       });
       setPreview(rows);
-      const orderTotal = rows.reduce((s, r) => s + (r.performanceOrders ?? 0), 0);
+      const orderTotal = isRw
+        ? rows.reduce((s, r) => s + (r.performanceOrders ?? 0), 0)
+        : 0;
       message.info(
-        `已解析 ${rows.length} 行${orderTotal > 0 ? `，合计 ${orderTotal} 单` : ''}`,
+        `已解析 ${rows.length} 行${isRw && orderTotal > 0 ? `，合计 ${orderTotal} 单` : ''}`,
       );
     } catch (e) {
       message.error(e instanceof Error ? e.message : '解析失败');
@@ -101,7 +106,7 @@ export function AffiliateClickImportModal({
 
   return (
     <Modal
-      title={`Performance 校准导入 · ${accountLabel}`}
+      title={isRw ? `Performance 校准导入 · ${accountLabel}` : `点击校准导入 · ${accountLabel}`}
       open={open}
       onCancel={resetAndClose}
       onOk={() => preview.length && void submit(preview)}
@@ -114,20 +119,20 @@ export function AffiliateClickImportModal({
         type="info"
         showIcon
         style={{ marginBottom: 12 }}
-        message={isRw ? 'Rewardoo Performance 校准（点击 + 订单）' : 'LinkBux 点击校准'}
+        message={isRw ? 'Rewardoo Performance 校准（点击 + 订单）' : 'LinkBux 点击校准（仅点击）'}
         description={
           isRw ? (
             <>
               RW 后台无法一次导出「商家 × 按日」：请<strong>先筛 Merchant</strong>，再 Group by
               <strong> Daily</strong> 导出，在下方填 MID 后上传（Date / Clicks / Orders）。
               <br />
-              与 LB 相同：导入标记为校准数据，<strong>后续采集不会覆盖</strong>；佣金仍由采集写入，本导入<strong>不改佣金</strong>。{' '}
+              校准<strong>点击与订单数</strong>，与后台 Performance 对齐；佣金仍由日常采集写入，本导入<strong>不改佣金</strong>。{' '}
               <a onClick={downloadTemplate}>下载按日模板</a>
             </>
           ) : (
             <>
               从 LinkBux 后台 CPS Performance 导出 CSV 或 Excel（.xlsx）直接上传。
-              导入后标记为「校准数据」，后续 API 采集不会覆盖。{' '}
+              仅校准<strong>联盟点击数</strong>，不改订单与佣金；导入后标记为「校准数据」，后续 API 采集不会覆盖。{' '}
               <a onClick={downloadTemplate}>下载模板</a>
             </>
           )
@@ -166,7 +171,7 @@ export function AffiliateClickImportModal({
         description={
           isRw
             ? '支持 RW 导出的 .xlsx（列 Date / Clicks / Orders）。日期支持 2026/8/2、2026-08-02 等。勿用「按商家」汇总导出（无按日明细）。'
-            : '支持 LinkBux 后台原样导出的 .xlsx（列：Merchant Name / MID / Date / Clicks），或 CSV。Total 汇总行会自动跳过。'
+            : '支持 LinkBux 后台原样导出的 .xlsx（列：Merchant Name / MID / Date / Clicks），或 CSV。仅使用点击列，忽略 Orders。Total 汇总行会自动跳过。'
         }
       />
       <Upload.Dragger
@@ -191,7 +196,7 @@ export function AffiliateClickImportModal({
       {preview.length > 0 && (
         <p style={{ marginTop: 12, color: '#666' }}>
           MID {preview[0]?.merchantId}：{preview.length} 天，点击 {previewClicks} 次
-          {previewOrders > 0 ? `，订单 ${previewOrders} 单` : ''}
+          {isRw && previewOrders > 0 ? `，订单 ${previewOrders} 单` : ''}
           {preview[0]?.clickDate && preview[preview.length - 1]?.clickDate
             ? `（${preview[0].clickDate} ~ ${preview[preview.length - 1].clickDate}）`
             : ''}

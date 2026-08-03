@@ -485,8 +485,6 @@ export class SyncService implements OnModuleInit {
       const isRw = item.channelAccount.platform.code === 'rewardoo';
       if (result.rwClickTotal !== undefined) {
         parts.push(`RW 联盟点击 ${result.rwClickTotal}（${start}~${end}）`);
-      } else if (isRw && includeClicks) {
-        parts.push('RW 点击/订单请用「Performance 校准导入」（采集仅写佣金）');
       } else if (isRw && result.rwClickError) {
         parts.push(`RW 联盟点击未写入: ${result.rwClickError.slice(0, 100)}`);
       }

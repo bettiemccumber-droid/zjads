@@ -211,7 +211,7 @@ export default function AdminSyncPage() {
           <span>订单采集区间：</span>
           <RangePicker value={range} onChange={(v) => v && setRange(v as [Dayjs, Dayjs])} />
           <Checkbox checked={includeClicks} onChange={(e) => setIncludeClicks(e.target.checked)}>
-            含联盟点击（LB 仅最后一天）
+            含联盟点击（勾选后采集；LB 仅最后一天）
           </Checkbox>
           <Button type="primary" loading={syncing} onClick={() => void batchSync()}>
             批量采集（含自动导入 Sheet）

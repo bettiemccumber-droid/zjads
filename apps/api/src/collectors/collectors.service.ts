@@ -41,6 +41,8 @@ import {
   buildRwMerchantsByDateFromOrders,
   expandRwPerformanceAggsForRange,
   rwDetailMetricsToClickAggs,
+  fetchRewardooClicksSupplement,
+  mergeRwPerformancePreferApiDaily,
 } from './rewardoo-clicks';
 import { ensurePlatformStatusMappings } from '../common/platform-status-defaults.util';
 import {
@@ -52,7 +54,7 @@ import { buildOrderDateRangeFilter } from '../common/order-date-range.util';
 import { CollectResult, NormalizedOrder } from './types';
 
 export interface CollectOptions {
-  /** 是否采集联盟点击（PM/LH/RW/UI 随订单区间；LB 仅 endDate 单日，历史请导入校准） */
+  /** 是否采集联盟点击；未勾选时仅采集订单/佣金（PM/LH/UI 全区间；LB 仅 endDate 单日） */
   includeClicks?: boolean;
 }
 
@@ -310,12 +312,20 @@ export class CollectorsService {
           let perfAggs = rwDetailMetricsToClickAggs(detailMetrics);
           let perfCommTotal = perfAggs.reduce((s, a) => s + a.performanceCommission, 0);
           perfOrderTotal = perfAggs.reduce((s, a) => s + a.performanceOrders, 0);
+          /** 未勾选联盟点击时仅更新佣金/明细订单，保留校准导入的 clicks */
+          const preserveImportedClicks = !options.includeClicks;
 
           if (perfAggs.length > 0 && (perfCommTotal > 0 || perfOrderTotal > 0)) {
-            await this.clearRwPerformanceDailyInRange(account.id, startDate, endDate);
+            await this.clearRwPerformanceDailyInRange(
+              account.id,
+              startDate,
+              endDate,
+              preserveImportedClicks,
+            );
             await this.persistRwPerformanceDaily(
               account.id,
               expandRwPerformanceAggsForRange(perfAggs, startDate, endDate),
+              preserveImportedClicks,
             );
             rwPerformanceOrderCount = perfOrderTotal;
             if (rwApi) rwApi.orderCount = perfOrderTotal;
@@ -346,10 +356,16 @@ export class CollectorsService {
             perfOrderTotal = perfAggs.reduce((s, a) => s + a.performanceOrders, 0);
             perfCommTotal = perfAggs.reduce((s, a) => s + a.performanceCommission, 0);
             if (perfAggs.length > 0 && (perfCommTotal > 0 || perfOrderTotal > 0)) {
-              await this.clearRwPerformanceDailyInRange(account.id, startDate, endDate);
+              await this.clearRwPerformanceDailyInRange(
+                account.id,
+                startDate,
+                endDate,
+                preserveImportedClicks,
+              );
               await this.persistRwPerformanceDaily(
                 account.id,
                 expandRwPerformanceAggsForRange(perfAggs, startDate, endDate),
+                preserveImportedClicks,
               );
               rwPerformanceOrderCount = perfOrderTotal;
               if (rwApi) rwApi.orderCount = perfOrderTotal;
@@ -366,10 +382,37 @@ export class CollectorsService {
             await onProgress?.(
               `订单已写入 ${orderPersistResult.inserted} 条（Performance ${perfOrderTotal} 单 / $${perfCommTotal.toFixed(2)}）`,
             );
-            if (options.includeClicks !== false) {
-              await onProgress?.(
-                'RW 联盟点击/订单数与后台 Performance 不一致时，请在「我的平台账号 → Performance 校准导入」；采集不再调用慢速 Performance API（佣金已由明细写入）',
-              );
+
+            if (options.includeClicks) {
+              try {
+                await onProgress?.('正在补充 RW 联盟点击…');
+                const clickAggs = await fetchRewardooClicksSupplement(
+                  apiToken,
+                  startDate,
+                  endDate,
+                  async (message) => {
+                    await onProgress?.(message);
+                  },
+                );
+                const clickTotal = clickAggs.reduce((s, a) => s + a.clicks, 0);
+                if (clickTotal > 0) {
+                  const merged = mergeRwPerformancePreferApiDaily(perfAggs, clickAggs);
+                  await this.persistRwPerformanceDaily(
+                    account.id,
+                    expandRwPerformanceAggsForRange(merged, startDate, endDate),
+                  );
+                  rwClickTotal = merged.reduce((s, a) => s + a.clicks, 0);
+                  await onProgress?.(`已合并联盟点击 ${rwClickTotal} 次`);
+                } else {
+                  rwClickError = '联盟点击 API 未解析到有效点击';
+                  await onProgress?.(`${rwClickError}，保留 Performance 汇总 ${perfOrderTotal} 单`);
+                }
+              } catch (clickErr) {
+                const clickMsg =
+                  clickErr instanceof Error ? clickErr.message : String(clickErr);
+                rwClickError = clickMsg.slice(0, 200);
+                await onProgress?.(`RW 联盟点击补充失败: ${clickMsg.slice(0, 80)}`);
+              }
             }
           } else {
             rwPerformanceOrderError =
@@ -441,6 +484,7 @@ export class CollectorsService {
     channelAccountId: number,
     startDate: string,
     endDate: string,
+    preserveClicks = false,
   ) {
     await this.prisma.affiliateMerchantClickDaily.updateMany({
       where: {
@@ -448,12 +492,15 @@ export class CollectorsService {
         source: AffiliateClickSource.api,
         clickDate: buildOrderDateRangeFilter(startDate, endDate)!,
       },
-      data: { performanceOrders: 0, performanceCommission: 0, clicks: 0 },
+      data: preserveClicks
+        ? { performanceOrders: 0, performanceCommission: 0 }
+        : { performanceOrders: 0, performanceCommission: 0, clicks: 0 },
     });
   }
 
   /**
    * 写入 RW Performance 日汇总（orders + comm + clicks，与后台 Performance Daily 一致）
+   * @param preserveClicks 为 true 时仅更新佣金/订单，不覆盖已有联盟点击（校准导入）
    */
   private async persistRwPerformanceDaily(
     channelAccountId: number,
@@ -465,6 +512,7 @@ export class CollectorsService {
       clicks: number;
       commission: number;
     }>,
+    preserveClicks = false,
   ): Promise<void> {
     for (const a of aggs) {
       const clickDate = new Date(`${a.statDate}T00:00:00.000Z`);
@@ -501,7 +549,7 @@ export class CollectorsService {
         },
         update: {
           merchantName: a.merchantName,
-          clicks: a.clicks,
+          clicks: preserveClicks ? existing?.clicks ?? a.clicks : a.clicks,
           performanceOrders: a.orders,
           performanceCommission: a.commission,
         },

@@ -170,7 +170,7 @@ export default function ChannelAccountsPage() {
               showIcon
               style={{ marginBottom: 12 }}
               message="Rewardoo Performance"
-              description="采集只写佣金（transaction_details）。联盟点击与 Performance 订单数请在「Performance 校准导入」上传后台导出（与 LB 点击校准同理，导入后采集不覆盖）。"
+              description="未勾选「含联盟点击」时采集仅写订单与佣金；勾选后会尝试 API 拉取点击。与后台 Performance 不一致时可用「Performance 校准导入」（导入数据不会被采集覆盖）。"
             />
           ) : null}
           <Button type="primary" style={{ marginBottom: 12 }} onClick={() => openAdd(p)}>

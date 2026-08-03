@@ -223,6 +223,29 @@ function buildMerchantGroupMeta(
   return meta;
 }
 
+/** 同 queryKey 下合并商家 ID / mcid / 名称（任一行有值即展示） */
+function buildMerchantInfoByKey(
+  rows: MerchantStatusRow[],
+): Map<string, { merchantId: string; mcid: string | null; merchantName: string | null }> {
+  const map = new Map<string, { merchantId: string; mcid: string | null; merchantName: string | null }>();
+  for (const row of rows) {
+    let info = map.get(row.queryKey);
+    if (!info) {
+      info = {
+        merchantId: row.merchantId ?? row.queryKey,
+        mcid: row.mcid,
+        merchantName: row.merchantName,
+      };
+      map.set(row.queryKey, info);
+      continue;
+    }
+    if (row.merchantId) info.merchantId = row.merchantId;
+    if (row.mcid) info.mcid = row.mcid;
+    if (row.merchantName) info.merchantName = row.merchantName;
+  }
+  return map;
+}
+
 export default function MerchantStatusPage() {
   const { isAdmin } = useAuth();
   const [searchParams] = useSearchParams();
@@ -407,6 +430,16 @@ export default function MerchantStatusPage() {
     [filteredRows],
   );
 
+  const merchantInfoByKey = useMemo(
+    () => buildMerchantInfoByKey(filteredRows),
+    [filteredRows],
+  );
+
+  const merchantMergedOnCell = (_: MerchantStatusRow, index?: number) => ({
+    rowSpan: queryKeyRowSpans[index ?? 0] ?? 1,
+    className: 'merchant-status-merchant-cell',
+  });
+
   const getRowClassName = (r: MerchantStatusRow, index?: number) => {
     const meta = merchantGroupMeta[index ?? 0];
     if (!meta) return '';
@@ -435,21 +468,48 @@ export default function MerchantStatusPage() {
       ),
     },
     {
-      title: '商家',
-      key: 'merchant',
+      title: '商家ID',
+      key: 'merchantId',
+      width: 88,
+      align: 'center',
+      onCell: merchantMergedOnCell,
+      render: (_, r) => {
+        const info = merchantInfoByKey.get(r.queryKey);
+        return <span className="merchant-status-merchant-id">{info?.merchantId ?? r.queryKey}</span>;
+      },
+    },
+    {
+      title: 'mcid',
+      key: 'mcid',
       width: 120,
       align: 'center',
-      onCell: (_, index) => ({
-        rowSpan: queryKeyRowSpans[index ?? 0] ?? 1,
-        className: 'merchant-status-merchant-cell',
-      }),
-      render: (_, r) => (
-        <div className="merchant-status-merchant-block">
-          <div className="merchant-status-merchant-id">{r.queryKey}</div>
-          {r.merchantName && <div className="merchant-status-merchant-name">{r.merchantName}</div>}
-          {r.mcid && <div className="merchant-status-merchant-mcid">{r.mcid}</div>}
-        </div>
-      ),
+      onCell: merchantMergedOnCell,
+      render: (_, r) => {
+        const info = merchantInfoByKey.get(r.queryKey);
+        const mcid = info?.mcid;
+        return mcid ? (
+          <span className="merchant-status-merchant-mcid">{mcid}</span>
+        ) : (
+          <span className="merchant-status-dash">—</span>
+        );
+      },
+    },
+    {
+      title: '商家名',
+      key: 'merchantName',
+      width: 120,
+      align: 'center',
+      ellipsis: true,
+      onCell: merchantMergedOnCell,
+      render: (_, r) => {
+        const info = merchantInfoByKey.get(r.queryKey);
+        const name = info?.merchantName;
+        return name ? (
+          <span className="merchant-status-merchant-name">{name}</span>
+        ) : (
+          <span className="merchant-status-dash">—</span>
+        );
+      },
     },
     {
       title: '平台',
@@ -813,7 +873,7 @@ export default function MerchantStatusPage() {
             rowKey={(r) => `${r.queryKey}|${r.channelAccountId}`}
             dataSource={filteredRows}
             columns={detailColumns}
-            scroll={{ x: 820 }}
+            scroll={{ x: 980 }}
             pagination={{ pageSize: 50, showTotal: (t) => `共 ${t} 条`, size: 'small' }}
             size="small"
             rowClassName={getRowClassName}

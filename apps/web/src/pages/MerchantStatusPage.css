@@ -129,29 +129,27 @@
   vertical-align: middle !important;
 }
 
-.merchant-status-merchant-block,
-.merchant-status-channel-block {
-  text-align: center;
-}
-
 .merchant-status-merchant-id {
   font-size: 13px;
   font-weight: 700;
   color: #0f172a;
 }
 
+.merchant-status-channel-block {
+  text-align: center;
+}
+
 .merchant-status-merchant-name {
-  margin-top: 2px;
   font-size: 12px;
   color: #2563eb;
+  font-weight: 500;
   line-height: 1.3;
   word-break: break-all;
 }
 
 .merchant-status-merchant-mcid {
-  margin-top: 1px;
   font-size: 11px;
-  color: #94a3b8;
+  color: #475569;
   font-family: ui-monospace, monospace;
   word-break: break-all;
 }

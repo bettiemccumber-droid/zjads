@@ -38,10 +38,8 @@ import {
 } from './rewardoo.collector';
 import {
   fetchRewardooPerformanceSummaryAggs,
-  fetchRewardooPerformanceDailyAggs,
   buildRwMerchantsByDateFromOrders,
   expandRwPerformanceAggsForRange,
-  mergeRwPerformancePreferApiDaily,
   rwDetailMetricsToClickAggs,
 } from './rewardoo-clicks';
 import { ensurePlatformStatusMappings } from '../common/platform-status-defaults.util';
@@ -368,77 +366,9 @@ export class CollectorsService {
             await onProgress?.(
               `订单已写入 ${orderPersistResult.inserted} 条（Performance ${perfOrderTotal} 单 / $${perfCommTotal.toFixed(2)}）`,
             );
-
-            try {
-              const merchantsByDate = buildRwMerchantsByDateFromOrders(
-                normalized.map((o) => ({
-                  merchantId: o.merchantId,
-                  orderDate: o.orderDate,
-                  commission: o.commission,
-                })),
-              );
-              const merchantIds = [
-                ...new Set(
-                  normalized
-                    .map((o) => o.merchantId)
-                    .filter((id): id is string => Boolean(id)),
-                ),
-              ];
+            if (options.includeClicks !== false) {
               await onProgress?.(
-                '正在校准 RW 订单数/联盟点击（Performance API，佣金保留 transaction_details）…',
-              );
-              const apiAggs = await fetchRewardooPerformanceDailyAggs(
-                apiToken,
-                startDate,
-                endDate,
-                merchantIds,
-                async (message) => {
-                  await onProgress?.(message);
-                },
-                {
-                  merchantsByDate,
-                  includeClicks: options.includeClicks !== false,
-                  skipOrderFetch: false,
-                },
-              );
-              const apiOrderTotal = apiAggs.reduce((s, a) => s + a.performanceOrders, 0);
-              const apiClickTotal = apiAggs.reduce((s, a) => s + a.clicks, 0);
-
-              if (apiOrderTotal > 0 || apiClickTotal > 0) {
-                const merged = mergeRwPerformancePreferApiDaily(perfAggs, apiAggs);
-                await this.persistRwPerformanceDaily(
-                  account.id,
-                  expandRwPerformanceAggsForRange(merged, startDate, endDate),
-                );
-                const mergedOrders = merged.reduce((s, a) => s + a.performanceOrders, 0);
-                const mergedClicks = merged.reduce((s, a) => s + a.clicks, 0);
-                rwPerformanceOrderCount = mergedOrders;
-                if (rwApi) rwApi.orderCount = mergedOrders;
-                if (options.includeClicks !== false) {
-                  rwClickTotal = mergedClicks;
-                }
-                const clickNote =
-                  options.includeClicks !== false
-                    ? ` / ${mergedClicks} 点击`
-                    : '';
-                await onProgress?.(
-                  `已校准 Performance ${mergedOrders} 单${clickNote}（佣金仍用明细 $${perfCommTotal.toFixed(2)}）`,
-                );
-              } else if (options.includeClicks !== false) {
-                rwClickError = 'Performance API 未解析到有效订单/点击';
-                await onProgress?.(
-                  `${rwClickError}，保留明细汇总 ${perfOrderTotal} 单 / $${perfCommTotal.toFixed(2)}`,
-                );
-              } else {
-                await onProgress?.(
-                  `Performance API 无订单增量，保留明细 ${perfOrderTotal} 单 / $${perfCommTotal.toFixed(2)}`,
-                );
-              }
-            } catch (calErr) {
-              const calMsg = calErr instanceof Error ? calErr.message : String(calErr);
-              rwClickError = calMsg.slice(0, 200);
-              await onProgress?.(
-                `RW Performance 校准失败: ${calMsg.slice(0, 80)}，保留明细 ${perfOrderTotal} 单`,
+                'RW 联盟点击/订单数与后台 Performance 不一致时，请在「我的平台账号 → Performance 校准导入」；采集不再调用慢速 Performance API（佣金已由明细写入）',
               );
             }
           } else {

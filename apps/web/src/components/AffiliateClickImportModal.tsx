@@ -114,15 +114,14 @@ export function AffiliateClickImportModal({
         type="info"
         showIcon
         style={{ marginBottom: 12 }}
-        message={isRw ? 'Rewardoo：单商家补漏导入（可选）' : 'LinkBux 点击校准'}
+        message={isRw ? 'Rewardoo Performance 校准（点击 + 订单）' : 'LinkBux 点击校准'}
         description={
           isRw ? (
             <>
-              <strong>日常请直接重采集</strong>，系统会自动批量拉取各商家×按日 Performance（等同你对每个商家分别
-              筛 Merchant + Group by Daily，但无需手工）。
+              RW 后台无法一次导出「商家 × 按日」：请<strong>先筛 Merchant</strong>，再 Group by
+              <strong> Daily</strong> 导出，在下方填 MID 后上传（Date / Clicks / Orders）。
               <br />
-              仅当<strong>个别商家</strong>采集后仍不对时，再用本功能补漏：筛该商家 → Daily 导出 → 填 MID
-              上传。不改佣金。{' '}
+              与 LB 相同：导入标记为校准数据，<strong>后续采集不会覆盖</strong>；佣金仍由采集写入，本导入<strong>不改佣金</strong>。{' '}
               <a onClick={downloadTemplate}>下载按日模板</a>
             </>
           ) : (

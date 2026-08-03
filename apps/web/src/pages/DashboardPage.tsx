@@ -1061,7 +1061,7 @@ export default function DashboardPage() {
             checked={includeClicks}
             onChange={(e) => setIncludeClicks(e.target.checked)}
           >
-            含联盟点击（LB 仅最后一天，历史可导入校准）
+            含联盟点击（PM/LH/UI 随订单；LB/RW 点击与订单请用「Performance 校准导入」）
           </Checkbox>
           <div className="sync-collect-actions">
             <Button loading={loading} onClick={loadReport}>
@@ -1094,7 +1094,7 @@ export default function DashboardPage() {
         )}
 
         <p className="sync-collect-hint">
-          已接入 PM / LH / LB / RW / UI 订单；PM/LH/RW/UI 联盟点击随订单区间采集（LB 点击仅采区间<strong>最后一天</strong>，更早日期请用「点击校准导入」）。
+          已接入 PM / LH / LB / RW / UI 订单。PM/LH/UI 联盟点击随订单采集；LB 点击仅采区间<strong>最后一天</strong>；RW 点击与订单请用「Performance 校准导入」（采集写佣金，不改校准数据）。
           仅选部分平台采集时<strong>不会</strong>重导 Google Sheet；全选采集后会自动同步<strong>全部</strong> Sheet 广告费，再刷新报表。
           {viewUserId
             ? ' 也可在上方「导入 Sheet」或侧边栏「广告数据源」手动导入。'

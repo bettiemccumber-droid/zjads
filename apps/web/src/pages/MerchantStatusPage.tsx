@@ -100,7 +100,7 @@ const ACTION_COLOR: Record<string, string> = {
   可投: 'green',
   待审核: 'gold',
   未加入: 'default',
-  没有: 'default',
+  无商家: 'default',
   已拒绝: 'red',
   商家已下架: 'orange',
   状态未知: 'purple',
@@ -518,7 +518,7 @@ export default function MerchantStatusPage() {
             <Col span={3}><Statistic title="可投" value={summary.actionable} valueStyle={{ color: '#16a34a' }} /></Col>
             <Col span={3}><Statistic title="待审核" value={summary.pending} valueStyle={{ color: '#ca8a04' }} /></Col>
             <Col span={3}><Statistic title="未加入" value={summary.notJoined} /></Col>
-            <Col span={3}><Statistic title="没有" value={summary.notFound} /></Col>
+            <Col span={3}><Statistic title="无商家" value={summary.notFound} /></Col>
             <Col span={3}><Statistic title="已下架" value={summary.offline} valueStyle={{ color: '#ea580c' }} /></Col>
             <Col span={3}><Statistic title="查询失败" value={summary.failed} valueStyle={{ color: '#dc2626' }} /></Col>
           </Row>

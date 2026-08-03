@@ -16,7 +16,7 @@ export type MerchantActionLabel =
   | '可投'
   | '待审核'
   | '未加入'
-  | '没有'
+  | '无商家'
   | '已拒绝'
   | '商家已下架'
   | '状态未知'

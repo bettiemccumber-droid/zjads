@@ -40,10 +40,17 @@ export const AFFILIATE_CLICK_CSV_TEMPLATE = `merchantId,merchantName,clickDate,c
 388783,Divani.Store DE,2026-06-01,1071,12
 388783,Divani.Store DE,2026-06-02,3124,28`;
 
-/** RW Performance 模板（含订单数） */
-export const RW_PERFORMANCE_CSV_TEMPLATE = `merchantId,merchantName,clickDate,clicks,orders
-122309,BODi,2026-07-27,61,7
-122309,BODi,2026-07-28,71,11`;
+/** RW 按日导出（后台已筛商家，无 MID 列） */
+export const RW_DAILY_ONLY_CSV_TEMPLATE = `Date,Clicks,Orders
+2026-07-27,61,7
+2026-07-28,71,11`;
+
+/** 解析选项：RW 后台「先筛商家 + Group by Daily」导出时无 MID 列 */
+export interface ParseAffiliateClickOptions {
+  /** 导入弹窗填写的商家 MID（与广告系列 merchantId 一致） */
+  defaultMerchantId?: string;
+  defaultMerchantName?: string;
+}
 
 /**
  * 规范化表头键（LinkBux 导出：Merchant Name / MID / Date / Clicks）
@@ -84,6 +91,12 @@ function parseClickDate(raw: unknown): string {
   }
   const s = String(raw).trim();
   if (/^\d{4}-\d{2}-\d{2}/.test(s)) return s.slice(0, 10);
+  const ymdSlash = s.match(/^(\d{4})\/(\d{1,2})\/(\d{1,2})$/);
+  if (ymdSlash) {
+    const month = ymdSlash[2].padStart(2, '0');
+    const day = ymdSlash[3].padStart(2, '0');
+    return `${ymdSlash[1]}-${month}-${day}`;
+  }
   const mdy = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
   if (mdy) {
     const month = mdy[1].padStart(2, '0');
@@ -112,8 +125,14 @@ function parseOrderCount(raw: unknown): number {
 /**
  * 从「表头 → 值」记录列表解析导入行
  */
-function rowsFromHeaderRecords(records: Record<string, unknown>[]): ImportClickRow[] {
+function rowsFromHeaderRecords(
+  records: Record<string, unknown>[],
+  options?: ParseAffiliateClickOptions,
+): ImportClickRow[] {
   if (!records.length) throw new Error('文件中没有数据');
+
+  const defaultMid = String(options?.defaultMerchantId ?? '').trim();
+  const defaultName = String(options?.defaultMerchantName ?? '').trim();
 
   const sampleKeys = Object.keys(records[0]);
   const fieldMap = new Map<keyof ImportClickRow, string>();
@@ -122,14 +141,22 @@ function rowsFromHeaderRecords(records: Record<string, unknown>[]): ImportClickR
     if (mapped && mapped !== 'skip') fieldMap.set(mapped, key);
   }
 
-  if (!fieldMap.has('merchantId') || !fieldMap.has('clickDate')) {
-    throw new Error('须包含 MID/merchantId、Date/clickDate 列');
+  if (!fieldMap.has('clickDate')) {
+    throw new Error('须包含 Date/clickDate 列');
+  }
+  if (!fieldMap.has('merchantId') && !defaultMid) {
+    throw new Error(
+      '导出文件无 MID 列：请先在 RW 后台筛选 Merchant 后 Group by Daily 导出，并在上方填写商家 MID',
+    );
   }
   if (!fieldMap.has('clicks') && !fieldMap.has('performanceOrders')) {
     throw new Error('须包含 Clicks/clicks 和/或 Orders/orders 列');
   }
+  if (defaultMid && !/^\d+$/.test(defaultMid)) {
+    throw new Error('商家 MID 须为数字');
+  }
 
-  const midKey = fieldMap.get('merchantId')!;
+  const midKey = fieldMap.get('merchantId');
   const dateKey = fieldMap.get('clickDate')!;
   const clicksKey = fieldMap.get('clicks');
   const ordersKey = fieldMap.get('performanceOrders');
@@ -137,8 +164,10 @@ function rowsFromHeaderRecords(records: Record<string, unknown>[]): ImportClickR
 
   const rows: ImportClickRow[] = [];
   for (const rec of records) {
-    const merchantId = String(rec[midKey] ?? '').trim();
-    const merchantName = nameKey ? String(rec[nameKey] ?? '').trim() : '';
+    const merchantId = midKey ? String(rec[midKey] ?? '').trim() : defaultMid;
+    const merchantName = nameKey
+      ? String(rec[nameKey] ?? '').trim()
+      : defaultName;
     const clickDate = parseClickDate(rec[dateKey]);
     const clicks = clicksKey ? parseClickCount(rec[clicksKey]) : 0;
     const performanceOrders = ordersKey ? parseOrderCount(rec[ordersKey]) : undefined;
@@ -153,14 +182,19 @@ function rowsFromHeaderRecords(records: Record<string, unknown>[]): ImportClickR
     });
   }
 
-  if (!rows.length) throw new Error('未解析到有效数据行（已跳过 Total 汇总行）');
+  if (!rows.length) {
+    throw new Error('未解析到有效数据行（已跳过 Total 汇总行；请确认已填写 MID 且文件含 Date/Clicks）');
+  }
   return rows;
 }
 
 /**
  * 解析 CSV（UTF-8，首行为表头）
  */
-export function parseAffiliateClickCsv(text: string): ImportClickRow[] {
+export function parseAffiliateClickCsv(
+  text: string,
+  options?: ParseAffiliateClickOptions,
+): ImportClickRow[] {
   const lines = text
     .replace(/^\uFEFF/, '')
     .split(/\r?\n/)
@@ -182,13 +216,16 @@ export function parseAffiliateClickCsv(text: string): ImportClickRow[] {
     records.push(rec);
   }
 
-  return rowsFromHeaderRecords(records);
+  return rowsFromHeaderRecords(records, options);
 }
 
 /**
- * 解析 LinkBux 后台导出的 Excel（.xlsx）
+ * 解析 LinkBux / RW 后台导出的 Excel（.xlsx）
  */
-export async function parseAffiliateClickExcel(buffer: ArrayBuffer): Promise<ImportClickRow[]> {
+export async function parseAffiliateClickExcel(
+  buffer: ArrayBuffer,
+  options?: ParseAffiliateClickOptions,
+): Promise<ImportClickRow[]> {
   const wb = XLSX.read(buffer, { type: 'array', cellDates: true });
   const sheetName = wb.SheetNames[0];
   if (!sheetName) throw new Error('Excel 中没有工作表');
@@ -199,19 +236,22 @@ export async function parseAffiliateClickExcel(buffer: ArrayBuffer): Promise<Imp
     raw: false,
   });
 
-  return rowsFromHeaderRecords(records);
+  return rowsFromHeaderRecords(records, options);
 }
 
 /**
  * 按扩展名解析 CSV 或 Excel
  */
-export async function parseAffiliateClickFile(file: File): Promise<ImportClickRow[]> {
+export async function parseAffiliateClickFile(
+  file: File,
+  options?: ParseAffiliateClickOptions,
+): Promise<ImportClickRow[]> {
   const name = file.name.toLowerCase();
   if (name.endsWith('.xlsx') || name.endsWith('.xls')) {
-    return parseAffiliateClickExcel(await file.arrayBuffer());
+    return parseAffiliateClickExcel(await file.arrayBuffer(), options);
   }
   if (name.endsWith('.csv')) {
-    return parseAffiliateClickCsv(await file.text());
+    return parseAffiliateClickCsv(await file.text(), options);
   }
   throw new Error('仅支持 .csv、.xlsx 文件');
 }

@@ -1,0 +1,245 @@
+.merchant-status-page {
+  --ms-green: #15803d;
+  --ms-green-bg: #ecfdf5;
+  --ms-amber: #b45309;
+  --ms-amber-bg: #fffbeb;
+  --ms-red: #dc2626;
+  --ms-red-bg: #fef2f2;
+  --ms-gray: #64748b;
+  --ms-gray-bg: #f1f5f9;
+  --ms-purple: #7c3aed;
+  --ms-purple-bg: #f5f3ff;
+}
+
+/* ── 汇总指标 ── */
+.merchant-status-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.merchant-status-summary-item {
+  flex: 1 1 88px;
+  min-width: 88px;
+  padding: 12px 10px;
+  border-radius: 10px;
+  text-align: center;
+  border: 1px solid #e2e8f0;
+  background: #fff;
+}
+
+.merchant-status-summary-item .label {
+  font-size: 12px;
+  color: #64748b;
+  margin-bottom: 4px;
+}
+
+.merchant-status-summary-item .value {
+  font-size: 22px;
+  font-weight: 700;
+  line-height: 1.2;
+}
+
+.merchant-status-summary-item.is-actionable .value {
+  color: var(--ms-green);
+}
+.merchant-status-summary-item.is-pending .value {
+  color: var(--ms-amber);
+}
+.merchant-status-summary-item.is-failed .value {
+  color: var(--ms-red);
+}
+.merchant-status-summary-item.is-muted .value {
+  color: var(--ms-gray);
+}
+
+/* ── 结果表格 ── */
+.merchant-status-results .ant-table-thead > tr > th {
+  background: #f8fafc !important;
+  font-weight: 600;
+  font-size: 13px;
+  color: #334155;
+  border-bottom: 2px solid #e2e8f0 !important;
+}
+
+.merchant-status-results .ant-table-tbody > tr > td {
+  vertical-align: middle;
+  border-bottom: 1px solid #f1f5f9 !important;
+}
+
+.merchant-status-merchant-cell {
+  background: #fafbfc !important;
+  border-right: 1px solid #e2e8f0 !important;
+  vertical-align: middle !important;
+}
+
+.merchant-status-merchant-id {
+  font-size: 15px;
+  font-weight: 700;
+  color: #0f172a;
+  letter-spacing: 0.02em;
+}
+
+.merchant-status-merchant-name {
+  margin-top: 4px;
+  font-size: 13px;
+  color: #2563eb;
+  font-weight: 500;
+}
+
+.merchant-status-merchant-mcid {
+  margin-top: 2px;
+  font-size: 12px;
+  color: #94a3b8;
+  font-family: ui-monospace, monospace;
+}
+
+.merchant-status-platform {
+  display: inline-block;
+  padding: 4px 10px;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+}
+
+.merchant-status-platform--partnermatic {
+  background: #eef2ff;
+  color: #4338ca;
+}
+.merchant-status-platform--linkhaitao {
+  background: #fff1f2;
+  color: #be123c;
+}
+.merchant-status-platform--linkbux {
+  background: #fff7ed;
+  color: #c2410c;
+}
+.merchant-status-platform--rewardoo {
+  background: #ecfeff;
+  color: #0e7490;
+}
+.merchant-status-platform--ultrainfluence {
+  background: #f5f3ff;
+  color: #6d28d9;
+}
+.merchant-status-platform--default {
+  background: #f1f5f9;
+  color: #475569;
+}
+
+.merchant-status-channel-name {
+  font-size: 13px;
+  color: #334155;
+  font-weight: 500;
+}
+
+.merchant-status-channel-alias {
+  margin-top: 2px;
+  font-size: 11px;
+  color: #94a3b8;
+  font-family: ui-monospace, monospace;
+}
+
+.merchant-status-availability {
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.merchant-status-availability.is-online {
+  color: var(--ms-green);
+}
+.merchant-status-availability.is-offline {
+  color: var(--ms-red);
+}
+
+/* ── 状态徽章（实心圆角，替代 Tag） ── */
+.merchant-status-pill {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  font-weight: 600;
+  white-space: nowrap;
+  line-height: 1.3;
+}
+
+.merchant-status-pill--sm {
+  font-size: 11px;
+  padding: 2px 8px;
+}
+
+.merchant-status-pill--md {
+  font-size: 13px;
+  padding: 5px 14px;
+  min-width: 76px;
+}
+
+.merchant-status-pill--lg {
+  font-size: 14px;
+  padding: 7px 16px;
+  min-width: 88px;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.06);
+}
+
+.merchant-status-pill--joined {
+  background: var(--ms-green-bg);
+  color: var(--ms-green);
+  border: 1px solid #bbf7d0;
+}
+.merchant-status-pill--pending {
+  background: var(--ms-amber-bg);
+  color: var(--ms-amber);
+  border: 1px solid #fde68a;
+}
+.merchant-status-pill--rejected,
+.merchant-status-pill--failed {
+  background: var(--ms-red-bg);
+  color: var(--ms-red);
+  border: 1px solid #fecaca;
+}
+.merchant-status-pill--not-joined,
+.merchant-status-pill--not-found {
+  background: var(--ms-gray-bg);
+  color: var(--ms-gray);
+  border: 1px solid #e2e8f0;
+}
+.merchant-status-pill--unknown {
+  background: var(--ms-purple-bg);
+  color: var(--ms-purple);
+  border: 1px solid #ddd6fe;
+}
+.merchant-status-pill--actionable {
+  background: linear-gradient(135deg, #dcfce7 0%, #bbf7d0 100%);
+  color: #14532d;
+  border: 1px solid #86efac;
+}
+.merchant-status-pill--offline-action {
+  background: #fff7ed;
+  color: #c2410c;
+  border: 1px solid #fed7aa;
+}
+
+.merchant-status-core {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 0;
+}
+
+.merchant-status-core-label {
+  font-size: 10px;
+  color: #94a3b8;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  font-weight: 600;
+}
+
+.merchant-status-row-actionable > td {
+  background: linear-gradient(90deg, rgba(236, 253, 245, 0.55) 0%, #fff 40%) !important;
+}
+
+.merchant-status-row-failed > td {
+  background: linear-gradient(90deg, rgba(254, 242, 242, 0.5) 0%, #fff 40%) !important;
+}

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState, type CSSProperties } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   Alert,
   Button,
@@ -14,6 +14,7 @@ import {
   Tabs,
   Tag,
   Upload,
+  Tooltip,
   message,
 } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
@@ -24,6 +25,7 @@ import { useAuth } from '../hooks/useAuth';
 import { exportMerchantStatusExcel } from '../utils/exportMerchantStatusExcel';
 import { parseMerchantStatusImport } from '../utils/parseMerchantStatusImport';
 import { adminDefaultDateRange } from '../utils/date-range.util';
+import './MerchantStatusPage.css';
 
 interface QueryableAccount {
   id: number;
@@ -96,25 +98,24 @@ interface EmployeeOption {
   username: string;
 }
 
-const ACTION_COLOR: Record<string, string> = {
-  可投: 'green',
-  待审核: 'gold',
-  未加入: 'default',
-  无商家: 'default',
-  已拒绝: 'red',
-  商家已下架: 'orange',
-  状态未知: 'purple',
-  查询失败: 'red',
+const ACTION_PILL_CLASS: Record<string, string> = {
+  可投: 'actionable',
+  待审核: 'pending',
+  未加入: 'not-joined',
+  无商家: 'not-found',
+  已拒绝: 'rejected',
+  商家已下架: 'offline-action',
+  状态未知: 'unknown',
+  查询失败: 'failed',
 };
 
-/** 账号关系 Tag 颜色（核心状态，需醒目） */
-const RELATIONSHIP_COLOR: Record<string, string> = {
-  joined: 'success',
-  pending: 'warning',
-  rejected: 'error',
-  not_joined: 'default',
-  not_found: 'default',
-  unknown: 'purple',
+const RELATIONSHIP_PILL_CLASS: Record<string, string> = {
+  joined: 'joined',
+  pending: 'pending',
+  rejected: 'rejected',
+  not_joined: 'not-joined',
+  not_found: 'not-found',
+  unknown: 'unknown',
 };
 
 const RELATIONSHIP_LABEL: Record<string, string> = {
@@ -126,24 +127,56 @@ const RELATIONSHIP_LABEL: Record<string, string> = {
   unknown: '未知',
 };
 
-const AVAILABILITY_COLOR: Record<string, string> = {
-  online: 'success',
-  offline: 'error',
-  unknown: 'default',
-};
-
 const AVAILABILITY_LABEL: Record<string, string> = {
   online: '上架',
   offline: '下架',
   unknown: '未知',
 };
 
-const STATUS_TAG_STYLE: CSSProperties = {
-  fontSize: 13,
-  fontWeight: 600,
-  padding: '2px 10px',
-  margin: 0,
+const PLATFORM_CLASS: Record<string, string> = {
+  partnermatic: 'partnermatic',
+  linkhaitao: 'linkhaitao',
+  linkbux: 'linkbux',
+  rewardoo: 'rewardoo',
+  ultrainfluence: 'ultrainfluence',
 };
+
+function renderStatusPill(label: string, variant: string, size: 'sm' | 'md' | 'lg' = 'md') {
+  return (
+    <span className={`merchant-status-pill merchant-status-pill--${size} merchant-status-pill--${variant}`}>
+      {label}
+    </span>
+  );
+}
+
+function renderPlatformBadge(platformCode: string, platformName: string) {
+  const cls = PLATFORM_CLASS[platformCode] ?? 'default';
+  return (
+    <span className={`merchant-status-platform merchant-status-platform--${cls}`}>{platformName}</span>
+  );
+}
+
+function SummaryBar({ summary }: { summary: SummaryCounts }) {
+  const items: Array<{ key: string; label: string; value: number; className?: string }> = [
+    { key: 'total', label: '总结果', value: summary.total },
+    { key: 'actionable', label: '可投', value: summary.actionable, className: 'is-actionable' },
+    { key: 'pending', label: '待审核', value: summary.pending, className: 'is-pending' },
+    { key: 'notJoined', label: '未加入', value: summary.notJoined },
+    { key: 'notFound', label: '无商家', value: summary.notFound, className: 'is-muted' },
+    { key: 'offline', label: '已下架', value: summary.offline, className: 'is-pending' },
+    { key: 'failed', label: '查询失败', value: summary.failed, className: 'is-failed' },
+  ];
+  return (
+    <div className="merchant-status-summary">
+      {items.map((item) => (
+        <div key={item.key} className={`merchant-status-summary-item ${item.className ?? ''}`}>
+          <div className="label">{item.label}</div>
+          <div className="value">{item.value}</div>
+        </div>
+      ))}
+    </div>
+  );
+}
 
 /**
  * 计算同键连续行的 rowSpan（用于按商家分组展示）
@@ -160,14 +193,6 @@ function buildRowSpanByKey<T>(rows: T[], keyFn: (row: T) => string): number[] {
     i = j;
   }
   return spans;
-}
-
-function renderStatusTag(label: string, color: string, bold = false) {
-  return (
-    <Tag color={color} style={bold ? STATUS_TAG_STYLE : { margin: 0 }}>
-      {label}
-    </Tag>
-  );
 }
 
 export default function MerchantStatusPage() {
@@ -348,75 +373,83 @@ export default function MerchantStatusPage() {
     {
       title: '商家',
       key: 'merchant',
-      width: 200,
+      width: 168,
       fixed: 'left',
-      onCell: (_, index) => ({ rowSpan: queryKeyRowSpans[index ?? 0] ?? 1 }),
+      onCell: (_, index) => ({
+        rowSpan: queryKeyRowSpans[index ?? 0] ?? 1,
+        className: 'merchant-status-merchant-cell',
+      }),
       render: (_, r) => (
         <div>
-          <div style={{ fontWeight: 600, fontSize: 14 }}>{r.queryKey}</div>
-          {r.merchantName && (
-            <div style={{ color: '#1677ff', marginTop: 2 }}>{r.merchantName}</div>
-          )}
-          {r.mcid && (
-            <div style={{ color: '#8c8c8c', fontSize: 12, marginTop: 2 }}>{r.mcid}</div>
-          )}
+          <div className="merchant-status-merchant-id">{r.queryKey}</div>
+          {r.merchantName && <div className="merchant-status-merchant-name">{r.merchantName}</div>}
+          {r.mcid && <div className="merchant-status-merchant-mcid">{r.mcid}</div>}
         </div>
       ),
     },
     {
       title: '平台',
-      dataIndex: 'platformName',
-      width: 110,
-      render: (v: string) => <Tag color="blue">{v}</Tag>,
+      key: 'platform',
+      width: 120,
+      render: (_, r) => renderPlatformBadge(r.platformCode, r.platformName),
     },
     {
       title: '渠道账号',
       key: 'channel',
-      width: 140,
+      width: 130,
       render: (_, r) => (
         <div>
-          <div>{r.channelDisplayName}</div>
-          <div style={{ color: '#8c8c8c', fontSize: 12 }}>{r.affiliateAlias}</div>
+          <div className="merchant-status-channel-name">{r.channelDisplayName}</div>
+          <div className="merchant-status-channel-alias">{r.affiliateAlias}</div>
         </div>
       ),
     },
     {
       title: '上架',
       dataIndex: 'merchantAvailability',
-      width: 80,
+      width: 64,
       align: 'center',
-      render: (v: string) =>
-        renderStatusTag(AVAILABILITY_LABEL[v] ?? v, AVAILABILITY_COLOR[v] ?? 'default'),
-    },
-    {
-      title: '账号关系',
-      dataIndex: 'relationshipStatus',
-      width: 110,
-      align: 'center',
-      fixed: 'right',
-      render: (v: string, r) => {
-        if (r.error) {
-          return renderStatusTag('查询失败', 'error', true);
+      render: (v: string) => {
+        if (v === 'online' || v === 'offline') {
+          return (
+            <span className={`merchant-status-availability is-${v}`}>
+              {AVAILABILITY_LABEL[v]}
+            </span>
+          );
         }
-        const label = RELATIONSHIP_LABEL[v] ?? v;
-        return renderStatusTag(label, RELATIONSHIP_COLOR[v] ?? 'default', true);
+        return <span style={{ color: '#cbd5e1' }}>—</span>;
       },
     },
     {
-      title: '投前建议',
-      dataIndex: 'actionLabel',
-      width: 110,
+      title: '账号关系 · 投前建议',
+      key: 'coreStatus',
+      width: 140,
       align: 'center',
       fixed: 'right',
-      render: (v: string) => renderStatusTag(v, ACTION_COLOR[v] ?? 'default', true),
-    },
-    {
-      title: '错误',
-      dataIndex: 'error',
-      width: 180,
-      ellipsis: true,
-      render: (v: string | null) =>
-        v ? <span style={{ color: '#dc2626', fontSize: 12 }}>{v}</span> : null,
+      render: (_, r) => {
+        const relLabel = r.error ? '查询失败' : (RELATIONSHIP_LABEL[r.relationshipStatus] ?? r.relationshipStatus);
+        const relVariant = r.error ? 'failed' : (RELATIONSHIP_PILL_CLASS[r.relationshipStatus] ?? 'unknown');
+        const actVariant = ACTION_PILL_CLASS[r.actionLabel] ?? 'unknown';
+        const relPill = r.error ? (
+          <Tooltip title={r.error} placement="topLeft">
+            {renderStatusPill(relLabel, relVariant, 'lg')}
+          </Tooltip>
+        ) : (
+          renderStatusPill(relLabel, relVariant, 'lg')
+        );
+        return (
+          <div className="merchant-status-core">
+            <div>
+              <div className="merchant-status-core-label">账号关系</div>
+              {relPill}
+            </div>
+            <div>
+              <div className="merchant-status-core-label">投前建议</div>
+              {renderStatusPill(r.actionLabel, actVariant, 'sm')}
+            </div>
+          </div>
+        );
+      },
     },
   ];
 
@@ -472,7 +505,7 @@ export default function MerchantStatusPage() {
   );
 
   return (
-    <div>
+    <div className="merchant-status-page">
       {viewUserId && (
         <Alert
           type="info"
@@ -614,15 +647,7 @@ export default function MerchantStatusPage() {
 
       {summary && activeTab !== 'admin-summary' && (
         <Card size="small" style={{ marginBottom: 16 }}>
-          <Space wrap size={[24, 8]}>
-            <Statistic title="总结果" value={summary.total} />
-            <Statistic title="可投" value={summary.actionable} valueStyle={{ color: '#16a34a', fontWeight: 700 }} />
-            <Statistic title="待审核" value={summary.pending} valueStyle={{ color: '#ca8a04', fontWeight: 700 }} />
-            <Statistic title="未加入" value={summary.notJoined} />
-            <Statistic title="无商家" value={summary.notFound} valueStyle={{ color: '#8c8c8c' }} />
-            <Statistic title="已下架" value={summary.offline} valueStyle={{ color: '#ea580c' }} />
-            <Statistic title="查询失败" value={summary.failed} valueStyle={{ color: '#dc2626', fontWeight: 700 }} />
-          </Space>
+          <SummaryBar summary={summary} />
         </Card>
       )}
 
@@ -720,12 +745,14 @@ export default function MerchantStatusPage() {
           }
         >
           <Table
+            className="merchant-status-results"
             rowKey={(r) => `${r.queryKey}|${r.channelAccountId}`}
             dataSource={filteredRows}
             columns={detailColumns}
-            scroll={{ x: 900 }}
+            scroll={{ x: 760 }}
             pagination={{ pageSize: 50, showTotal: (t) => `共 ${t} 条` }}
             size="middle"
+            bordered
             rowClassName={(r) => {
               if (r.error) return 'merchant-status-row-failed';
               if (r.actionable) return 'merchant-status-row-actionable';

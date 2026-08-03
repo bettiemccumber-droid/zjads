@@ -161,7 +161,16 @@ export default function ChannelAccountsPage() {
               showIcon
               style={{ marginBottom: 12 }}
               message="LinkBux 点击"
-              description="日常采集仅更新区间最后一天的 API 点击；历史或需与后台对齐的数据请用「点击校准导入」。"
+              description="日常采集仅更新区间最后一天的 API 点击；历史或需与后台对齐的数据请用「Performance 校准导入」。"
+            />
+          ) : null}
+          {p.code === 'rewardoo' ? (
+            <Alert
+              type="info"
+              showIcon
+              style={{ marginBottom: 12 }}
+              message="Rewardoo Performance"
+              description="佣金由采集自动对齐；若联盟点击或订单数与后台 Performance 不一致，请用「Performance 校准导入」（仅改点击/订单，不改佣金）。"
             />
           ) : null}
           <Button type="primary" style={{ marginBottom: 12 }} onClick={() => openAdd(p)}>
@@ -187,9 +196,9 @@ export default function ChannelAccountsPage() {
                     <Button size="small" onClick={() => openEdit(row)}>
                       编辑
                     </Button>
-                    {p.code === 'linkbux' && user?.role !== 'VIEWER' ? (
+                    {(p.code === 'linkbux' || p.code === 'rewardoo') && user?.role !== 'VIEWER' ? (
                       <Button size="small" onClick={() => setImportAccount(row)}>
-                        点击校准导入
+                        Performance 校准导入
                       </Button>
                     ) : null}
                     <Button danger size="small" onClick={() => onDelete(row.id)}>
@@ -278,6 +287,7 @@ export default function ChannelAccountsPage() {
           open
           accountId={importAccount.id}
           accountLabel={`${importAccount.displayName} (${importAccount.affiliateAlias})`}
+          platformCode={importAccount.platformCode}
           onClose={() => setImportAccount(null)}
         />
       ) : null}

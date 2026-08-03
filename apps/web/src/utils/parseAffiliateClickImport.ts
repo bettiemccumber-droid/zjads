@@ -1,33 +1,49 @@
 import * as XLSX from 'xlsx';
 
-/** 手动导入的单条联盟点击 */
+/** 手动导入的单条 Performance 校准行 */
 export interface ImportClickRow {
   merchantId: string;
   clickDate: string;
   clicks: number;
   merchantName?: string;
+  /** RW Performance Orders（可选） */
+  performanceOrders?: number;
 }
 
 const HEADER_ALIASES: Record<string, keyof ImportClickRow | 'skip'> = {
   merchantid: 'merchantId',
   mid: 'merchantId',
   merchant_id: 'merchantId',
+  m_id: 'merchantId',
   clickdate: 'clickDate',
   date: 'clickDate',
   click_date: 'clickDate',
   day: 'clickDate',
+  transaction_date: 'clickDate',
   clicks: 'clicks',
   click: 'clicks',
   total_clicks: 'clicks',
   merchantname: 'merchantName',
   merchant_name: 'merchantName',
   name: 'merchantName',
+  advertiser_name: 'merchantName',
+  sitename: 'merchantName',
+  orders: 'performanceOrders',
+  order: 'performanceOrders',
+  order_count: 'performanceOrders',
+  order_counts: 'performanceOrders',
+  total_orders: 'performanceOrders',
 };
 
 /** CSV 模板（下载用） */
-export const AFFILIATE_CLICK_CSV_TEMPLATE = `merchantId,merchantName,clickDate,clicks
-388783,Divani.Store DE,2026-06-01,1071
-388783,Divani.Store DE,2026-06-02,3124`;
+export const AFFILIATE_CLICK_CSV_TEMPLATE = `merchantId,merchantName,clickDate,clicks,orders
+388783,Divani.Store DE,2026-06-01,1071,12
+388783,Divani.Store DE,2026-06-02,3124,28`;
+
+/** RW Performance 模板（含订单数） */
+export const RW_PERFORMANCE_CSV_TEMPLATE = `merchantId,merchantName,clickDate,clicks,orders
+122309,BODi,2026-07-27,61,7
+122309,BODi,2026-07-28,71,11`;
 
 /**
  * 规范化表头键（LinkBux 导出：Merchant Name / MID / Date / Clicks）
@@ -68,6 +84,12 @@ function parseClickDate(raw: unknown): string {
   }
   const s = String(raw).trim();
   if (/^\d{4}-\d{2}-\d{2}/.test(s)) return s.slice(0, 10);
+  const mdy = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+  if (mdy) {
+    const month = mdy[1].padStart(2, '0');
+    const day = mdy[2].padStart(2, '0');
+    return `${mdy[3]}-${month}-${day}`;
+  }
   const parsed = new Date(s);
   if (!Number.isNaN(parsed.getTime())) return parsed.toISOString().slice(0, 10);
   return '';
@@ -83,6 +105,10 @@ function shouldSkipRow(merchantId: string, merchantName: string, clickDate: stri
   return !/^\d+$/.test(merchantId);
 }
 
+function parseOrderCount(raw: unknown): number {
+  return parseClickCount(raw);
+}
+
 /**
  * 从「表头 → 值」记录列表解析导入行
  */
@@ -96,13 +122,17 @@ function rowsFromHeaderRecords(records: Record<string, unknown>[]): ImportClickR
     if (mapped && mapped !== 'skip') fieldMap.set(mapped, key);
   }
 
-  if (!fieldMap.has('merchantId') || !fieldMap.has('clickDate') || !fieldMap.has('clicks')) {
-    throw new Error('须包含 MID/merchantId、Date/clickDate、Clicks/clicks 列');
+  if (!fieldMap.has('merchantId') || !fieldMap.has('clickDate')) {
+    throw new Error('须包含 MID/merchantId、Date/clickDate 列');
+  }
+  if (!fieldMap.has('clicks') && !fieldMap.has('performanceOrders')) {
+    throw new Error('须包含 Clicks/clicks 和/或 Orders/orders 列');
   }
 
   const midKey = fieldMap.get('merchantId')!;
   const dateKey = fieldMap.get('clickDate')!;
-  const clicksKey = fieldMap.get('clicks')!;
+  const clicksKey = fieldMap.get('clicks');
+  const ordersKey = fieldMap.get('performanceOrders');
   const nameKey = fieldMap.get('merchantName');
 
   const rows: ImportClickRow[] = [];
@@ -110,13 +140,16 @@ function rowsFromHeaderRecords(records: Record<string, unknown>[]): ImportClickR
     const merchantId = String(rec[midKey] ?? '').trim();
     const merchantName = nameKey ? String(rec[nameKey] ?? '').trim() : '';
     const clickDate = parseClickDate(rec[dateKey]);
-    const clicks = parseClickCount(rec[clicksKey]);
+    const clicks = clicksKey ? parseClickCount(rec[clicksKey]) : 0;
+    const performanceOrders = ordersKey ? parseOrderCount(rec[ordersKey]) : undefined;
     if (shouldSkipRow(merchantId, merchantName, clickDate)) continue;
+    if (clicks === 0 && (performanceOrders === undefined || performanceOrders === 0)) continue;
     rows.push({
       merchantId,
       merchantName: merchantName || undefined,
       clickDate,
       clicks,
+      ...(performanceOrders !== undefined ? { performanceOrders } : {}),
     });
   }
 

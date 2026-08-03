@@ -34,6 +34,12 @@ class ImportClickRowBody {
   @IsOptional()
   @IsString()
   merchantName?: string;
+
+  /** RW Performance 看板 Orders（可选） */
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  performanceOrders?: number;
 }
 
 class ImportClicksBody {
@@ -135,7 +141,7 @@ export class ChannelAccountsController {
   }
 
   /**
-   * 手动导入联盟点击校准（LB 后台导出 → CSV/JSON，历史数据补齐）
+   * 手动导入 Performance 校准（LB/RW 后台导出 → CSV/Excel；不覆盖佣金）
    */
   @Post(':id/clicks/import')
   async importClicks(
@@ -147,6 +153,11 @@ export class ChannelAccountsController {
       return { success: false, data: null, message: '只读账号无法导入' };
     }
     const data = await this.affiliateClicks.importManualClicks(user, id, body.rows);
-    return ok(data, `已导入 ${data.imported} 条，合计 ${data.totalClicks} 次点击`);
+    const orderPart =
+      data.totalOrders > 0 ? ` / ${data.totalOrders} 单` : '';
+    return ok(
+      data,
+      `已导入 ${data.imported} 条，合计 ${data.totalClicks} 次点击${orderPart}（佣金未改动）`,
+    );
   }
 }

@@ -533,6 +533,7 @@ async function fetchAccountDailyPerformanceMetrics_(
 ): Promise<Map<string, RwAccountDailyMetrics>> {
   const accountDaily = new Map<string, RwAccountDailyMetrics>();
 
+  const midFilter = targetMid ? rwMidParams_(targetMid) : {};
   const getSources: Array<{
     label: string;
     mod: string;
@@ -543,13 +544,13 @@ async function fetchAccountDailyPerformanceMetrics_(
       label: 'performance/report daily',
       mod: 'performance',
       op: 'report',
-      params: { begin: startDate, end: endDate, group_by: 'day' },
+      params: { begin: startDate, end: endDate, group_by: 'day', ...midFilter },
     },
     {
       label: 'performance/report',
       mod: 'performance',
       op: 'report',
-      params: { begin: startDate, end: endDate },
+      params: { begin: startDate, end: endDate, ...midFilter },
     },
     {
       label: 'medium/performance CPS daily',
@@ -560,6 +561,7 @@ async function fetchAccountDailyPerformanceMetrics_(
         end_date: endDate,
         offer_type: 'CPS',
         dimension: 'day',
+        ...midFilter,
       },
     },
     {
@@ -570,13 +572,14 @@ async function fetchAccountDailyPerformanceMetrics_(
         begin_date: startDate,
         end_date: endDate,
         offer_type: 'CPS',
+        ...midFilter,
       },
     },
     {
       label: 'medium/performance',
       mod: 'medium',
       op: 'performance',
-      params: { begin_date: startDate, end_date: endDate },
+      params: { begin_date: startDate, end_date: endDate, ...midFilter },
     },
   ];
 

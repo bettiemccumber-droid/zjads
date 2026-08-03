@@ -53,7 +53,7 @@
   color: var(--ms-gray);
 }
 
-/* ── 结果表格（紧凑行高） ── */
+/* ── 结果表格（紧凑行高、内容居中） ── */
 .merchant-status-results .ant-table-thead > tr > th {
   background: #f8fafc !important;
   font-weight: 600;
@@ -61,13 +61,15 @@
   color: #475569;
   border-bottom: 1px solid #e2e8f0 !important;
   padding: 8px 10px !important;
+  text-align: center !important;
 }
 
 .merchant-status-results .ant-table-tbody > tr > td {
-  vertical-align: middle;
+  vertical-align: middle !important;
   border-bottom: 1px solid #f1f5f9 !important;
   padding: 5px 10px !important;
   font-size: 12px;
+  text-align: center !important;
 }
 
 .merchant-status-results .ant-table-tbody > tr:hover > td {
@@ -81,15 +83,26 @@
 .merchant-status-row-no {
   display: inline-block;
   min-width: 22px;
-  font-size: 12px;
-  font-weight: 600;
-  color: #94a3b8;
+  font-size: 13px;
+  font-weight: 700;
+  color: #64748b;
+}
+
+.merchant-status-index-cell {
+  background: #f8fafc !important;
+  border-right: 1px solid #eef2f7 !important;
+  vertical-align: middle !important;
 }
 
 .merchant-status-merchant-cell {
   background: #f8fafc !important;
   border-right: 1px solid #eef2f7 !important;
   vertical-align: middle !important;
+}
+
+.merchant-status-merchant-block,
+.merchant-status-channel-block {
+  text-align: center;
 }
 
 .merchant-status-merchant-id {
@@ -121,6 +134,7 @@
   font-size: 11px;
   font-weight: 600;
   white-space: nowrap;
+  text-align: center;
 }
 
 .merchant-status-platform--partnermatic {

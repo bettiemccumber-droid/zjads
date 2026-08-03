@@ -195,6 +195,19 @@ function buildRowSpanByKey<T>(rows: T[], keyFn: (row: T) => string): number[] {
   return spans;
 }
 
+/** 按商家分组编号（与 queryKey rowSpan 对齐） */
+function buildMerchantGroupNumbers(rowSpans: number[]): number[] {
+  const nums = new Array<number>(rowSpans.length).fill(0);
+  let no = 0;
+  for (let i = 0; i < rowSpans.length; i += 1) {
+    if (rowSpans[i] > 0) {
+      no += 1;
+      nums[i] = no;
+    }
+  }
+  return nums;
+}
+
 export default function MerchantStatusPage() {
   const { isAdmin } = useAuth();
   const [searchParams] = useSearchParams();
@@ -369,28 +382,36 @@ export default function MerchantStatusPage() {
     [filteredRows],
   );
 
+  const merchantGroupNumbers = useMemo(
+    () => buildMerchantGroupNumbers(queryKeyRowSpans),
+    [queryKeyRowSpans],
+  );
+
   const detailColumns: ColumnsType<MerchantStatusRow> = [
     {
       title: '#',
       key: 'index',
       width: 44,
-      fixed: 'left',
       align: 'center',
+      onCell: (_, index) => ({
+        rowSpan: queryKeyRowSpans[index ?? 0] ?? 1,
+        className: 'merchant-status-index-cell',
+      }),
       render: (_, __, index) => (
-        <span className="merchant-status-row-no">{index + 1}</span>
+        <span className="merchant-status-row-no">{merchantGroupNumbers[index ?? 0]}</span>
       ),
     },
     {
       title: '商家',
       key: 'merchant',
       width: 120,
-      fixed: 'left',
+      align: 'center',
       onCell: (_, index) => ({
         rowSpan: queryKeyRowSpans[index ?? 0] ?? 1,
         className: 'merchant-status-merchant-cell',
       }),
       render: (_, r) => (
-        <div>
+        <div className="merchant-status-merchant-block">
           <div className="merchant-status-merchant-id">{r.queryKey}</div>
           {r.merchantName && <div className="merchant-status-merchant-name">{r.merchantName}</div>}
           {r.mcid && <div className="merchant-status-merchant-mcid">{r.mcid}</div>}
@@ -401,15 +422,17 @@ export default function MerchantStatusPage() {
       title: '平台',
       key: 'platform',
       width: 108,
+      align: 'center',
       render: (_, r) => renderPlatformBadge(r.platformCode, r.platformName),
     },
     {
       title: '渠道账号',
       key: 'channel',
       width: 112,
+      align: 'center',
       ellipsis: true,
       render: (_, r) => (
-        <div>
+        <div className="merchant-status-channel-block">
           <div className="merchant-status-channel-name">{r.channelDisplayName}</div>
           <div className="merchant-status-channel-alias">{r.affiliateAlias}</div>
         </div>

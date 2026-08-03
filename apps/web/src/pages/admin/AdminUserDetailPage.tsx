@@ -118,6 +118,13 @@ export default function AdminUserDetailPage() {
             打开完整工作台 →
           </Link>
         )}
+        {detail && (
+          <Link
+            to={`/merchants?userId=${detail.user.id}&username=${encodeURIComponent(detail.user.username)}`}
+          >
+            商家状态查询 →
+          </Link>
+        )}
       </Space>
 
       <Card title={detail ? `用户：${detail.user.username}` : '用户详情'} loading={loading}>

@@ -5,6 +5,7 @@ import DashboardPage from './pages/DashboardPage';
 import ChannelAccountsPage from './pages/ChannelAccountsPage';
 import SettlementPage from './pages/SettlementPage';
 import AdSourcesPage from './pages/AdSourcesPage';
+import MerchantStatusPage from './pages/MerchantStatusPage';
 import AdminRoute from './components/AdminRoute';
 import AdminHomePage from './pages/admin/AdminHomePage';
 import AdminStatsPage from './pages/admin/AdminStatsPage';
@@ -52,6 +53,7 @@ export default function App() {
         >
           <Route index element={<HomeRedirect />} />
           <Route path="dashboard" element={<DashboardPage />} />
+          <Route path="merchants" element={<MerchantStatusPage />} />
           <Route
             path="channel-accounts"
             element={

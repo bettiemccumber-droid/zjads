@@ -10,6 +10,7 @@ import {
   CrownOutlined,
   SyncOutlined,
   PieChartOutlined,
+  ShopOutlined,
 } from '@ant-design/icons';
 import { Link, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../hooks/useAuth';
@@ -23,6 +24,11 @@ const employeeMenuItems = [
     key: '/channel-accounts',
     icon: <BankOutlined />,
     label: <Link to="/channel-accounts">我的平台账号</Link>,
+  },
+  {
+    key: '/merchants',
+    icon: <ShopOutlined />,
+    label: <Link to="/merchants">商家状态查询</Link>,
   },
   { key: '/settlement', icon: <BarChartOutlined />, label: <Link to="/settlement">结算查询</Link> },
   {
@@ -54,6 +60,11 @@ const adminMenuItems = [
     key: '/dashboard',
     icon: <DashboardOutlined />,
     label: <Link to="/dashboard">员工工作台</Link>,
+  },
+  {
+    key: '/merchants',
+    icon: <ShopOutlined />,
+    label: <Link to="/merchants">商家状态查询</Link>,
   },
 ];
 

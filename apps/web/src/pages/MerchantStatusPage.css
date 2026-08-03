@@ -15,27 +15,27 @@
 .merchant-status-summary {
   display: flex;
   flex-wrap: wrap;
-  gap: 10px;
+  gap: 8px;
 }
 
 .merchant-status-summary-item {
-  flex: 1 1 88px;
-  min-width: 88px;
-  padding: 12px 10px;
-  border-radius: 10px;
+  flex: 1 1 72px;
+  min-width: 72px;
+  padding: 8px 6px;
+  border-radius: 8px;
   text-align: center;
   border: 1px solid #e2e8f0;
   background: #fff;
 }
 
 .merchant-status-summary-item .label {
-  font-size: 12px;
+  font-size: 11px;
   color: #64748b;
-  margin-bottom: 4px;
+  margin-bottom: 2px;
 }
 
 .merchant-status-summary-item .value {
-  font-size: 22px;
+  font-size: 18px;
   font-weight: 700;
   line-height: 1.2;
 }
@@ -53,54 +53,74 @@
   color: var(--ms-gray);
 }
 
-/* ── 结果表格 ── */
+/* ── 结果表格（紧凑行高） ── */
 .merchant-status-results .ant-table-thead > tr > th {
   background: #f8fafc !important;
   font-weight: 600;
-  font-size: 13px;
-  color: #334155;
-  border-bottom: 2px solid #e2e8f0 !important;
+  font-size: 12px;
+  color: #475569;
+  border-bottom: 1px solid #e2e8f0 !important;
+  padding: 8px 10px !important;
 }
 
 .merchant-status-results .ant-table-tbody > tr > td {
   vertical-align: middle;
   border-bottom: 1px solid #f1f5f9 !important;
+  padding: 5px 10px !important;
+  font-size: 12px;
+}
+
+.merchant-status-results .ant-table-tbody > tr:hover > td {
+  background: #fafbfc !important;
+}
+
+.merchant-status-col-relationship {
+  background: #fafbfc !important;
+}
+
+.merchant-status-row-no {
+  display: inline-block;
+  min-width: 22px;
+  font-size: 12px;
+  font-weight: 600;
+  color: #94a3b8;
 }
 
 .merchant-status-merchant-cell {
-  background: #fafbfc !important;
-  border-right: 1px solid #e2e8f0 !important;
+  background: #f8fafc !important;
+  border-right: 1px solid #eef2f7 !important;
   vertical-align: middle !important;
 }
 
 .merchant-status-merchant-id {
-  font-size: 15px;
+  font-size: 13px;
   font-weight: 700;
   color: #0f172a;
-  letter-spacing: 0.02em;
 }
 
 .merchant-status-merchant-name {
-  margin-top: 4px;
-  font-size: 13px;
+  margin-top: 2px;
+  font-size: 12px;
   color: #2563eb;
-  font-weight: 500;
+  line-height: 1.3;
+  word-break: break-all;
 }
 
 .merchant-status-merchant-mcid {
-  margin-top: 2px;
-  font-size: 12px;
+  margin-top: 1px;
+  font-size: 11px;
   color: #94a3b8;
   font-family: ui-monospace, monospace;
+  word-break: break-all;
 }
 
 .merchant-status-platform {
   display: inline-block;
-  padding: 4px 10px;
-  border-radius: 6px;
-  font-size: 12px;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 11px;
   font-weight: 600;
-  letter-spacing: 0.01em;
+  white-space: nowrap;
 }
 
 .merchant-status-platform--partnermatic {
@@ -129,20 +149,19 @@
 }
 
 .merchant-status-channel-name {
-  font-size: 13px;
+  font-size: 12px;
   color: #334155;
-  font-weight: 500;
+  line-height: 1.3;
 }
 
 .merchant-status-channel-alias {
-  margin-top: 2px;
-  font-size: 11px;
+  font-size: 10px;
   color: #94a3b8;
   font-family: ui-monospace, monospace;
 }
 
 .merchant-status-availability {
-  font-size: 12px;
+  font-size: 11px;
   font-weight: 600;
 }
 
@@ -153,33 +172,30 @@
   color: var(--ms-red);
 }
 
-/* ── 状态徽章（实心圆角，替代 Tag） ── */
+.merchant-status-dash {
+  color: #cbd5e1;
+}
+
+/* ── 状态徽章 ── */
 .merchant-status-pill {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  border-radius: 999px;
+  border-radius: 4px;
   font-weight: 600;
   white-space: nowrap;
-  line-height: 1.3;
+  line-height: 1.2;
 }
 
 .merchant-status-pill--sm {
   font-size: 11px;
-  padding: 2px 8px;
+  padding: 2px 6px;
 }
 
 .merchant-status-pill--md {
-  font-size: 13px;
-  padding: 5px 14px;
-  min-width: 76px;
-}
-
-.merchant-status-pill--lg {
-  font-size: 14px;
-  padding: 7px 16px;
-  min-width: 88px;
-  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.06);
+  font-size: 12px;
+  padding: 3px 8px;
+  min-width: 64px;
 }
 
 .merchant-status-pill--joined {
@@ -210,9 +226,9 @@
   border: 1px solid #ddd6fe;
 }
 .merchant-status-pill--actionable {
-  background: linear-gradient(135deg, #dcfce7 0%, #bbf7d0 100%);
-  color: #14532d;
-  border: 1px solid #86efac;
+  background: var(--ms-green-bg);
+  color: var(--ms-green);
+  border: 1px solid #bbf7d0;
 }
 .merchant-status-pill--offline-action {
   background: #fff7ed;
@@ -220,26 +236,10 @@
   border: 1px solid #fed7aa;
 }
 
-.merchant-status-core {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 6px;
-  padding: 4px 0;
-}
-
-.merchant-status-core-label {
-  font-size: 10px;
-  color: #94a3b8;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-  font-weight: 600;
-}
-
 .merchant-status-row-actionable > td {
-  background: linear-gradient(90deg, rgba(236, 253, 245, 0.55) 0%, #fff 40%) !important;
+  background: #f6ffed !important;
 }
 
 .merchant-status-row-failed > td {
-  background: linear-gradient(90deg, rgba(254, 242, 242, 0.5) 0%, #fff 40%) !important;
+  background: #fffafa !important;
 }

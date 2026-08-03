@@ -141,7 +141,7 @@ const PLATFORM_CLASS: Record<string, string> = {
   ultrainfluence: 'ultrainfluence',
 };
 
-function renderStatusPill(label: string, variant: string, size: 'sm' | 'md' | 'lg' = 'md') {
+function renderStatusPill(label: string, variant: string, size: 'sm' | 'md' = 'md') {
   return (
     <span className={`merchant-status-pill merchant-status-pill--${size} merchant-status-pill--${variant}`}>
       {label}
@@ -371,9 +371,19 @@ export default function MerchantStatusPage() {
 
   const detailColumns: ColumnsType<MerchantStatusRow> = [
     {
+      title: '#',
+      key: 'index',
+      width: 44,
+      fixed: 'left',
+      align: 'center',
+      render: (_, __, index) => (
+        <span className="merchant-status-row-no">{index + 1}</span>
+      ),
+    },
+    {
       title: '商家',
       key: 'merchant',
-      width: 168,
+      width: 120,
       fixed: 'left',
       onCell: (_, index) => ({
         rowSpan: queryKeyRowSpans[index ?? 0] ?? 1,
@@ -390,13 +400,14 @@ export default function MerchantStatusPage() {
     {
       title: '平台',
       key: 'platform',
-      width: 120,
+      width: 108,
       render: (_, r) => renderPlatformBadge(r.platformCode, r.platformName),
     },
     {
       title: '渠道账号',
       key: 'channel',
-      width: 130,
+      width: 112,
+      ellipsis: true,
       render: (_, r) => (
         <div>
           <div className="merchant-status-channel-name">{r.channelDisplayName}</div>
@@ -407,7 +418,7 @@ export default function MerchantStatusPage() {
     {
       title: '上架',
       dataIndex: 'merchantAvailability',
-      width: 64,
+      width: 52,
       align: 'center',
       render: (v: string) => {
         if (v === 'online' || v === 'offline') {
@@ -417,39 +428,36 @@ export default function MerchantStatusPage() {
             </span>
           );
         }
-        return <span style={{ color: '#cbd5e1' }}>—</span>;
+        return <span className="merchant-status-dash">—</span>;
       },
     },
     {
-      title: '账号关系 · 投前建议',
-      key: 'coreStatus',
-      width: 140,
+      title: '账号关系',
+      key: 'relationship',
+      width: 92,
       align: 'center',
       fixed: 'right',
+      className: 'merchant-status-col-relationship',
       render: (_, r) => {
-        const relLabel = r.error ? '查询失败' : (RELATIONSHIP_LABEL[r.relationshipStatus] ?? r.relationshipStatus);
-        const relVariant = r.error ? 'failed' : (RELATIONSHIP_PILL_CLASS[r.relationshipStatus] ?? 'unknown');
-        const actVariant = ACTION_PILL_CLASS[r.actionLabel] ?? 'unknown';
-        const relPill = r.error ? (
+        const label = r.error ? '查询失败' : (RELATIONSHIP_LABEL[r.relationshipStatus] ?? r.relationshipStatus);
+        const variant = r.error ? 'failed' : (RELATIONSHIP_PILL_CLASS[r.relationshipStatus] ?? 'unknown');
+        const pill = renderStatusPill(label, variant, 'md');
+        return r.error ? (
           <Tooltip title={r.error} placement="topLeft">
-            {renderStatusPill(relLabel, relVariant, 'lg')}
+            {pill}
           </Tooltip>
         ) : (
-          renderStatusPill(relLabel, relVariant, 'lg')
-        );
-        return (
-          <div className="merchant-status-core">
-            <div>
-              <div className="merchant-status-core-label">账号关系</div>
-              {relPill}
-            </div>
-            <div>
-              <div className="merchant-status-core-label">投前建议</div>
-              {renderStatusPill(r.actionLabel, actVariant, 'sm')}
-            </div>
-          </div>
+          pill
         );
       },
+    },
+    {
+      title: '投前建议',
+      dataIndex: 'actionLabel',
+      width: 88,
+      align: 'center',
+      fixed: 'right',
+      render: (v: string) => renderStatusPill(v, ACTION_PILL_CLASS[v] ?? 'unknown', 'sm'),
     },
   ];
 
@@ -749,10 +757,9 @@ export default function MerchantStatusPage() {
             rowKey={(r) => `${r.queryKey}|${r.channelAccountId}`}
             dataSource={filteredRows}
             columns={detailColumns}
-            scroll={{ x: 760 }}
-            pagination={{ pageSize: 50, showTotal: (t) => `共 ${t} 条` }}
-            size="middle"
-            bordered
+            scroll={{ x: 820 }}
+            pagination={{ pageSize: 50, showTotal: (t) => `共 ${t} 条`, size: 'small' }}
+            size="small"
             rowClassName={(r) => {
               if (r.error) return 'merchant-status-row-failed';
               if (r.actionable) return 'merchant-status-row-actionable';

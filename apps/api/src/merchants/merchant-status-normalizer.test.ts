@@ -15,6 +15,7 @@ function runTests() {
   assert.equal(normalizeMerchantAvailability('Online'), 'online');
   assert.equal(normalizeMerchantAvailability('Offline'), 'offline');
   assert.equal(buildActionLabel('joined', 'online', false), '可投');
+  assert.equal(buildActionLabel('not_found', 'unknown', false), '没有');
   assert.equal(isMerchantActionable('joined', 'online'), true);
   assert.equal(buildActionLabel('joined', 'offline', false), '商家已下架');
   assert.deepEqual(parseMerchantQueryText('18649156\n144471'), [

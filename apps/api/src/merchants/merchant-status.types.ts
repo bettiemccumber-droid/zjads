@@ -4,6 +4,8 @@ export type RelationshipStatus =
   | 'pending'
   | 'rejected'
   | 'not_joined'
+  /** 该平台 API 中查无此商家（如跨平台 MID 不互通） */
+  | 'not_found'
   | 'unknown';
 
 /** 商家在平台的上架状态 */
@@ -14,6 +16,7 @@ export type MerchantActionLabel =
   | '可投'
   | '待审核'
   | '未加入'
+  | '没有'
   | '已拒绝'
   | '商家已下架'
   | '状态未知'
@@ -54,6 +57,8 @@ export interface MerchantStatusSummaryCounts {
   pending: number;
   rejected: number;
   notJoined: number;
+  /** 该平台查无此商家 */
+  notFound: number;
   offline: number;
   unknown: number;
   failed: number;

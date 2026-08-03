@@ -45,6 +45,7 @@ export function buildActionLabel(
   hasError: boolean,
 ): MerchantActionLabel {
   if (hasError) return '查询失败';
+  if (relationshipStatus === 'not_found') return '没有';
   if (relationshipStatus === 'pending') return '待审核';
   if (relationshipStatus === 'rejected') return '已拒绝';
   if (relationshipStatus === 'not_joined') return '未加入';

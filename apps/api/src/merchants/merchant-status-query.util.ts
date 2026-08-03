@@ -82,12 +82,7 @@ export async function queryMerchantStatusForAccount(
     const match = brands.find((row) => monetizationRowMatchesQuery(row, ctx.query));
 
     if (!match) {
-      return buildStatusRow_(base, ctx.query, {
-        relationshipStatus: 'not_joined',
-        relationshipRaw: null,
-        merchantAvailability: 'unknown',
-        availabilityRaw: null,
-      });
+      return buildStatusRow_(base, ctx.query, buildNotFoundStatus_());
     }
 
     const mapped = mapMonetizationBrandRow(match);
@@ -138,15 +133,20 @@ export function matchMerchantStatusFromPreload(
 
   const match = brands.find((row) => monetizationRowMatchesQuery(row, ctx.query));
   if (!match) {
-    return buildStatusRow_(base, ctx.query, {
-      relationshipStatus: 'not_joined',
-      relationshipRaw: null,
-      merchantAvailability: 'unknown',
-      availabilityRaw: null,
-    });
+    return buildStatusRow_(base, ctx.query, buildNotFoundStatus_());
   }
 
   return buildStatusRow_(base, ctx.query, mapMonetizationBrandRow(match));
+}
+
+/** 平台 API 未匹配到该商家（跨平台 ID 不互通等） */
+function buildNotFoundStatus_(): Partial<ReturnType<typeof mapMonetizationBrandRow>> {
+  return {
+    relationshipStatus: 'not_found',
+    relationshipRaw: null,
+    merchantAvailability: 'unknown',
+    availabilityRaw: null,
+  };
 }
 
 async function loadMonetizationBrands_(
@@ -225,6 +225,7 @@ export function summarizeMerchantStatusRows(rows: MerchantStatusRow[]): Merchant
     pending: 0,
     rejected: 0,
     notJoined: 0,
+    notFound: 0,
     offline: 0,
     unknown: 0,
     failed: 0,
@@ -238,6 +239,7 @@ export function summarizeMerchantStatusRows(rows: MerchantStatusRow[]): Merchant
     if (row.actionable) summary.actionable += 1;
     else if (row.relationshipStatus === 'pending') summary.pending += 1;
     else if (row.relationshipStatus === 'rejected') summary.rejected += 1;
+    else if (row.relationshipStatus === 'not_found') summary.notFound += 1;
     else if (row.relationshipStatus === 'not_joined') summary.notJoined += 1;
     else if (row.merchantAvailability === 'offline') summary.offline += 1;
     else summary.unknown += 1;

@@ -254,7 +254,7 @@ export function rwDetailMetricsNeedApiSupplement(
     clickDate: string;
     performanceOrders: number;
   }>,
-  normalized: Array<{ merchantId: string; orderDate: Date }>,
+  normalized: Array<{ merchantId: string | null; orderDate: Date }>,
 ): boolean {
   const perfByKey = new Map<string, number>();
   for (const m of detailMetrics) {

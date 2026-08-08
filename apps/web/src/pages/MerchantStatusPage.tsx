@@ -378,11 +378,16 @@ export default function MerchantStatusPage() {
     try {
       const { data } = await api.post<
         ApiResult<{ items: MerchantStatusRow[]; summary: SummaryCounts }>
-      >('/merchants/status/query', {
-        items,
-        channelAccountIds: selectedAccountIds,
-        ...(viewUserId ? { targetUserId: viewUserId } : {}),
-      });
+      >(
+        '/merchants/status/query',
+        {
+          items,
+          channelAccountIds: selectedAccountIds,
+          ...(viewUserId ? { targetUserId: viewUserId } : {}),
+        },
+        /** LH 等联盟 API 批量扫描可能较慢 */
+        { timeout: 600000 },
+      );
       if (data.success) {
         setRows(data.data.items);
         setSummary(data.data.summary);
@@ -390,6 +395,8 @@ export default function MerchantStatusPage() {
       } else {
         message.error(data.message || '查询失败');
       }
+    } catch (e) {
+      message.error(e instanceof Error ? e.message : '请求超时或网络错误，请稍后重试');
     } finally {
       setLoading(false);
     }

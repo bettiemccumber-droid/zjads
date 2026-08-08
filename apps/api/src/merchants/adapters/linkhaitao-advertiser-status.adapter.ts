@@ -8,6 +8,9 @@ const LH_API_BASE = 'https://www.linkhaitao.com/api.php';
 const MIN_REQUEST_INTERVAL_MS = 4200;
 const MAX_PAGES = 20;
 const PER_PAGE = 1000;
+/** 9999 频率限制时最多重试次数 */
+const RATE_LIMIT_RETRIES = 2;
+const RATE_LIMIT_RETRY_WAIT_MS = 10000;
 
 /** join_status: 1=No Relationship, 2=Processing, 3=Rejected, 4=Joined */
 const LH_JOIN_STATUSES = ['4', '2', '3', '1'] as const;
@@ -36,18 +39,34 @@ export async function fetchLinkHaitaoAdvertiserStatus(
 ): Promise<MonetizationBrandRow[]> {
   const wantedKeys = buildWantedKeys_(filter);
   const byMid = new Map<string, MonetizationBrandRow>();
+  const maxApiCalls = resolveMaxApiCalls_(wantedKeys);
+  let apiCalls = 0;
+  let rateLimited = false;
 
-  /** 每种 join_status 分页拉取；有 MID 过滤时在找齐后提前停止 */
-  for (const joinStatus of LH_JOIN_STATUSES) {
+  /** 每种 join_status 分页拉取；有目标商家时在找齐或达到请求上限后停止 */
+  outer: for (const joinStatus of LH_JOIN_STATUSES) {
     for (const merchantStatus of ['1', '0'] as const) {
       let page = 1;
       while (page <= MAX_PAGES) {
-        const rows = await fetchLhAdvertiserStatusPage_(apiToken, {
-          join_status: joinStatus,
-          merchant_status: merchantStatus,
-          page: String(page),
-          per_page: String(PER_PAGE),
-        });
+        if (wantedKeys && apiCalls >= maxApiCalls) break outer;
+
+        let rows: LhAdvertiserStatusRow[];
+        try {
+          rows = await fetchLhAdvertiserStatusPage_(apiToken, {
+            join_status: joinStatus,
+            merchant_status: merchantStatus,
+            page: String(page),
+            per_page: String(PER_PAGE),
+          });
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err);
+          if (wantedKeys && message.includes('9999')) {
+            rateLimited = true;
+            break outer;
+          }
+          throw err;
+        }
+        apiCalls += 1;
 
         for (const row of rows) {
           const mapped = mapLhStatusRow_(row);
@@ -57,12 +76,15 @@ export async function fetchLinkHaitaoAdvertiserStatus(
         }
 
         if (rows.length < PER_PAGE) break;
-        if (wantedKeys && allWantedFound_(wantedKeys, byMid)) break;
+        if (wantedKeys && allWantedFound_(wantedKeys, byMid)) break outer;
         page += 1;
       }
-      if (wantedKeys && allWantedFound_(wantedKeys, byMid)) break;
+      if (wantedKeys && allWantedFound_(wantedKeys, byMid)) break outer;
     }
-    if (wantedKeys && allWantedFound_(wantedKeys, byMid)) break;
+  }
+
+  if (rateLimited && !wantedKeys) {
+    throw new Error('请求频率限制，请稍后重试 (9999)');
   }
 
   if (!wantedKeys) {
@@ -80,36 +102,63 @@ async function fetchLhAdvertiserStatusPage_(
   apiToken: string,
   extra: Record<string, string>,
 ): Promise<LhAdvertiserStatusRow[]> {
-  await throttleLhRequest_();
+  let lastError: Error | null = null;
 
-  const { data } = await axios.get(LH_API_BASE, {
-    params: {
-      mod: 'medium',
-      op: LH_ADVERTISER_STATUS_OP,
-      token: apiToken,
-      ...extra,
-    },
-    timeout: 120000,
-    validateStatus: () => true,
-  });
+  for (let attempt = 0; attempt <= RATE_LIMIT_RETRIES; attempt += 1) {
+    if (attempt > 0) {
+      await sleep_(RATE_LIMIT_RETRY_WAIT_MS);
+    }
 
-  if (typeof data === 'string') {
-    throw new Error(data.slice(0, 200) || 'Advertiser Status API 无响应');
+    await throttleLhRequest_();
+
+    const { data } = await axios.get(LH_API_BASE, {
+      params: {
+        mod: 'medium',
+        op: LH_ADVERTISER_STATUS_OP,
+        token: apiToken,
+        ...extra,
+      },
+      timeout: 120000,
+      validateStatus: () => true,
+    });
+
+    if (typeof data === 'string') {
+      throw new Error(data.slice(0, 200) || 'Advertiser Status API 无响应');
+    }
+
+    const root = data as Record<string, unknown>;
+    const status = root.status as Record<string, unknown> | undefined;
+    const code = status?.code ?? root.code;
+
+    if (code === 9999 || code === '9999') {
+      lastError = new Error('请求频率限制，请稍后重试 (9999)');
+      continue;
+    }
+    if (code != null && code !== 0 && code !== '0' && code !== 200 && code !== '200') {
+      const msg = String(status?.msg ?? root.msg ?? 'Advertiser Status API 错误');
+      throw new Error(msg);
+    }
+
+    return extractLhAdvertiserStatusList_(root);
   }
 
-  const root = data as Record<string, unknown>;
-  const status = root.status as Record<string, unknown> | undefined;
-  const code = status?.code ?? root.code;
+  throw lastError ?? new Error('Advertiser Status API 无响应');
+}
 
-  if (code === 9999 || code === '9999') {
-    throw new Error('请求频率限制，请稍后重试 (9999)');
-  }
-  if (code != null && code !== 0 && code !== '0' && code !== 200 && code !== '200') {
-    const msg = String(status?.msg ?? root.msg ?? 'Advertiser Status API 错误');
-    throw new Error(msg);
-  }
+/**
+ * 有明确查询目标时限制 LH 分页扫描次数，避免单条查询扫全库导致超时或 9999
+ */
+function resolveMaxApiCalls_(wantedKeys: Set<string> | null): number {
+  if (!wantedKeys) return Number.MAX_SAFE_INTEGER;
+  const n = wantedKeys.size;
+  if (n <= 1) return 12;
+  if (n <= 10) return 24;
+  if (n <= 50) return 40;
+  return Math.min(80, 24 + Math.ceil(n / 4));
+}
 
-  return extractLhAdvertiserStatusList_(root);
+function sleep_(ms: number) {
+  return new Promise((r) => setTimeout(r, ms));
 }
 
 /** 解析 merchantCheckList3 返回列表（兼容 data[] / data.list / list） */

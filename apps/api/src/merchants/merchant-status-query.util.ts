@@ -37,7 +37,7 @@ export interface MerchantStatusQueryContext {
 /** Rewardoo 使用 MerchantDetails API */
 const REWARDOO_MERCHANT_DETAILS = 'rewardoo';
 
-/** LinkHaitao 使用 Advertiser Status API（merchantCheckList3） */
+/** LinkHaitao 使用 Monetization API（api.linkhaitao.com） */
 const LINKHAITAO_ADVERTISER_STATUS = 'linkhaitao';
 
 /**

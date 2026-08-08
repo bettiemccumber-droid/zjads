@@ -31,8 +31,8 @@ export class AffiliateClicksService {
   constructor(private readonly prisma: PrismaService) {}
 
   /**
-   * 手动导入 Performance 校准（LB 仅点击；RW 点击 + 订单数；不修改 performanceCommission）
-   * 标记为 manual，后续 API 采集不会覆盖
+   * 手动导入 Performance 校准（LB 仅点击；RW 可填点击 + 订单数；不改 commission）
+   * 标记 manual：采集时保留导入的 clicks；若导入含订单数则订单也保留，否则由采集补写；佣金随采集更新
    */
   async importManualClicks(
     user: AuthUser,

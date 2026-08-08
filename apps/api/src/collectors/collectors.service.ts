@@ -38,6 +38,7 @@ import {
 } from './rewardoo.collector';
 import {
   fetchRewardooPerformanceSummaryAggs,
+  fetchRewardooPerformanceDailyAggs,
   buildRwMerchantsByDateFromOrders,
   expandRwPerformanceAggsForRange,
   rwDetailMetricsToClickAggs,
@@ -315,6 +316,40 @@ export class CollectorsService {
           /** 未勾选联盟点击时仅更新佣金/明细订单，保留校准导入的 clicks */
           const preserveImportedClicks = !options.includeClicks;
 
+          /** transaction_details 按日汇总可能漏掉部分商家/日期，用 Performance API 补缺（与 RW 后台 Daily 对齐） */
+          if (perfOrderTotal > 0 || perfCommTotal > 0) {
+            try {
+              await onProgress?.('RW Performance API 按日校验…');
+              const ordersBeforeApi = perfOrderTotal;
+              const apiDailyAggs = await fetchRewardooPerformanceDailyAggs(
+                apiToken,
+                startDate,
+                endDate,
+                undefined,
+                async (message) => {
+                  await onProgress?.(message);
+                },
+                { includeClicks: false, skipOrderFetch: false },
+              );
+              perfAggs = mergeRwPerformancePreferApiDaily(perfAggs, apiDailyAggs);
+              perfOrderTotal = perfAggs.reduce((s, a) => s + a.performanceOrders, 0);
+              perfCommTotal = perfAggs.reduce((s, a) => s + a.performanceCommission, 0);
+              const supplemented = perfOrderTotal - ordersBeforeApi;
+              if (supplemented > 0) {
+                perfSource = 'transaction_details+API';
+                await onProgress?.(
+                  `Performance API 补缺 ${supplemented} 单（明细 ${ordersBeforeApi} → 合并 ${perfOrderTotal}）`,
+                );
+              }
+            } catch (apiMergeErr) {
+              const apiMsg =
+                apiMergeErr instanceof Error ? apiMergeErr.message : String(apiMergeErr);
+              await onProgress?.(
+                `Performance API 按日校验跳过: ${apiMsg.slice(0, 80)}（仍用 transaction_details）`,
+              );
+            }
+          }
+
           if (perfAggs.length > 0 && (perfCommTotal > 0 || perfOrderTotal > 0)) {
             await this.clearRwPerformanceDailyInRange(
               account.id,
@@ -500,7 +535,8 @@ export class CollectorsService {
 
   /**
    * 写入 RW Performance 日汇总（orders + comm + clicks，与后台 Performance Daily 一致）
-   * @param preserveClicks 为 true 时仅更新佣金/订单，不覆盖已有联盟点击（校准导入）
+   * @param preserveClicks 为 true 时 API 行仅更新佣金/订单，不覆盖已有联盟点击（校准导入）
+   * manual 行：始终保留 clicks；导入含订单数时保留 orders，否则补写 orders；commission 随采集更新
    */
   private async persistRwPerformanceDaily(
     channelAccountId: number,
@@ -526,6 +562,26 @@ export class CollectorsService {
         },
       });
       if (existing?.source === AffiliateClickSource.manual) {
+        /**
+         * 校准行：始终保留导入的 clicks；
+         * 若导入时已填写订单数（performanceOrders > 0）则一并保留，否则由采集补写订单。
+         * 佣金始终随采集更新（导入不改 commission）。
+         */
+        const preserveManualOrders = existing.performanceOrders > 0;
+        await this.prisma.affiliateMerchantClickDaily.update({
+          where: {
+            channelAccountId_merchantId_clickDate: {
+              channelAccountId,
+              merchantId: a.merchantId,
+              clickDate,
+            },
+          },
+          data: {
+            merchantName: a.merchantName || existing.merchantName,
+            performanceCommission: a.commission,
+            ...(preserveManualOrders ? {} : { performanceOrders: a.orders }),
+          },
+        });
         continue;
       }
 

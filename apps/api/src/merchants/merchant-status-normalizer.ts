@@ -125,11 +125,17 @@ export function monetizationRowMatchesQuery(
   const qMcid = query.mcid?.trim().toLowerCase();
   const qDomain = query.domain?.trim().toLowerCase().replace(/^https?:\/\//, '').replace(/\/+$/, '');
 
-  const rowMid = row.m_id != null ? String(row.m_id) : null;
+  const rowMid =
+    row.mid != null
+      ? String(row.mid)
+      : row.m_id != null
+        ? String(row.m_id)
+        : null;
   const rowSlug = rowMid?.toLowerCase();
+  const rowMcid = row.mcid?.toLowerCase();
 
   if (qMid && (mapped.merchantId === qMid || rowMid === qMid)) return true;
-  if (qMcid && (mapped.mcid?.toLowerCase() === qMcid || rowSlug === qMcid)) return true;
+  if (qMcid && (mapped.mcid?.toLowerCase() === qMcid || rowSlug === qMcid || rowMcid === qMcid)) return true;
   if (qDomain && mapped.siteUrl) {
     const site = mapped.siteUrl
       .toLowerCase()

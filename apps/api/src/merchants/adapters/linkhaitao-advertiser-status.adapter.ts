@@ -13,17 +13,20 @@ const RATE_LIMIT_RETRIES = 2;
 const RATE_LIMIT_RETRY_WAIT_MS = 10000;
 
 /** join_status: 1=No Relationship, 2=Processing, 3=Rejected, 4=Joined */
-const LH_JOIN_STATUSES = ['4', '2', '3', '1'] as const;
+const LH_JOINED_STATUS = '4';
+const LH_OTHER_JOIN_STATUSES = ['2', '3', '1'] as const;
 
 let lastRequestAt = 0;
 
 interface LhAdvertiserStatusRow {
-  m_id?: string;
+  m_id?: string | number;
+  mid?: string | number;
+  mcid?: string;
   sitename?: string;
   site_url?: string;
   datetime?: string;
-  join_status?: string;
-  merchant_status?: string;
+  join_status?: string | number;
+  merchant_status?: string | number;
   tracking_url?: string;
   tracking_url_short?: string;
   adv_type?: string;
@@ -39,16 +42,29 @@ export async function fetchLinkHaitaoAdvertiserStatus(
 ): Promise<MonetizationBrandRow[]> {
   const wantedKeys = buildWantedKeys_(filter);
   const byMid = new Map<string, MonetizationBrandRow>();
-  const maxApiCalls = resolveMaxApiCalls_(wantedKeys);
-  let apiCalls = 0;
+  const maxOtherStatusCalls = resolveMaxOtherStatusCalls_(wantedKeys);
+  let otherStatusCalls = 0;
   let rateLimited = false;
 
-  /** 每种 join_status 分页拉取；有目标商家时在找齐或达到请求上限后停止 */
-  outer: for (const joinStatus of LH_JOIN_STATUSES) {
+  /**
+   * 有明确查询目标时：已 Join 列表优先全量分页（不受 12 次上限），
+   * 避免 Joined 商家排在较后页时被误判为「无商家」。
+   */
+  const scanCombos: Array<{ joinStatus: string; budgeted: boolean }> = wantedKeys
+    ? [
+        { joinStatus: LH_JOINED_STATUS, budgeted: false },
+        ...LH_OTHER_JOIN_STATUSES.map((joinStatus) => ({ joinStatus, budgeted: true })),
+      ]
+    : [
+        { joinStatus: LH_JOINED_STATUS, budgeted: false },
+        ...LH_OTHER_JOIN_STATUSES.map((joinStatus) => ({ joinStatus, budgeted: false })),
+      ];
+
+  outer: for (const { joinStatus, budgeted } of scanCombos) {
     for (const merchantStatus of ['1', '0'] as const) {
       let page = 1;
       while (page <= MAX_PAGES) {
-        if (wantedKeys && apiCalls >= maxApiCalls) break outer;
+        if (budgeted && wantedKeys && otherStatusCalls >= maxOtherStatusCalls) break outer;
 
         let rows: LhAdvertiserStatusRow[];
         try {
@@ -66,14 +82,9 @@ export async function fetchLinkHaitaoAdvertiserStatus(
           }
           throw err;
         }
-        apiCalls += 1;
+        if (budgeted) otherStatusCalls += 1;
 
-        for (const row of rows) {
-          const mapped = mapLhStatusRow_(row);
-          const dedupeKey = String(row.m_id ?? mapped.mcid ?? mapped.mid ?? '');
-          if (!dedupeKey) continue;
-          byMid.set(dedupeKey, mapped);
-        }
+        ingestLhStatusRows_(rows, byMid);
 
         if (rows.length < PER_PAGE) break;
         if (wantedKeys && allWantedFound_(wantedKeys, byMid)) break outer;
@@ -146,15 +157,24 @@ async function fetchLhAdvertiserStatusPage_(
 }
 
 /**
- * 有明确查询目标时限制 LH 分页扫描次数，避免单条查询扫全库导致超时或 9999
+ * 非 Joined 状态的扫描预算（Joined 已优先全量分页）
  */
-function resolveMaxApiCalls_(wantedKeys: Set<string> | null): number {
+function resolveMaxOtherStatusCalls_(wantedKeys: Set<string> | null): number {
   if (!wantedKeys) return Number.MAX_SAFE_INTEGER;
   const n = wantedKeys.size;
-  if (n <= 1) return 12;
-  if (n <= 10) return 24;
-  if (n <= 50) return 40;
-  return Math.min(80, 24 + Math.ceil(n / 4));
+  if (n <= 1) return 8;
+  if (n <= 10) return 16;
+  if (n <= 50) return 24;
+  return Math.min(40, 16 + Math.ceil(n / 8));
+}
+
+function ingestLhStatusRows_(rows: LhAdvertiserStatusRow[], byMid: Map<string, MonetizationBrandRow>) {
+  for (const row of rows) {
+    const mapped = mapLhStatusRow_(row);
+    const dedupeKey = String(row.m_id ?? row.mid ?? row.mcid ?? mapped.mcid ?? mapped.mid ?? '');
+    if (!dedupeKey) continue;
+    byMid.set(dedupeKey, mapped);
+  }
 }
 
 function sleep_(ms: number) {
@@ -181,11 +201,13 @@ function extractLhAdvertiserStatusList_(root: Record<string, unknown>): LhAdvert
 
 function mapLhStatusRow_(row: LhAdvertiserStatusRow): MonetizationBrandRow {
   return {
-    m_id: row.m_id,
+    m_id: row.m_id != null ? String(row.m_id) : undefined,
+    mid: row.mid != null ? String(row.mid) : undefined,
+    mcid: row.mcid != null ? String(row.mcid) : undefined,
     sitename: row.sitename,
     site_url: row.site_url,
-    join_status: row.join_status,
-    merchant_status: row.merchant_status,
+    join_status: row.join_status != null ? String(row.join_status) : undefined,
+    merchant_status: row.merchant_status != null ? String(row.merchant_status) : undefined,
   };
 }
 
@@ -202,10 +224,13 @@ function buildWantedKeys_(filter?: { mids?: string[]; mcids?: string[] }): Set<s
 }
 
 function rowMatchesWanted_(row: MonetizationBrandRow, wanted: Set<string>): boolean {
-  const mid = row.mid ?? (row.m_id && /^\d+$/.test(String(row.m_id)) ? row.m_id : null);
-  const mcid = row.mcid ?? (row.m_id && !/^\d+$/.test(String(row.m_id)) ? row.m_id : null);
-  if (mid && wanted.has(`mid:${mid}`)) return true;
-  if (mcid && wanted.has(`mcid:${String(mcid).toLowerCase()}`)) return true;
+  const ids = extractLhRowIds_(row);
+  for (const mid of ids.mids) {
+    if (wanted.has(`mid:${mid}`)) return true;
+  }
+  for (const mcid of ids.mcids) {
+    if (wanted.has(`mcid:${mcid}`)) return true;
+  }
   return false;
 }
 
@@ -214,15 +239,12 @@ function allWantedFound_(wanted: Set<string>, byMid: Map<string, MonetizationBra
     const [, id] = key.split(':');
     let hit = false;
     for (const row of byMid.values()) {
-      if (key.startsWith('mid:') && (String(row.mid ?? '') === id || String(row.m_id ?? '') === id)) {
+      const ids = extractLhRowIds_(row);
+      if (key.startsWith('mid:') && ids.mids.includes(id)) {
         hit = true;
         break;
       }
-      if (
-        key.startsWith('mcid:') &&
-        (String(row.mcid ?? '').toLowerCase() === id ||
-          String(row.m_id ?? '').toLowerCase() === id)
-      ) {
+      if (key.startsWith('mcid:') && ids.mcids.includes(id.toLowerCase())) {
         hit = true;
         break;
       }
@@ -230,6 +252,20 @@ function allWantedFound_(wanted: Set<string>, byMid: Map<string, MonetizationBra
     if (!hit) return false;
   }
   return true;
+}
+
+/** 从 LH 行提取全部可用的数字 MID / slug mcid */
+function extractLhRowIds_(row: MonetizationBrandRow): { mids: string[]; mcids: string[] } {
+  const mids = new Set<string>();
+  const mcids = new Set<string>();
+  for (const raw of [row.mid, row.m_id, row.mcid]) {
+    if (raw == null) continue;
+    const s = String(raw).trim();
+    if (!s) continue;
+    if (/^\d+$/.test(s)) mids.add(s);
+    else mcids.add(s.toLowerCase());
+  }
+  return { mids: [...mids], mcids: [...mcids] };
 }
 
 async function throttleLhRequest_() {

@@ -34,6 +34,7 @@ import {
   normalizeRewardooOrders,
   summarizeRwCommissionApi,
   buildRwDailyMetricsFromDetailRows,
+  rwDetailMetricsNeedApiSupplement,
   type RwCommissionRow,
 } from './rewardoo.collector';
 import {
@@ -316,10 +317,14 @@ export class CollectorsService {
           /** 未勾选联盟点击时仅更新佣金/明细订单，保留校准导入的 clicks */
           const preserveImportedClicks = !options.includeClicks;
 
-          /** transaction_details 按日汇总可能漏掉部分商家/日期，用 Performance API 补缺（与 RW 后台 Daily 对齐） */
-          if (perfOrderTotal > 0 || perfCommTotal > 0) {
+          /** 仅当明细有单但按日 Performance 汇总漏掉某商家×日期时，才走 Performance API 补缺（避免每次整段逐日拉取） */
+          const needApiSupplement = rwDetailMetricsNeedApiSupplement(
+            detailMetrics,
+            normalized,
+          );
+          if (needApiSupplement && (perfOrderTotal > 0 || perfCommTotal > 0)) {
             try {
-              await onProgress?.('RW Performance API 按日校验…');
+              await onProgress?.('RW Performance API 按日补缺（检测到明细/按日汇总不一致）…');
               const ordersBeforeApi = perfOrderTotal;
               const apiDailyAggs = await fetchRewardooPerformanceDailyAggs(
                 apiToken,
@@ -329,7 +334,7 @@ export class CollectorsService {
                 async (message) => {
                   await onProgress?.(message);
                 },
-                { includeClicks: false, skipOrderFetch: false },
+                { includeClicks: false, skipOrderFetch: true },
               );
               perfAggs = mergeRwPerformancePreferApiDaily(perfAggs, apiDailyAggs);
               perfOrderTotal = perfAggs.reduce((s, a) => s + a.performanceOrders, 0);
@@ -345,7 +350,7 @@ export class CollectorsService {
               const apiMsg =
                 apiMergeErr instanceof Error ? apiMergeErr.message : String(apiMergeErr);
               await onProgress?.(
-                `Performance API 按日校验跳过: ${apiMsg.slice(0, 80)}（仍用 transaction_details）`,
+                `Performance API 按日补缺跳过: ${apiMsg.slice(0, 80)}（仍用 transaction_details）`,
               );
             }
           }

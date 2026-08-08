@@ -246,6 +246,36 @@ export function buildRwDailyMetricsFromDetailRows(
 }
 
 /**
+ * 明细按日汇总是否漏掉「有订单明细但 Performance 为 0」的商家×日期（才需 API 补缺）
+ */
+export function rwDetailMetricsNeedApiSupplement(
+  detailMetrics: Array<{
+    merchantId: string;
+    clickDate: string;
+    performanceOrders: number;
+  }>,
+  normalized: Array<{ merchantId: string; orderDate: Date }>,
+): boolean {
+  const perfByKey = new Map<string, number>();
+  for (const m of detailMetrics) {
+    const key = `${m.merchantId}|${m.clickDate}`;
+    perfByKey.set(key, (perfByKey.get(key) ?? 0) + m.performanceOrders);
+  }
+
+  const orderDayKeys = new Set<string>();
+  for (const o of normalized) {
+    const merchantId = o.merchantId ?? '';
+    if (!merchantId) continue;
+    orderDayKeys.add(`${merchantId}|${o.orderDate.toISOString().slice(0, 10)}`);
+  }
+
+  for (const key of orderDayKeys) {
+    if ((perfByKey.get(key) ?? 0) === 0) return true;
+  }
+  return false;
+}
+
+/**
  * 拉取 Rewardoo 佣金（medium/transaction_details，504 时按天拆分重试）
  */
 export async function fetchRewardooCommissions(

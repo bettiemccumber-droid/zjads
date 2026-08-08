@@ -10,7 +10,7 @@ const MAX_PAGES = 20;
 const PER_PAGE = 1000;
 
 /** join_status: 1=No Relationship, 2=Processing, 3=Rejected, 4=Joined */
-const LH_JOIN_STATUSES = ['1', '2', '3', '4'] as const;
+const LH_JOIN_STATUSES = ['4', '2', '3', '1'] as const;
 
 let lastRequestAt = 0;
 
@@ -72,21 +72,23 @@ export async function fetchLinkHaitaoAdvertiserStatus(
   return [...byMid.values()].filter((row) => rowMatchesWanted_(row, wantedKeys));
 }
 
+/**
+ * LH Advertiser Status API 要求 mod/op 在 URL query 上（与点击/佣金采集一致）
+ * @see https://www.linkhaitao.com/api.php?mod=medium&op=merchantCheckList3
+ */
 async function fetchLhAdvertiserStatusPage_(
   apiToken: string,
   extra: Record<string, string>,
 ): Promise<LhAdvertiserStatusRow[]> {
   await throttleLhRequest_();
 
-  const params = new URLSearchParams({
-    mod: 'medium',
-    op: LH_ADVERTISER_STATUS_OP,
-    token: apiToken,
-    ...extra,
-  });
-
-  const { data } = await axios.post(LH_API_BASE, params.toString(), {
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+  const { data } = await axios.get(LH_API_BASE, {
+    params: {
+      mod: 'medium',
+      op: LH_ADVERTISER_STATUS_OP,
+      token: apiToken,
+      ...extra,
+    },
     timeout: 120000,
     validateStatus: () => true,
   });
@@ -107,6 +109,11 @@ async function fetchLhAdvertiserStatusPage_(
     throw new Error(msg);
   }
 
+  return extractLhAdvertiserStatusList_(root);
+}
+
+/** 解析 merchantCheckList3 返回列表（兼容 data[] / data.list / list） */
+function extractLhAdvertiserStatusList_(root: Record<string, unknown>): LhAdvertiserStatusRow[] {
   if (Array.isArray(root.data)) {
     return root.data as LhAdvertiserStatusRow[];
   }
@@ -114,6 +121,10 @@ async function fetchLhAdvertiserStatusPage_(
   const nested = root.data as Record<string, unknown> | undefined;
   if (nested && Array.isArray(nested.list)) {
     return nested.list as LhAdvertiserStatusRow[];
+  }
+
+  if (Array.isArray(root.list)) {
+    return root.list as LhAdvertiserStatusRow[];
   }
 
   return [];

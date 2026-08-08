@@ -14,6 +14,11 @@ export function normalizeRelationshipStatus(raw: string | null | undefined): Rel
     .toLowerCase()
     .replace(/[_\s-]+/g, '');
   if (!v) return 'not_joined';
+  /** LinkHaitao Advertiser Status API：join_status 数字码 */
+  if (v === '4') return 'joined';
+  if (v === '2') return 'pending';
+  if (v === '3') return 'rejected';
+  if (v === '1') return 'not_joined';
   if (v === 'joined' || v === 'approved' || v === 'active') return 'joined';
   if (v === 'pending' || v === 'waiting' || v === 'applying' || v === 'processing') return 'pending';
   if (v === 'rejected' || v === 'declined' || v === 'denied') return 'rejected';

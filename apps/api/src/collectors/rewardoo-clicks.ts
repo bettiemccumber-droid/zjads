@@ -498,6 +498,81 @@ function listMidsMissingDailyMetrics_(
   return missing;
 }
 
+/** 针对性补缺：仍缺 Performance 的商家（按 merchantsByDate 漏格判断） */
+function listMidsMissingDailyMetricsForGaps_(
+  agg: Map<string, RwMerchantClickAgg>,
+  merchantsByDate: Map<string, Set<string>>,
+): string[] {
+  const missing = new Set<string>();
+  for (const [dateStr, mids] of merchantsByDate) {
+    for (const mid of mids) {
+      const row = agg.get(`${mid}|${dateStr}`);
+      if (!row || row.performanceOrders <= 0) missing.add(mid);
+    }
+  }
+  return [...missing];
+}
+
+/**
+ * 仅补明细漏掉的商家×日期（跳过全商家 bulk，90s 预算）
+ */
+async function fetchRwTargetedPerformanceSupplement_(
+  apiToken: string,
+  startDate: string,
+  endDate: string,
+  merchantIds: string[],
+  merchantsByDate: Map<string, Set<string>>,
+  seedAggs: RwMerchantClickAgg[] | undefined,
+  onProgress?: (message: string) => void | Promise<void>,
+): Promise<RwMerchantClickAgg[]> {
+  const agg = new Map<string, RwMerchantClickAgg>();
+  for (const row of seedAggs ?? []) {
+    mergeRwAggRow_(agg, row);
+  }
+
+  const startedAt = Date.now();
+  const timedOut = () => Date.now() - startedAt > RW_TARGETED_SUPPLEMENT_BUDGET_MS;
+
+  const missingMids = listMidsMissingDailyMetricsForGaps_(agg, merchantsByDate);
+  if (missingMids.length === 0) {
+    return [...agg.values()];
+  }
+
+  const capped = missingMids.slice(0, RW_TARGETED_SUPPLEMENT_MAX_MIDS);
+  await onProgress?.(
+    `RW Performance：针对性补缺 ${capped.length}/${missingMids.length} 个商家（跳过 bulk）…`,
+  );
+
+  const supplemented = await fetchRwPerMerchantDailyMetrics_(
+    apiToken,
+    startDate,
+    endDate,
+    capped,
+    onProgress,
+    timedOut,
+  );
+  for (const row of supplemented) {
+    if (!merchantIds.includes(row.merchantId)) continue;
+    mergeRwAggRow_(agg, row);
+  }
+
+  const orderTotal = sumAggPerformanceOrders_(agg);
+  const stillMissing = listMidsMissingDailyMetricsForGaps_(agg, merchantsByDate).length;
+  if (timedOut()) {
+    await onProgress?.(
+      `Performance 针对性补缺超时（${RW_TARGETED_SUPPLEMENT_BUDGET_MS / 1000}s）→ ${orderTotal} 单，仍缺 ${stillMissing} 商家日`,
+    );
+  } else if (stillMissing > 0) {
+    await onProgress?.(
+      `Performance 针对性补缺完成 → ${orderTotal} 单，仍缺 ${stillMissing} 商家日（保留 transaction_details）`,
+    );
+  } else {
+    await onProgress?.(`Performance 针对性补缺完成 → ${orderTotal} 单`);
+  }
+
+  return [...agg.values()];
+}
+
 /**
  * 单次 API 拉取全账号「商家 × 按日」（等同后台 dimension=day + sub_dimension=merchant）
  */
@@ -507,11 +582,15 @@ async function fetchRwBulkMerchantDayMatrix_(
   endDate: string,
   agg: Map<string, RwMerchantClickAgg>,
   onProgress?: (message: string) => void | Promise<void>,
+  timedOut?: () => boolean,
 ): Promise<boolean> {
+  if (timedOut?.()) return false;
+
   const ordersBefore = sumAggPerformanceOrders_(agg);
   const clicksBefore = sumAggClicks_(agg);
 
   await onProgress?.('RW Performance：全商家×按日 bulk（cpc_performance）…');
+  if (timedOut?.()) return false;
   const bulkCpc = new Map<string, RwMerchantClickAgg>();
   await forEachRewardooGetPage_(
     'medium',
@@ -554,6 +633,8 @@ async function fetchRwBulkMerchantDayMatrix_(
       return true;
     }
   }
+
+  if (timedOut?.()) return false;
 
   await onProgress?.('RW Performance：全商家×按日 bulk（medium/performance）…');
   const bulkPerf = new Map<string, RwMerchantClickAgg>();
@@ -609,7 +690,7 @@ async function fetchRwPerMerchantDailyMetrics_(
       apiToken,
       startDate,
       endDate,
-      undefined,
+      onProgress,
       mid,
     );
     for (const [clickDate, metrics] of accountDaily) {
@@ -874,6 +955,12 @@ export interface RwPerformanceDailyAggsOptions {
   includeClicks?: boolean;
   /** transaction_details 已写入 orders/comm 时跳过逐日 Performance 拉单 */
   skipOrderFetch?: boolean;
+  /** 跳过全商家 bulk 矩阵（明细已有大部分数据、仅补缺时使用） */
+  skipBulk?: boolean;
+  /** 仅补 merchantsByDate 中漏掉的商家×日期，不走全量兜底链 */
+  targetedSupplement?: boolean;
+  /** 已有 transaction_details 汇总，用于判断补缺是否完成 */
+  seedAggs?: RwMerchantClickAgg[];
 }
 
 /**
@@ -1029,6 +1116,12 @@ function attributeRwUnmatchedClicks_(
 /** RW Performance 补充最长耗时（多商家逐日校准） */
 const RW_PERF_SUPPLEMENT_BUDGET_MS = 300_000;
 
+/** 针对性补缺最长耗时（仅补漏商家，避免 bulk 卡死） */
+const RW_TARGETED_SUPPLEMENT_BUDGET_MS = 90_000;
+
+/** 针对性补缺最多尝试商家数 */
+const RW_TARGETED_SUPPLEMENT_MAX_MIDS = 25;
+
 /** 逐商家按日兜底上限（与 UI 筛商家导出等效，一次采集自动完成） */
 const RW_PER_MERCHANT_DAILY_MAX = 80;
 
@@ -1049,12 +1142,29 @@ export async function fetchRewardooPerformanceDailyAggs(
   onProgress?: (message: string) => void | Promise<void>,
   options?: RwPerformanceDailyAggsOptions,
 ): Promise<RwMerchantClickAgg[]> {
-  const agg = new Map<string, RwMerchantClickAgg>();
   const mids = (merchantIds ?? []).filter((id) => id.trim() !== '');
   const merchantsByDate =
     options?.merchantsByDate ?? buildMerchantsByDateFromIds_(mids, startDate, endDate);
+
+  if (options?.targetedSupplement && merchantsByDate.size > 0 && mids.length > 0) {
+    return fetchRwTargetedPerformanceSupplement_(
+      apiToken,
+      startDate,
+      endDate,
+      mids,
+      merchantsByDate,
+      options.seedAggs,
+      onProgress,
+    );
+  }
+
+  const agg = new Map<string, RwMerchantClickAgg>();
+  if (options?.seedAggs) {
+    for (const row of options.seedAggs) mergeRwAggRow_(agg, row);
+  }
   const includeClicks = options?.includeClicks === true;
   const skipOrderFetch = options?.skipOrderFetch === true;
+  const skipBulk = options?.skipBulk === true;
   const startedAt = Date.now();
   const timedOut = () => Date.now() - startedAt > RW_PERF_SUPPLEMENT_BUDGET_MS;
   const needOrders = () => sumAggPerformanceOrders_(agg) === 0;
@@ -1076,8 +1186,8 @@ export async function fetchRewardooPerformanceDailyAggs(
   };
 
   /** 0. 全商家×按日 bulk（一次 API，无需逐个手动导入） */
-  if (!isSatisfied() && !timedOut()) {
-    await fetchRwBulkMerchantDayMatrix_(apiToken, startDate, endDate, agg, onProgress);
+  if (!skipBulk && !isSatisfied() && !timedOut()) {
+    await fetchRwBulkMerchantDayMatrix_(apiToken, startDate, endDate, agg, onProgress, timedOut);
   }
 
   /** 1. 逐日 medium/performance + mid（明细已汇总 orders/comm 时跳过，避免卡死） */

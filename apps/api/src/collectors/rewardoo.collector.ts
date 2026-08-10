@@ -276,6 +276,48 @@ export function rwDetailMetricsNeedApiSupplement(
 }
 
 /**
+ * 明细按日汇总漏掉的「日期 → 商家 ID」（供 Performance API 针对性补缺，避免全量 bulk）
+ */
+export function buildRwSupplementMerchantsByDate(
+  detailMetrics: Array<{
+    merchantId: string;
+    clickDate: string;
+    performanceOrders: number;
+  }>,
+  normalized: Array<{ merchantId: string | null; orderDate: Date }>,
+): Map<string, Set<string>> {
+  const perfByKey = new Map<string, number>();
+  for (const m of detailMetrics) {
+    const key = `${m.merchantId}|${m.clickDate}`;
+    perfByKey.set(key, (perfByKey.get(key) ?? 0) + m.performanceOrders);
+  }
+
+  const gaps = new Map<string, Set<string>>();
+  for (const o of normalized) {
+    const merchantId = o.merchantId?.trim() ?? '';
+    if (!merchantId) continue;
+    const dateStr = o.orderDate.toISOString().slice(0, 10);
+    if ((perfByKey.get(`${merchantId}|${dateStr}`) ?? 0) > 0) continue;
+    if (!gaps.has(dateStr)) gaps.set(dateStr, new Set());
+    gaps.get(dateStr)!.add(merchantId);
+  }
+  return gaps;
+}
+
+/**
+ * 补缺索引中的去重商家 ID 列表
+ */
+export function listRwSupplementMerchantIds(
+  merchantsByDate: Map<string, Set<string>>,
+): string[] {
+  const ids = new Set<string>();
+  for (const mids of merchantsByDate.values()) {
+    for (const mid of mids) ids.add(mid);
+  }
+  return [...ids];
+}
+
+/**
  * 拉取 Rewardoo 佣金（medium/transaction_details，504 时按天拆分重试）
  */
 export async function fetchRewardooCommissions(

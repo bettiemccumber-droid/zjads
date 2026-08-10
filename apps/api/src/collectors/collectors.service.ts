@@ -35,6 +35,8 @@ import {
   summarizeRwCommissionApi,
   buildRwDailyMetricsFromDetailRows,
   rwDetailMetricsNeedApiSupplement,
+  buildRwSupplementMerchantsByDate,
+  listRwSupplementMerchantIds,
   type RwCommissionRow,
 } from './rewardoo.collector';
 import {
@@ -324,17 +326,31 @@ export class CollectorsService {
           );
           if (needApiSupplement && (perfOrderTotal > 0 || perfCommTotal > 0)) {
             try {
-              await onProgress?.('RW Performance API 按日补缺（检测到明细/按日汇总不一致）…');
+              const supplementMerchantsByDate = buildRwSupplementMerchantsByDate(
+                detailMetrics,
+                normalized,
+              );
+              const supplementMids = listRwSupplementMerchantIds(supplementMerchantsByDate);
+              await onProgress?.(
+                `RW Performance API 针对性补缺（${supplementMids.length} 个商家有漏格）…`,
+              );
               const ordersBeforeApi = perfOrderTotal;
               const apiDailyAggs = await fetchRewardooPerformanceDailyAggs(
                 apiToken,
                 startDate,
                 endDate,
-                undefined,
+                supplementMids,
                 async (message) => {
                   await onProgress?.(message);
                 },
-                { includeClicks: false, skipOrderFetch: true },
+                {
+                  includeClicks: false,
+                  skipOrderFetch: true,
+                  skipBulk: true,
+                  targetedSupplement: true,
+                  merchantsByDate: supplementMerchantsByDate,
+                  seedAggs: perfAggs,
+                },
               );
               perfAggs = mergeRwPerformancePreferApiDaily(perfAggs, apiDailyAggs);
               perfOrderTotal = perfAggs.reduce((s, a) => s + a.performanceOrders, 0);

@@ -498,7 +498,7 @@ export default function DashboardPage() {
 
     }
 
-  }, [range, campaignStatusMode, viewUserId]);
+  }, [dateParams, campaignStatusMode, viewUserId]);
 
   const importSheetForEmployee = useCallback(async () => {
     if (!viewUserId) return;
@@ -627,7 +627,7 @@ export default function DashboardPage() {
 
   useEffect(() => {
     void loadReport();
-  }, [campaignStatusMode, loadReport]);
+  }, [dateParams.startDate, dateParams.endDate, campaignStatusMode, viewUserId, loadReport]);
 
   useEffect(() => {
     stopPolling();
@@ -904,6 +904,12 @@ export default function DashboardPage() {
   const campaignFilterActive = !!campaignSearch.trim() || campaignPlatform !== 'all';
   const displayCampaignTotals = campaignFilterActive ? filteredCampaignTotals : ct;
 
+  /** 顶部日期选择器对应的查询天数（用于按天明细提示） */
+  const queryDayCount = useMemo(
+    () => range[1].startOf('day').diff(range[0].startOf('day'), 'day') + 1,
+    [range],
+  );
+
   /** 商家汇总按平台全量（联盟 API 采集结果） */
   const merchantTotalsByPlatform = useMemo(() => {
     const map = new Map<
@@ -1094,6 +1100,7 @@ export default function DashboardPage() {
         )}
 
         <p className="sync-collect-hint">
+          修改上方日期后会<strong>自动刷新</strong>下方报表；「开始采集」与「刷新报表」均使用同一日期区间。
           已接入 PM / LH / LB / RW / UI 订单。<strong>未勾选</strong>「含联盟点击」时仅采集订单与佣金；<strong>勾选</strong>后 PM/LH/UI/RW 随订单区间采集点击，LB 仅采区间<strong>最后一天</strong>。RW 点击不准时可用「Performance 校准导入」。
           仅选部分平台采集时<strong>不会</strong>重导 Google Sheet；全选采集后会自动同步<strong>全部</strong> Sheet 广告费，再刷新报表。
           {viewUserId
@@ -1219,6 +1226,9 @@ export default function DashboardPage() {
                     onStatusModeChange={setCampaignStatusMode}
                     loading={loading}
                     onQuery={loadReport}
+                    queryStartDate={dateParams.startDate}
+                    queryEndDate={dateParams.endDate}
+                    queryDayCount={queryDayCount}
                     filterHint={
                       campaignFilterActive
                         ? `筛选 ${filteredCampaignRows.length} / ${campaignRows.length} 条`
@@ -1306,6 +1316,7 @@ export default function DashboardPage() {
                     <CampaignExpandableTable
                       rows={campaignRowsWithDaily}
                       loading={loading}
+                      queryDayCount={queryDayCount}
                       scroll={tableScroll}
                       pagination={tablePagination(campaignPageSize, setCampaignPageSize)}
                       rowClassName={(r) => {

@@ -19,6 +19,10 @@ interface CampaignReportToolbarProps {
   loading?: boolean;
   onQuery: () => void;
   filterHint?: string;
+  /** 当前报表查询区间（与顶部日期选择器一致） */
+  queryStartDate?: string;
+  queryEndDate?: string;
+  queryDayCount?: number;
 }
 
 /**
@@ -35,7 +39,17 @@ export default function CampaignReportToolbar({
   loading,
   onQuery,
   filterHint,
+  queryStartDate,
+  queryEndDate,
+  queryDayCount,
 }: CampaignReportToolbarProps) {
+  const rangeLabel =
+    queryStartDate && queryEndDate
+      ? queryStartDate === queryEndDate
+        ? queryStartDate
+        : `${queryStartDate} ~ ${queryEndDate}`
+      : null;
+
   return (
     <div className="campaign-analysis-block">
       <div className="campaign-analysis-header">
@@ -45,6 +59,15 @@ export default function CampaignReportToolbar({
         </Typography.Title>
         <Typography.Paragraph type="secondary" className="campaign-analysis-desc">
           按日期、平台与状态筛选广告系列，展开行可查看按天明细与合计；区间与顶部数据采集日期一致。
+          {rangeLabel ? (
+            <>
+              {' '}
+              <Typography.Text strong>
+                当前查询：{rangeLabel}
+                {queryDayCount != null ? `（${queryDayCount} 天）` : ''}
+              </Typography.Text>
+            </>
+          ) : null}
         </Typography.Paragraph>
       </div>
 

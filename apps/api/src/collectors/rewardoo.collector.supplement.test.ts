@@ -1,12 +1,9 @@
+import assert from 'node:assert/strict';
 import {
   buildRwSupplementMerchantsByDate,
   listRwSupplementMerchantIds,
   rwDetailMetricsNeedApiSupplement,
 } from './rewardoo.collector';
-
-function assert(condition: boolean, message: string) {
-  if (!condition) throw new Error(message);
-}
 
 const detailMetrics = [
   {
@@ -23,14 +20,14 @@ const normalized = [
   { merchantId: '200', orderDate: new Date('2026-08-06T00:00:00.000Z') },
 ];
 
-assert(rwDetailMetricsNeedApiSupplement(detailMetrics, normalized), 'should need supplement');
+assert.equal(rwDetailMetricsNeedApiSupplement(detailMetrics, normalized), true);
 
 const gaps = buildRwSupplementMerchantsByDate(detailMetrics, normalized);
-assert(gaps.size === 1, 'one gap date');
-assert(gaps.get('2026-08-06')?.has('200'), 'merchant 200 on 2026-08-06');
-assert(!gaps.get('2026-08-06')?.has('100'), 'merchant 100 should not be in gaps');
+assert.equal(gaps.size, 1);
+assert.equal(gaps.get('2026-08-06')?.has('200'), true);
+assert.notEqual(gaps.get('2026-08-06')?.has('100'), true);
 
 const mids = listRwSupplementMerchantIds(gaps);
-assert(mids.length === 1 && mids[0] === '200', 'only merchant 200');
+assert.deepEqual(mids, ['200']);
 
 console.log('rewardoo.collector supplement: ok');

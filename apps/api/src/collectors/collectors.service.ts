@@ -37,11 +37,11 @@ import {
   rwDetailMetricsNeedApiSupplement,
   buildRwSupplementMerchantsByDate,
   listRwSupplementMerchantIds,
+  fillRwPerformanceGapsFromNormalizedOrders,
   type RwCommissionRow,
 } from './rewardoo.collector';
 import {
   fetchRewardooPerformanceSummaryAggs,
-  fetchRewardooPerformanceDailyAggs,
   buildRwMerchantsByDateFromOrders,
   expandRwPerformanceAggsForRange,
   rwDetailMetricsToClickAggs,
@@ -325,48 +325,28 @@ export class CollectorsService {
             normalized,
           );
           if (needApiSupplement && (perfOrderTotal > 0 || perfCommTotal > 0)) {
-            try {
-              const supplementMerchantsByDate = buildRwSupplementMerchantsByDate(
-                detailMetrics,
-                normalized,
-              );
-              const supplementMids = listRwSupplementMerchantIds(supplementMerchantsByDate);
+            const supplementMerchantsByDate = buildRwSupplementMerchantsByDate(
+              detailMetrics,
+              normalized,
+            );
+            const supplementMids = listRwSupplementMerchantIds(supplementMerchantsByDate);
+            await onProgress?.(
+              `RW Performance：从订单补全 ${supplementMids.length} 个漏格（跳过 API）…`,
+            );
+            const ordersBeforeFill = perfOrderTotal;
+            const filledMetrics = fillRwPerformanceGapsFromNormalizedOrders(
+              detailMetrics,
+              normalized,
+              supplementMerchantsByDate,
+            );
+            perfAggs = rwDetailMetricsToClickAggs(filledMetrics);
+            perfOrderTotal = perfAggs.reduce((s, a) => s + a.performanceOrders, 0);
+            perfCommTotal = perfAggs.reduce((s, a) => s + a.performanceCommission, 0);
+            const filled = perfOrderTotal - ordersBeforeFill;
+            if (filled > 0) {
+              perfSource = 'transaction_details+orders';
               await onProgress?.(
-                `RW Performance API 针对性补缺（${supplementMids.length} 个商家有漏格）…`,
-              );
-              const ordersBeforeApi = perfOrderTotal;
-              const apiDailyAggs = await fetchRewardooPerformanceDailyAggs(
-                apiToken,
-                startDate,
-                endDate,
-                supplementMids,
-                async (message) => {
-                  await onProgress?.(message);
-                },
-                {
-                  includeClicks: false,
-                  skipOrderFetch: true,
-                  skipBulk: true,
-                  targetedSupplement: true,
-                  merchantsByDate: supplementMerchantsByDate,
-                  seedAggs: perfAggs,
-                },
-              );
-              perfAggs = mergeRwPerformancePreferApiDaily(perfAggs, apiDailyAggs);
-              perfOrderTotal = perfAggs.reduce((s, a) => s + a.performanceOrders, 0);
-              perfCommTotal = perfAggs.reduce((s, a) => s + a.performanceCommission, 0);
-              const supplemented = perfOrderTotal - ordersBeforeApi;
-              if (supplemented > 0) {
-                perfSource = 'transaction_details+API';
-                await onProgress?.(
-                  `Performance API 补缺 ${supplemented} 单（明细 ${ordersBeforeApi} → 合并 ${perfOrderTotal}）`,
-                );
-              }
-            } catch (apiMergeErr) {
-              const apiMsg =
-                apiMergeErr instanceof Error ? apiMergeErr.message : String(apiMergeErr);
-              await onProgress?.(
-                `Performance API 按日补缺跳过: ${apiMsg.slice(0, 80)}（仍用 transaction_details）`,
+                `Performance 漏格已补全 ${filled} 单（${ordersBeforeFill} → ${perfOrderTotal}）`,
               );
             }
           }

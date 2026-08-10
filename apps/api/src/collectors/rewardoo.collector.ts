@@ -317,6 +317,65 @@ export function listRwSupplementMerchantIds(
   return [...ids];
 }
 
+type RwDetailDailyMetric = {
+  merchantId: string;
+  merchantName: string;
+  clickDate: string;
+  performanceOrders: number;
+  performanceCommission: number;
+  clicks: number;
+};
+
+/**
+ * 用已归一化订单补全按日 Performance 漏格（无需调 Rewardoo Performance API）
+ */
+export function fillRwPerformanceGapsFromNormalizedOrders(
+  detailMetrics: RwDetailDailyMetric[],
+  normalized: Array<{
+    merchantId: string | null;
+    merchantName: string | null;
+    orderDate: Date;
+    commission: number;
+  }>,
+  gapMerchantsByDate: Map<string, Set<string>>,
+): RwDetailDailyMetric[] {
+  const byKey = new Map<string, RwDetailDailyMetric>();
+  for (const m of detailMetrics) {
+    byKey.set(`${m.merchantId}|${m.clickDate}`, { ...m });
+  }
+
+  for (const [dateStr, mids] of gapMerchantsByDate) {
+    for (const mid of mids) {
+      const key = `${mid}|${dateStr}`;
+      const existing = byKey.get(key);
+      if (existing && existing.performanceOrders > 0) continue;
+
+      const dayOrders = normalized.filter(
+        (o) => o.merchantId === mid && o.orderDate.toISOString().slice(0, 10) === dateStr,
+      );
+      if (dayOrders.length === 0) continue;
+
+      const performanceCommission =
+        Math.round(dayOrders.reduce((s, o) => s + o.commission, 0) * 100) / 100;
+      const merchantName =
+        existing?.merchantName ||
+        dayOrders.find((o) => o.merchantName)?.merchantName ||
+        '';
+
+      byKey.set(key, {
+        merchantId: mid,
+        merchantName: String(merchantName ?? ''),
+        clickDate: dateStr,
+        performanceOrders: dayOrders.length,
+        performanceCommission,
+        clicks: existing?.clicks ?? 0,
+      });
+    }
+  }
+
+  return [...byKey.values()];
+}
+
 /**
  * 拉取 Rewardoo 佣金（medium/transaction_details，504 时按天拆分重试）
  */

@@ -1,4 +1,5 @@
 import { Button, Card, Form, Input, message, Typography } from 'antd';
+import axios from 'axios';
 import { useNavigate } from 'react-router-dom';
 import { api, setToken, type ApiResult } from '../api/client';
 import { useAuth } from '../hooks/useAuth';
@@ -20,8 +21,21 @@ export default function LoginPage() {
       await refresh();
       message.success(`欢迎，${data.data.user.username}`);
       navigate('/dashboard');
-    } catch {
-      message.error('登录失败，请检查邮箱和密码');
+    } catch (err) {
+      if (axios.isAxiosError(err)) {
+        const raw = err.response?.data?.message;
+        if (!err.response) {
+          message.error('无法连接 API，请先启动后端：npm run dev:api');
+        } else if (typeof raw === 'string') {
+          message.error(raw);
+        } else if (Array.isArray(raw)) {
+          message.error(raw.join('；'));
+        } else {
+          message.error('登录失败，请检查邮箱和密码');
+        }
+      } else {
+        message.error('登录失败，请检查邮箱和密码');
+      }
     }
   };
 

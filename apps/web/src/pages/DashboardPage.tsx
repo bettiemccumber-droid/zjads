@@ -48,6 +48,7 @@ import CampaignExpandableTable, {
 import CampaignReportToolbar, {
   type CampaignStatusMode,
 } from '../components/CampaignReportToolbar';
+import CommissionAlertBanner from '../components/CommissionAlertBanner';
 import '../components/CampaignReportToolbar.css';
 import { inferPlatformNameFromAlias } from '../utils/campaign-name.util';
 
@@ -243,6 +244,8 @@ export default function DashboardPage() {
     lastSheetNameSummary?: string | null;
   } | null>(null);
   const [importingSheet, setImportingSheet] = useState(false);
+  /** 采集/刷新后递增，驱动风险告警横幅重新拉取 */
+  const [alertBannerRefresh, setAlertBannerRefresh] = useState(0);
 
   const [range, setRange] = useState<[Dayjs, Dayjs]>(employeeDefaultDateRange);
 
@@ -491,6 +494,8 @@ export default function DashboardPage() {
       if (dailyRes.data.success) {
         setCampaignDailyRows(dailyRes.data.data.rows);
       }
+
+      setAlertBannerRefresh((n) => n + 1);
 
     } finally {
 
@@ -999,6 +1004,13 @@ export default function DashboardPage() {
   return (
 
     <div>
+
+      <CommissionAlertBanner
+        startDate={dateParams.startDate}
+        endDate={dateParams.endDate}
+        viewUserId={viewUserId}
+        refreshToken={alertBannerRefresh}
+      />
 
       {viewUserId && (
         <Alert

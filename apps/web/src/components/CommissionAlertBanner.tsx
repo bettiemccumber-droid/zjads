@@ -1,29 +1,15 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Alert, Button, Space, Tag, Typography } from 'antd';
+import { DownOutlined, UpOutlined, WarningOutlined } from '@ant-design/icons';
 import { Link } from 'react-router-dom';
-import { WarningOutlined } from '@ant-design/icons';
 import dayjs from 'dayjs';
 import { api, type ApiResult } from '../api/client';
 import {
-  isAlertMerchantStillAdvertising,
-  parseCommissionAlertMerchantKey,
+  groupOpenAlertsByMerchant,
   type ActiveCampaignHint,
+  type BannerAlertRow,
+  type GroupedMerchantAlert,
 } from '../utils/commission-alert.util';
-
-interface CommissionAlertRow {
-  id: number;
-  merchantId: string;
-  merchantName: string;
-  rejectedCommission: number;
-  rejectionRate: number;
-  rejectedOrderCount: number;
-  totalOrderCount: number;
-  severity: string;
-  triggerReason: string;
-  windowStart: string;
-  windowEnd: string;
-  username?: string;
-}
 
 interface CommissionAlertBannerProps {
   /** 用于检测在投广告系列的日期区间（与数据采集页一致） */
@@ -34,6 +20,8 @@ interface CommissionAlertBannerProps {
   /** 外部触发刷新（如采集完成后） */
   refreshToken?: number;
 }
+
+const BANNER_PREVIEW_COUNT = 3;
 
 function money(v: number) {
   return `$${Number(v).toFixed(2)}`;
@@ -53,8 +41,81 @@ function formatDateRange(start: string, end: string) {
   return `${formatBannerDate(start)} ~ ${formatBannerDate(end)}`;
 }
 
+function MerchantAlertRow({
+  group,
+  loading,
+  ackingKey,
+  onAckGroup,
+}: {
+  group: GroupedMerchantAlert;
+  loading: boolean;
+  ackingKey: string | null;
+  onAckGroup: (group: GroupedMerchantAlert) => void;
+}) {
+  const { stillActive, parsed, alerts } = group;
+
+  return (
+    <div
+      style={{
+        display: 'flex',
+        flexWrap: 'wrap',
+        gap: 8,
+        alignItems: 'center',
+        padding: '6px 0',
+        borderBottom: '1px solid rgba(0,0,0,0.06)',
+      }}
+    >
+      {group.severity === 'critical' ? (
+        <Tag color="error">严重</Tag>
+      ) : (
+        <Tag color="warning">警告</Tag>
+      )}
+      <Typography.Text strong>{group.merchantName}</Typography.Text>
+      <Typography.Text type="secondary">
+        ID {parsed.merchantId}
+        {parsed.affiliateAlias ? ` · ${parsed.affiliateAlias}` : ''}
+      </Typography.Text>
+      {group.windowCount > 1 ? (
+        <Tag color="processing">{group.windowCount} 个统计区间</Tag>
+      ) : (
+        <Tag color="processing">
+          统计区间 {formatDateRange(alerts[0].windowStart, alerts[0].windowEnd)}
+        </Tag>
+      )}
+      <Typography.Text>
+        失效 {money(group.rejectedCommission)} · 失效率 {pct(group.rejectionRate)}
+        {' '}
+        ({group.rejectedOrderCount}/{group.totalOrderCount} 单)
+      </Typography.Text>
+      {stillActive.length > 0 ? (
+        <Tag color="red">
+          仍在投放 · {stillActive.length} 个活跃系列
+          {stillActive[0]?.campaignName
+            ? `（如 ${
+                stillActive[0].campaignName.length > 40
+                  ? `${stillActive[0].campaignName.slice(0, 40)}…`
+                  : stillActive[0].campaignName
+              }）`
+            : ''}
+        </Tag>
+      ) : (
+        <Tag color="default">未检测到活跃投放</Tag>
+      )}
+      <Button
+        size="small"
+        type="link"
+        loading={ackingKey === group.merchantKey}
+        disabled={loading}
+        onClick={() => onAckGroup(group)}
+      >
+        确认{group.windowCount > 1 ? '全部' : ''}
+      </Button>
+    </div>
+  );
+}
+
 /**
- * 数据采集页顶部：待处理佣金风险告警横幅（确认前持续提醒，并标注是否仍在投放）
+ * 数据采集页顶部：待处理佣金风险告警横幅（按商家合并，默认展示 3 条）
  */
 export default function CommissionAlertBanner({
   startDate,
@@ -62,17 +123,18 @@ export default function CommissionAlertBanner({
   viewUserId,
   refreshToken,
 }: CommissionAlertBannerProps) {
-  const [alerts, setAlerts] = useState<CommissionAlertRow[]>([]);
+  const [alerts, setAlerts] = useState<BannerAlertRow[]>([]);
   const [activeCampaigns, setActiveCampaigns] = useState<ActiveCampaignHint[]>([]);
   const [loading, setLoading] = useState(false);
-  const [ackingId, setAckingId] = useState<number | null>(null);
+  const [ackingKey, setAckingKey] = useState<string | null>(null);
+  const [expanded, setExpanded] = useState(false);
 
   const loadBannerData = useCallback(async () => {
     setLoading(true);
     try {
       const alertParams = {
         status: 'open',
-        limit: 50,
+        limit: 100,
         ...(viewUserId != null ? { userId: viewUserId } : {}),
       };
       const campaignParams = {
@@ -83,7 +145,7 @@ export default function CommissionAlertBanner({
       };
 
       const [alertRes, campaignRes] = await Promise.all([
-        api.get<ApiResult<CommissionAlertRow[]>>('/commission-alerts', { params: alertParams }),
+        api.get<ApiResult<BannerAlertRow[]>>('/commission-alerts', { params: alertParams }),
         api.get<ApiResult<{ summary: ActiveCampaignHint[] }>>('/reports/campaign-summary', {
           params: campaignParams,
         }),
@@ -106,6 +168,10 @@ export default function CommissionAlertBanner({
     void loadBannerData();
   }, [loadBannerData, refreshToken]);
 
+  useEffect(() => {
+    setExpanded(false);
+  }, [alerts.length, refreshToken]);
+
   /** 从其他标签页确认告警后，回到本页时刷新 */
   useEffect(() => {
     const onVisible = () => {
@@ -117,37 +183,37 @@ export default function CommissionAlertBanner({
     return () => document.removeEventListener('visibilitychange', onVisible);
   }, [loadBannerData]);
 
-  const ackAlert = async (id: number) => {
-    setAckingId(id);
+  const ackGroup = async (group: GroupedMerchantAlert) => {
+    setAckingKey(group.merchantKey);
     try {
-      const { data } = await api.post<ApiResult<unknown>>(`/commission-alerts/${id}/ack`);
-      if (data.success) {
-        setAlerts((prev) => prev.filter((a) => a.id !== id));
-      }
+      const ids = new Set(group.alerts.map((a) => a.id));
+      await Promise.all(
+        group.alerts.map((a) => api.post<ApiResult<unknown>>(`/commission-alerts/${a.id}/ack`)),
+      );
+      setAlerts((prev) => prev.filter((a) => !ids.has(a.id)));
     } finally {
-      setAckingId(null);
+      setAckingKey(null);
     }
   };
 
-  const enrichedAlerts = useMemo(
-    () =>
-      alerts.map((alert) => {
-        const stillActive = isAlertMerchantStillAdvertising(alert.merchantId, activeCampaigns);
-        const parsed = parseCommissionAlertMerchantKey(alert.merchantId);
-        return { alert, stillActive, parsed };
-      }),
+  const merchantGroups = useMemo(
+    () => groupOpenAlertsByMerchant(alerts, activeCampaigns),
     [alerts, activeCampaigns],
   );
 
-  const stillAdvertisingCount = enrichedAlerts.filter((e) => e.stillActive.length > 0).length;
+  const stillAdvertisingCount = merchantGroups.filter((g) => g.stillActive.length > 0).length;
   const reportDateRangeLabel = formatDateRange(startDate, endDate);
+  const visibleGroups = expanded
+    ? merchantGroups
+    : merchantGroups.slice(0, BANNER_PREVIEW_COUNT);
+  const hiddenCount = Math.max(0, merchantGroups.length - BANNER_PREVIEW_COUNT);
 
-  if (alerts.length === 0) {
+  if (merchantGroups.length === 0) {
     return null;
   }
 
-  const hasCriticalActive = enrichedAlerts.some(
-    (e) => e.stillActive.length > 0 && e.alert.severity === 'critical',
+  const hasCriticalActive = merchantGroups.some(
+    (g) => g.stillActive.length > 0 && g.severity === 'critical',
   );
 
   return (
@@ -159,10 +225,15 @@ export default function CommissionAlertBanner({
       message={
         <Space wrap align="center">
           <span>
-            结算风险提醒：{alerts.length} 个待处理风险商家
+            结算风险提醒：共 {merchantGroups.length} 个商家待处理
+            {alerts.length > merchantGroups.length ? (
+              <Typography.Text type="secondary" style={{ marginLeft: 4 }}>
+                （{alerts.length} 条告警）
+              </Typography.Text>
+            ) : null}
             {stillAdvertisingCount > 0 ? (
               <Typography.Text type="danger" strong style={{ marginLeft: 8 }}>
-                其中 {stillAdvertisingCount} 个仍在投放活跃广告系列
+                其中 {stillAdvertisingCount} 个仍在投放
               </Typography.Text>
             ) : (
               <Typography.Text type="secondary" style={{ marginLeft: 8 }}>
@@ -177,68 +248,42 @@ export default function CommissionAlertBanner({
       description={
         <div style={{ marginTop: 8 }}>
           <Typography.Paragraph type="secondary" style={{ marginBottom: 8 }}>
-            以下告警来自结算查询的「待处理告警」，确认后将不再提示。每条告警标注其
-            <Typography.Text strong> 统计区间 </Typography.Text>
-            ；在投状态依据上方
+            按商家汇总展示。确认后不再提醒，除非失效佣金、失效单数或失效率增加。在投状态依据上方
             <Typography.Text strong> 在投检测区间 </Typography.Text>
-            内 ENABLED 广告系列判断（与当前数据采集页日期选择一致）。
+            内 ENABLED 广告系列判断。
           </Typography.Paragraph>
           <Space direction="vertical" size={8} style={{ width: '100%' }}>
-            {enrichedAlerts.map(({ alert, stillActive, parsed }) => (
-              <div
-                key={alert.id}
-                style={{
-                  display: 'flex',
-                  flexWrap: 'wrap',
-                  gap: 8,
-                  alignItems: 'center',
-                  padding: '6px 0',
-                  borderBottom: '1px solid rgba(0,0,0,0.06)',
-                }}
-              >
-                {alert.severity === 'critical' ? (
-                  <Tag color="error">严重</Tag>
-                ) : (
-                  <Tag color="warning">警告</Tag>
-                )}
-                <Typography.Text strong>
-                  {alert.merchantName || parsed.merchantId}
-                </Typography.Text>
-                <Typography.Text type="secondary">
-                  ID {parsed.merchantId}
-                  {parsed.affiliateAlias ? ` · ${parsed.affiliateAlias}` : ''}
-                </Typography.Text>
-                <Tag color="processing">统计区间 {formatDateRange(alert.windowStart, alert.windowEnd)}</Tag>
-                <Typography.Text>
-                  失效 {money(Number(alert.rejectedCommission))} · 失效率 {pct(Number(alert.rejectionRate))}
-                  {' '}
-                  ({alert.rejectedOrderCount}/{alert.totalOrderCount} 单)
-                </Typography.Text>
-                {stillActive.length > 0 ? (
-                  <Tag color="red">
-                    仍在投放 · {stillActive.length} 个活跃系列
-                    {stillActive[0]?.campaignName
-                      ? `（如 ${
-                          stillActive[0].campaignName.length > 40
-                            ? `${stillActive[0].campaignName.slice(0, 40)}…`
-                            : stillActive[0].campaignName
-                        }）`
-                      : ''}
-                  </Tag>
-                ) : (
-                  <Tag color="default">未检测到活跃投放</Tag>
-                )}
-                <Button
-                  size="small"
-                  type="link"
-                  loading={ackingId === alert.id}
-                  disabled={loading}
-                  onClick={() => void ackAlert(alert.id)}
-                >
-                  确认
-                </Button>
-              </div>
+            {visibleGroups.map((group) => (
+              <MerchantAlertRow
+                key={group.merchantKey}
+                group={group}
+                loading={loading}
+                ackingKey={ackingKey}
+                onAckGroup={(g) => void ackGroup(g)}
+              />
             ))}
+            {hiddenCount > 0 && !expanded ? (
+              <Button
+                type="link"
+                size="small"
+                icon={<DownOutlined />}
+                style={{ paddingLeft: 0 }}
+                onClick={() => setExpanded(true)}
+              >
+                展开更多 {hiddenCount} 个商家
+              </Button>
+            ) : null}
+            {expanded && merchantGroups.length > BANNER_PREVIEW_COUNT ? (
+              <Button
+                type="link"
+                size="small"
+                icon={<UpOutlined />}
+                style={{ paddingLeft: 0 }}
+                onClick={() => setExpanded(false)}
+              >
+                收起
+              </Button>
+            ) : null}
           </Space>
         </div>
       }

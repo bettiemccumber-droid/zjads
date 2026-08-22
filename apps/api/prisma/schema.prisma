@@ -331,6 +331,11 @@ model CommissionAlert {
   triggerReason       String                @map("trigger_reason") @db.VarChar(500)
   status              CommissionAlertStatus @default(open)
   lastTriggeredAt     DateTime              @default(now()) @map("last_triggered_at")
+  /** 用户确认时的失效指标快照，用于判断是否需要重新提醒 */
+  ackedAt                 DateTime? @map("acked_at")
+  ackedRejectedCommission Decimal?  @map("acked_rejected_commission") @db.Decimal(14, 2)
+  ackedRejectedOrderCount Int?      @map("acked_rejected_order_count")
+  ackedRejectionRate      Decimal?  @map("acked_rejection_rate") @db.Decimal(5, 2)
   createdAt           DateTime              @default(now()) @map("created_at")
   updatedAt           DateTime              @updatedAt @map("updated_at")
 

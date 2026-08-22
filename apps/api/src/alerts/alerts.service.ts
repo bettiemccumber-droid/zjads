@@ -18,6 +18,7 @@ import {
   MerchantCommissionAgg,
   ruleFromDb,
 } from './commission-monitor.util';
+import { shouldReopenAckedAlert } from './commission-alert-ack.util';
 
 @Injectable()
 export class AlertsService {
@@ -480,48 +481,82 @@ export class AlertsService {
         ? `${row.merchantName} (${row.platformName})`
         : row.platformName;
 
-      const alert = await this.prisma.commissionAlert.upsert({
-        where: {
-          userId_merchantId_windowStart_windowEnd: {
+      const metricsPayload = {
+        merchantName: displayName,
+        totalCommission: row.totalCommission,
+        rejectedCommission: row.rejectedCommission,
+        pendingCommission: row.pendingCommission,
+        rejectedOrderCount: row.rejectedOrderCount,
+        totalOrderCount: row.orderCount,
+        rejectionRate: row.rejectionRate,
+        thresholdAmount: monitorRule.rejectedAmountThreshold,
+        thresholdRate: monitorRule.rejectedRateThreshold,
+        triggerReason: ev.reasons.join('；'),
+        severity: ev.severity,
+      };
+
+      const uniqueWhere = {
+        userId_merchantId_windowStart_windowEnd: {
+          userId,
+          merchantId: alertMerchantKey,
+          windowStart,
+          windowEnd,
+        },
+      };
+
+      const existing = await this.prisma.commissionAlert.findUnique({ where: uniqueWhere });
+
+      let alert;
+      if (!existing) {
+        alert = await this.prisma.commissionAlert.create({
+          data: {
             userId,
             merchantId: alertMerchantKey,
             windowStart,
             windowEnd,
+            ...metricsPayload,
+            status: CommissionAlertStatus.open,
           },
-        },
-        create: {
-          userId,
-          merchantId: alertMerchantKey,
-          merchantName: displayName,
-          windowStart,
-          windowEnd,
-          totalCommission: row.totalCommission,
-          rejectedCommission: row.rejectedCommission,
-          pendingCommission: row.pendingCommission,
-          rejectedOrderCount: row.rejectedOrderCount,
-          totalOrderCount: row.orderCount,
-          rejectionRate: row.rejectionRate,
-          thresholdAmount: monitorRule.rejectedAmountThreshold,
-          thresholdRate: monitorRule.rejectedRateThreshold,
-          triggerReason: ev.reasons.join('；'),
-          severity: ev.severity,
-          status: CommissionAlertStatus.open,
-        },
-        update: {
-          merchantName: displayName,
-          totalCommission: row.totalCommission,
-          rejectedCommission: row.rejectedCommission,
-          pendingCommission: row.pendingCommission,
-          rejectedOrderCount: row.rejectedOrderCount,
-          totalOrderCount: row.orderCount,
-          rejectionRate: row.rejectionRate,
-          triggerReason: ev.reasons.join('；'),
-          severity: ev.severity,
-          status: CommissionAlertStatus.open,
-          lastTriggeredAt: new Date(),
-        },
-      });
-      triggered.push(alert);
+        });
+        triggered.push(alert);
+      } else {
+        const keepAck =
+          existing.status === CommissionAlertStatus.ack &&
+          !shouldReopenAckedAlert(
+            {
+              ackedRejectedCommission:
+                existing.ackedRejectedCommission != null
+                  ? Number(existing.ackedRejectedCommission)
+                  : null,
+              ackedRejectedOrderCount: existing.ackedRejectedOrderCount,
+              ackedRejectionRate:
+                existing.ackedRejectionRate != null
+                  ? Number(existing.ackedRejectionRate)
+                  : null,
+            },
+            {
+              rejectedCommission: row.rejectedCommission,
+              rejectedOrderCount: row.rejectedOrderCount,
+              rejectionRate: row.rejectionRate,
+            },
+          );
+        const nextStatus = keepAck ? CommissionAlertStatus.ack : CommissionAlertStatus.open;
+
+        alert = await this.prisma.commissionAlert.update({
+          where: { id: existing.id },
+          data: {
+            ...metricsPayload,
+            status: nextStatus,
+            ...(nextStatus === CommissionAlertStatus.open
+              ? { lastTriggeredAt: new Date() }
+              : {}),
+          },
+        });
+
+        if (nextStatus === CommissionAlertStatus.open) {
+          triggered.push(alert);
+        }
+      }
     }
 
     const amountTh = monitorRule.rejectedAmountThreshold;
@@ -600,7 +635,13 @@ export class AlertsService {
     if (alert.userId !== user.id && !isAdmin(user)) throw new Error('无权操作');
     return this.prisma.commissionAlert.update({
       where: { id: alertId },
-      data: { status: CommissionAlertStatus.ack },
+      data: {
+        status: CommissionAlertStatus.ack,
+        ackedAt: new Date(),
+        ackedRejectedCommission: alert.rejectedCommission,
+        ackedRejectedOrderCount: alert.rejectedOrderCount,
+        ackedRejectionRate: alert.rejectionRate,
+      },
     });
   }
 

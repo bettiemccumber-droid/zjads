@@ -52,6 +52,8 @@ interface ChannelSummaryRow {
   collectorImplemented: boolean;
   orderCount: number;
   totalCommission: number;
+  confirmedCommission: number;
+  pendingCommission: number;
   rejectedCommission: number;
   rejectionRate: number;
 }
@@ -528,6 +530,21 @@ export default function SettlementPage() {
               {
                 title: '总佣金',
                 dataIndex: 'totalCommission',
+                width: 96,
+                align: 'right',
+                render: (v: number) => (v > 0 ? money(v) : '—'),
+              },
+              {
+                title: '已确认',
+                dataIndex: 'confirmedCommission',
+                width: 96,
+                align: 'right',
+                render: (v: number) =>
+                  v > 0 ? <Typography.Text type="success">{money(v)}</Typography.Text> : '—',
+              },
+              {
+                title: '待确认',
+                dataIndex: 'pendingCommission',
                 width: 96,
                 align: 'right',
                 render: (v: number) => (v > 0 ? money(v) : '—'),

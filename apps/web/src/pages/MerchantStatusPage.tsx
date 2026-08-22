@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Alert,
   Button,
@@ -24,6 +24,11 @@ import { useAuth } from '../hooks/useAuth';
 import MerchantAccountPicker from '../components/MerchantAccountPicker';
 import { exportMerchantStatusExcel } from '../utils/exportMerchantStatusExcel';
 import { parseMerchantStatusImport } from '../utils/parseMerchantStatusImport';
+import {
+  clearMerchantStatusSession,
+  loadMerchantStatusSession,
+  saveMerchantStatusSession,
+} from '../utils/merchant-status-session.util';
 import { adminDefaultDateRange } from '../utils/date-range.util';
 import './MerchantStatusPage.css';
 
@@ -265,10 +270,16 @@ function buildMerchantInfoByKey(
 }
 
 export default function MerchantStatusPage() {
-  const { isAdmin } = useAuth();
+  const { isAdmin, user } = useAuth();
   const [searchParams] = useSearchParams();
   const viewUserId = isAdmin && searchParams.get('userId') ? parseInt(searchParams.get('userId')!, 10) : undefined;
   const viewUsername = searchParams.get('username') ?? (viewUserId ? `用户#${viewUserId}` : '');
+
+  /** 恢复 session 前暂存账号选择，避免 loadAccounts 覆盖 */
+  const pendingSelectedAccountIdsRef = useRef<number[] | null>(null);
+  /** 是否已有可持久化的查询结果（恢复或本次查询成功） */
+  const shouldPersistSessionRef = useRef(false);
+  const [sessionRestored, setSessionRestored] = useState(false);
 
   const [accounts, setAccounts] = useState<QueryableAccount[]>([]);
   const [selectedAccountIds, setSelectedAccountIds] = useState<number[]>([]);
@@ -292,13 +303,97 @@ export default function MerchantStatusPage() {
     [viewUserId],
   );
 
+  const persistSession = useCallback(() => {
+    if (!user?.id || !shouldPersistSessionRef.current) return;
+    if (rows.length === 0 && !summary && adminSummary.length === 0) return;
+    saveMerchantStatusSession(user.id, viewUserId, {
+      activeTab,
+      singleInput,
+      pasteText,
+      parsedPreview,
+      selectedAccountIds,
+      relationshipFilters,
+      rows,
+      summary,
+      adminSummary,
+      adminGrandTotal,
+      selectedEmployeeIds,
+    });
+  }, [
+    user?.id,
+    viewUserId,
+    activeTab,
+    singleInput,
+    pasteText,
+    parsedPreview,
+    selectedAccountIds,
+    relationshipFilters,
+    rows,
+    summary,
+    adminSummary,
+    adminGrandTotal,
+    selectedEmployeeIds,
+  ]);
+
+  /** 从 sessionStorage 恢复上次查询（不写数据库） */
+  useEffect(() => {
+    if (!user?.id) return;
+    pendingSelectedAccountIdsRef.current = null;
+    shouldPersistSessionRef.current = false;
+    setSessionRestored(false);
+
+    const cached = loadMerchantStatusSession(user.id, viewUserId);
+    if (!cached) return;
+
+    setActiveTab(cached.activeTab);
+    setSingleInput(cached.singleInput);
+    setPasteText(cached.pasteText);
+    setParsedPreview(cached.parsedPreview as MerchantQueryItem[]);
+    setRelationshipFilters(cached.relationshipFilters);
+    setRows(cached.rows as unknown as MerchantStatusRow[]);
+    setSummary(cached.summary as SummaryCounts | null);
+    if (cached.adminSummary) {
+      setAdminSummary(cached.adminSummary as UserPassSummary[]);
+    }
+    if (cached.adminGrandTotal) {
+      setAdminGrandTotal(cached.adminGrandTotal as SummaryCounts);
+    }
+    if (cached.selectedEmployeeIds) {
+      setSelectedEmployeeIds(cached.selectedEmployeeIds);
+    }
+    pendingSelectedAccountIdsRef.current = cached.selectedAccountIds;
+    shouldPersistSessionRef.current = true;
+    setSessionRestored(true);
+  }, [user?.id, viewUserId]);
+
+  /** 离开页面时写入 sessionStorage */
+  useEffect(() => {
+    return () => {
+      persistSession();
+    };
+  }, [persistSession]);
+
+  /** 筛选、账号选择变更时同步缓存（已有查询结果时） */
+  useEffect(() => {
+    persistSession();
+  }, [relationshipFilters, selectedAccountIds, activeTab, persistSession]);
+
   const loadAccounts = useCallback(async () => {
     const { data } = await api.get<ApiResult<QueryableAccount[]>>('/merchants/status/accounts', {
       params: accountParams,
     });
     if (data.success) {
       setAccounts(data.data);
-      setSelectedAccountIds(data.data.filter((a) => a.statusQuerySupported).map((a) => a.id));
+      const defaultIds = data.data.filter((a) => a.statusQuerySupported).map((a) => a.id);
+      const pending = pendingSelectedAccountIdsRef.current;
+      if (pending && pending.length > 0) {
+        const supported = new Set(defaultIds);
+        const restored = pending.filter((id) => supported.has(id));
+        setSelectedAccountIds(restored.length > 0 ? restored : defaultIds);
+        pendingSelectedAccountIdsRef.current = null;
+      } else {
+        setSelectedAccountIds(defaultIds);
+      }
     }
   }, [accountParams]);
 
@@ -325,6 +420,20 @@ export default function MerchantStatusPage() {
 
   const showQueryPanels = activeTab !== 'admin-summary';
   const showEmptyHint = showQueryPanels && rows.length === 0 && !loading && !summary;
+
+  const clearQueryResults = () => {
+    if (user?.id) {
+      clearMerchantStatusSession(user.id, viewUserId);
+    }
+    shouldPersistSessionRef.current = false;
+    setSessionRestored(false);
+    setRows([]);
+    setSummary(null);
+    setParsedPreview([]);
+    setRelationshipFilters([]);
+    setAdminSummary([]);
+    setAdminGrandTotal(null);
+  };
 
   const runQuery = async (items: MerchantQueryItem[]) => {
     if (items.length === 0) {
@@ -353,6 +462,22 @@ export default function MerchantStatusPage() {
       if (data.success) {
         setRows(data.data.items);
         setSummary(data.data.summary);
+        shouldPersistSessionRef.current = true;
+        if (user?.id) {
+          saveMerchantStatusSession(user.id, viewUserId, {
+            activeTab,
+            singleInput,
+            pasteText,
+            parsedPreview,
+            selectedAccountIds,
+            relationshipFilters,
+            rows: data.data.items,
+            summary: data.data.summary,
+            adminSummary,
+            adminGrandTotal,
+            selectedEmployeeIds,
+          });
+        }
         message.success(`查询完成，共 ${data.data.items.length} 条结果`);
       } else {
         message.error(data.message || '查询失败');
@@ -380,6 +505,22 @@ export default function MerchantStatusPage() {
       if (data.success) {
         setAdminSummary(data.data.byUser);
         setAdminGrandTotal(data.data.grandTotal);
+        shouldPersistSessionRef.current = true;
+        if (user?.id) {
+          saveMerchantStatusSession(user.id, viewUserId, {
+            activeTab,
+            singleInput,
+            pasteText,
+            parsedPreview,
+            selectedAccountIds,
+            relationshipFilters,
+            rows,
+            summary,
+            adminSummary: data.data.byUser,
+            adminGrandTotal: data.data.grandTotal,
+            selectedEmployeeIds,
+          });
+        }
         message.success('汇总查询完成');
       } else {
         message.error(data.message || '汇总失败');
@@ -811,6 +952,17 @@ export default function MerchantStatusPage() {
         </div>
       )}
 
+      {sessionRestored && (rows.length > 0 || summary) && activeTab !== 'admin-summary' && (
+        <Alert
+          type="info"
+          showIcon
+          closable
+          style={{ marginBottom: 16 }}
+          message="已恢复上次查询结果（仅保存在当前浏览器标签页，未写入数据库）"
+          onClose={() => setSessionRestored(false)}
+        />
+      )}
+
       {parsedPreview.length > 0 && activeTab !== 'admin-summary' && summary && (
         <Alert
           type="success"
@@ -911,7 +1063,7 @@ export default function MerchantStatusPage() {
               >
                 导出 Excel
               </Button>
-              <Button onClick={() => { setRows([]); setSummary(null); setParsedPreview([]); setRelationshipFilters([]); }}>
+              <Button onClick={clearQueryResults}>
                 清除结果
               </Button>
             </Space>

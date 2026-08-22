@@ -45,8 +45,6 @@ import {
   buildRwMerchantsByDateFromOrders,
   expandRwPerformanceAggsForRange,
   rwDetailMetricsToClickAggs,
-  fetchRewardooClicksSupplement,
-  mergeRwPerformancePreferApiDaily,
 } from './rewardoo-clicks';
 import { ensurePlatformStatusMappings } from '../common/platform-status-defaults.util';
 import {
@@ -58,7 +56,7 @@ import { buildOrderDateRangeFilter } from '../common/order-date-range.util';
 import { CollectResult, NormalizedOrder } from './types';
 
 export interface CollectOptions {
-  /** 是否采集联盟点击；未勾选时仅采集订单/佣金（PM/LH/UI 全区间；LB 仅 endDate 单日） */
+  /** 是否采集联盟点击（PM/LH/UI 全区间；LB 仅 endDate 单日；RW 始终仅订单/佣金，点击请用校准导入） */
   includeClicks?: boolean;
 }
 
@@ -316,8 +314,8 @@ export class CollectorsService {
           let perfAggs = rwDetailMetricsToClickAggs(detailMetrics);
           let perfCommTotal = perfAggs.reduce((s, a) => s + a.performanceCommission, 0);
           perfOrderTotal = perfAggs.reduce((s, a) => s + a.performanceOrders, 0);
-          /** 未勾选联盟点击时仅更新佣金/明细订单，保留校准导入的 clicks */
-          const preserveImportedClicks = !options.includeClicks;
+          /** RW API 点击不可靠：始终保留校准导入的 clicks，不随「含联盟点击」走 API 补缺 */
+          const preserveImportedClicks = true;
 
           /** 仅当明细有单但按日 Performance 汇总漏掉某商家×日期时，才走 Performance API 补缺（避免每次整段逐日拉取） */
           const needApiSupplement = rwDetailMetricsNeedApiSupplement(
@@ -418,38 +416,6 @@ export class CollectorsService {
             await onProgress?.(
               `订单已写入 ${orderPersistResult.inserted} 条（Performance ${perfOrderTotal} 单 / $${perfCommTotal.toFixed(2)}）`,
             );
-
-            if (options.includeClicks) {
-              try {
-                await onProgress?.('正在补充 RW 联盟点击…');
-                const clickAggs = await fetchRewardooClicksSupplement(
-                  apiToken,
-                  startDate,
-                  endDate,
-                  async (message) => {
-                    await onProgress?.(message);
-                  },
-                );
-                const clickTotal = clickAggs.reduce((s, a) => s + a.clicks, 0);
-                if (clickTotal > 0) {
-                  const merged = mergeRwPerformancePreferApiDaily(perfAggs, clickAggs);
-                  await this.persistRwPerformanceDaily(
-                    account.id,
-                    expandRwPerformanceAggsForRange(merged, startDate, endDate),
-                  );
-                  rwClickTotal = merged.reduce((s, a) => s + a.clicks, 0);
-                  await onProgress?.(`已合并联盟点击 ${rwClickTotal} 次`);
-                } else {
-                  rwClickError = '联盟点击 API 未解析到有效点击';
-                  await onProgress?.(`${rwClickError}，保留 Performance 汇总 ${perfOrderTotal} 单`);
-                }
-              } catch (clickErr) {
-                const clickMsg =
-                  clickErr instanceof Error ? clickErr.message : String(clickErr);
-                rwClickError = clickMsg.slice(0, 200);
-                await onProgress?.(`RW 联盟点击补充失败: ${clickMsg.slice(0, 80)}`);
-              }
-            }
           } else {
             rwPerformanceOrderError =
               detailRows.length > 0

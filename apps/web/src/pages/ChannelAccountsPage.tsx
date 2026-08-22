@@ -170,7 +170,7 @@ export default function ChannelAccountsPage() {
               showIcon
               style={{ marginBottom: 12 }}
               message="Rewardoo Performance"
-              description="日常采集写入订单与佣金；勾选「含联盟点击」会尝试 API 拉取点击。与后台 Performance 的点击/订单不一致时，请用「Performance 校准导入」对齐点击与订单数（不改佣金，导入后采集不覆盖）。"
+              description="日常采集写入订单与佣金；「含联盟点击」不影响 RW（RW 不通过 API 拉点击）。与后台 Performance 的点击/订单不一致时，请用「Performance 校准导入」对齐点击与订单数（不改佣金，导入后采集不覆盖）。"
             />
           ) : null}
           <Button type="primary" style={{ marginBottom: 12 }} onClick={() => openAdd(p)}>

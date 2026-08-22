@@ -258,7 +258,7 @@ export default function SettlementSyncCollect({
       disabled={jobActive}
       onChange={(e) => setIncludeClicks(e.target.checked)}
     >
-      含联盟点击
+      含联盟点击（PM/LH/UI；LB 最后一天；RW 不受影响）
     </Checkbox>
   );
 

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Alert, Button, Space, Tag, Typography } from 'antd';
 import { Link } from 'react-router-dom';
 import { WarningOutlined } from '@ant-design/icons';
+import dayjs from 'dayjs';
 import { api, type ApiResult } from '../api/client';
 import {
   isAlertMerchantStillAdvertising,
@@ -19,6 +20,8 @@ interface CommissionAlertRow {
   totalOrderCount: number;
   severity: string;
   triggerReason: string;
+  windowStart: string;
+  windowEnd: string;
   username?: string;
 }
 
@@ -38,6 +41,16 @@ function money(v: number) {
 
 function pct(v: number) {
   return `${Number(v).toFixed(1)}%`;
+}
+
+/** 格式化为 YYYY-MM-DD，便于横幅展示区间 */
+function formatBannerDate(value: string) {
+  const d = dayjs(value);
+  return d.isValid() ? d.format('YYYY-MM-DD') : value.slice(0, 10);
+}
+
+function formatDateRange(start: string, end: string) {
+  return `${formatBannerDate(start)} ~ ${formatBannerDate(end)}`;
 }
 
 /**
@@ -127,6 +140,7 @@ export default function CommissionAlertBanner({
   );
 
   const stillAdvertisingCount = enrichedAlerts.filter((e) => e.stillActive.length > 0).length;
+  const reportDateRangeLabel = formatDateRange(startDate, endDate);
 
   if (alerts.length === 0) {
     return null;
@@ -143,7 +157,7 @@ export default function CommissionAlertBanner({
       icon={<WarningOutlined />}
       style={{ marginBottom: 16 }}
       message={
-        <Space wrap>
+        <Space wrap align="center">
           <span>
             结算风险提醒：{alerts.length} 个待处理风险商家
             {stillAdvertisingCount > 0 ? (
@@ -156,14 +170,18 @@ export default function CommissionAlertBanner({
               </Typography.Text>
             )}
           </span>
+          <Tag color="blue">在投检测区间 {reportDateRangeLabel}</Tag>
           <Link to="/settlement">前往结算查询 →</Link>
         </Space>
       }
       description={
         <div style={{ marginTop: 8 }}>
           <Typography.Paragraph type="secondary" style={{ marginBottom: 8 }}>
-            以下告警来自结算查询的「待处理告警」，确认后将不再提示。在投状态依据当前报表日期区间内
-            ENABLED 广告系列判断。
+            以下告警来自结算查询的「待处理告警」，确认后将不再提示。每条告警标注其
+            <Typography.Text strong> 统计区间 </Typography.Text>
+            ；在投状态依据上方
+            <Typography.Text strong> 在投检测区间 </Typography.Text>
+            内 ENABLED 广告系列判断（与当前数据采集页日期选择一致）。
           </Typography.Paragraph>
           <Space direction="vertical" size={8} style={{ width: '100%' }}>
             {enrichedAlerts.map(({ alert, stillActive, parsed }) => (
@@ -190,6 +208,7 @@ export default function CommissionAlertBanner({
                   ID {parsed.merchantId}
                   {parsed.affiliateAlias ? ` · ${parsed.affiliateAlias}` : ''}
                 </Typography.Text>
+                <Tag color="processing">统计区间 {formatDateRange(alert.windowStart, alert.windowEnd)}</Tag>
                 <Typography.Text>
                   失效 {money(Number(alert.rejectedCommission))} · 失效率 {pct(Number(alert.rejectionRate))}
                   {' '}

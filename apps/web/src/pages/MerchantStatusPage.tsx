@@ -3,7 +3,6 @@ import {
   Alert,
   Button,
   Card,
-  Checkbox,
   Col,
   Input,
   Row,
@@ -18,10 +17,11 @@ import {
   message,
 } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
-import { UploadOutlined } from '@ant-design/icons';
+import { UploadOutlined, SearchOutlined } from '@ant-design/icons';
 import { Link, useSearchParams } from 'react-router-dom';
 import { api, type ApiResult } from '../api/client';
 import { useAuth } from '../hooks/useAuth';
+import MerchantAccountPicker from '../components/MerchantAccountPicker';
 import { exportMerchantStatusExcel } from '../utils/exportMerchantStatusExcel';
 import { parseMerchantStatusImport } from '../utils/parseMerchantStatusImport';
 import { adminDefaultDateRange } from '../utils/date-range.util';
@@ -157,15 +157,6 @@ const PLATFORM_CLASS: Record<string, string> = {
   rewardoo: 'rewardoo',
   ultrainfluence: 'ultrainfluence',
 };
-
-/** 平台账号快捷筛选 */
-const PLATFORM_QUICK_FILTERS: Array<{ code: string; label: string }> = [
-  { code: 'partnermatic', label: '仅 PM' },
-  { code: 'linkhaitao', label: '仅 LH' },
-  { code: 'linkbux', label: '仅 LB' },
-  { code: 'rewardoo', label: '仅 RW' },
-  { code: 'ultrainfluence', label: '仅 UI' },
-];
 
 function renderStatusPill(label: string, variant: string, size: 'sm' | 'md' = 'md') {
   return (
@@ -332,37 +323,8 @@ export default function MerchantStatusPage() {
       });
   }, [isAdmin]);
 
-  const supportedAccounts = useMemo(
-    () => accounts.filter((a) => a.statusQuerySupported),
-    [accounts],
-  );
-
-  const isAllAccountsSelected =
-    supportedAccounts.length > 0 &&
-    selectedAccountIds.length === supportedAccounts.length &&
-    supportedAccounts.every((a) => selectedAccountIds.includes(a.id));
-
-  const isPlatformOnlySelected = (platformCode: string) => {
-    const ids = supportedAccounts.filter((a) => a.platformCode === platformCode).map((a) => a.id);
-    return (
-      ids.length > 0 &&
-      selectedAccountIds.length === ids.length &&
-      ids.every((id) => selectedAccountIds.includes(id))
-    );
-  };
-
-  const selectAllAccounts = () => {
-    setSelectedAccountIds(supportedAccounts.map((a) => a.id));
-  };
-
-  const selectPlatformAccounts = (platformCode: string, label: string) => {
-    const ids = supportedAccounts.filter((a) => a.platformCode === platformCode).map((a) => a.id);
-    if (ids.length === 0) {
-      message.warning(`暂无 ${label.replace('仅 ', '')} 平台账号`);
-      return;
-    }
-    setSelectedAccountIds(ids);
-  };
+  const showQueryPanels = activeTab !== 'admin-summary';
+  const showEmptyHint = showQueryPanels && rows.length === 0 && !loading && !summary;
 
   const runQuery = async (items: MerchantQueryItem[]) => {
     if (items.length === 0) {
@@ -660,51 +622,13 @@ export default function MerchantStatusPage() {
     },
   ];
 
-  const accountSelector = (
-    <Card size="small" className="merchant-status-account-card" style={{ marginBottom: 16 }}>
-      <div className="merchant-status-account-toolbar">
-        <span className="merchant-status-account-title">平台账号</span>
-        <Space wrap size={[6, 6]} className="merchant-status-account-actions">
-          <Button
-            size="small"
-            type={isAllAccountsSelected ? 'primary' : 'default'}
-            onClick={selectAllAccounts}
-          >
-            全选
-          </Button>
-          {PLATFORM_QUICK_FILTERS.map((f) => {
-            const available = supportedAccounts.some((a) => a.platformCode === f.code);
-            return (
-              <Button
-                key={f.code}
-                size="small"
-                type={isPlatformOnlySelected(f.code) ? 'primary' : 'default'}
-                disabled={!available}
-                onClick={() => selectPlatformAccounts(f.code, f.label)}
-              >
-                {f.label}
-              </Button>
-            );
-          })}
-        </Space>
-        <span className="merchant-status-account-count">
-          已选 {selectedAccountIds.length}/{supportedAccounts.length}
-        </span>
-      </div>
-      <Checkbox.Group
-        value={selectedAccountIds}
-        onChange={(vals) => setSelectedAccountIds(vals as number[])}
-        style={{ width: '100%' }}
-      >
-        <Space wrap size={[8, 8]}>
-          {accounts.map((a) => (
-            <Checkbox key={a.id} value={a.id} disabled={!a.statusQuerySupported}>
-              {a.platformName} · {a.displayName}
-              {!a.statusQuerySupported && ' (暂不支持)'}
-            </Checkbox>
-          ))}
-        </Space>
-      </Checkbox.Group>
+  const accountPicker = showQueryPanels ? (
+    <>
+      <MerchantAccountPicker
+        accounts={accounts}
+        selectedIds={selectedAccountIds}
+        onChange={setSelectedAccountIds}
+      />
       {accounts.length === 0 && (
         <Alert
           type="warning"
@@ -720,8 +644,8 @@ export default function MerchantStatusPage() {
           }
         />
       )}
-    </Card>
-  );
+    </>
+  ) : null;
 
   return (
     <div className="merchant-status-page">
@@ -735,64 +659,81 @@ export default function MerchantStatusPage() {
         />
       )}
 
-      <Card title="商家状态查询" style={{ marginBottom: 16 }}>
+      <div className="merchant-status-hero">
+        <span className="merchant-status-eyebrow">MERCHANT STATUS</span>
+        <h1 className="merchant-status-title">商家状态查询</h1>
+        <p className="merchant-status-desc">
+          输入 MID、mcid 或域名，在所选平台账号中检测 Join 关系、商家上架与投前建议。支持单个查询、批量粘贴与 Excel 导入。
+        </p>
+      </div>
+
+      <Card className="merchant-status-main-card" styles={{ body: { paddingTop: 8 } }}>
         <Tabs
           activeKey={activeTab}
           onChange={setActiveTab}
+          className="merchant-status-tabs"
           items={[
             {
               key: 'single',
               label: '单个查询',
               children: (
-                <Space direction="vertical" style={{ width: '100%' }}>
+                <div className="merchant-query-panel">
                   <Input.Search
-                    placeholder="输入 MID、mcid 或域名"
+                    size="large"
+                    placeholder="输入 MID、mcid 或域名，例如 123456 / nike / example.com"
                     value={singleInput}
                     onChange={(e) => setSingleInput(e.target.value)}
                     onSearch={querySingle}
                     enterButton="查询"
                     loading={loading}
-                    style={{ maxWidth: 480 }}
+                    className="merchant-query-search"
                   />
-                  {activeTab !== 'admin-summary' && accountSelector}
-                </Space>
+                  <p className="merchant-query-hint">
+                    纯数字视为 MID；含 <code>.</code> 视为域名；其余视为 mcid
+                  </p>
+                </div>
               ),
             },
             {
               key: 'paste',
               label: '批量粘贴',
               children: (
-                <Space direction="vertical" style={{ width: '100%' }}>
+                <div className="merchant-query-panel">
                   <Input.TextArea
                     rows={8}
-                    placeholder="每行一个 MID，或用逗号/空格分隔。也支持 mcid。"
+                    className="merchant-query-textarea"
+                    placeholder="每行一个 MID，或用逗号/空格分隔。也支持 mcid 与域名。"
                     value={pasteText}
                     onChange={(e) => setPasteText(e.target.value)}
                   />
-                  {activeTab !== 'admin-summary' && accountSelector}
-                  <Button type="primary" loading={loading} onClick={() => void queryPaste()}>
-                    开始查询
-                  </Button>
-                </Space>
+                  <div className="merchant-query-actions">
+                    <Button type="primary" size="large" loading={loading} onClick={() => void queryPaste()}>
+                      开始查询
+                    </Button>
+                    {parsedPreview.length > 0 && (
+                      <span className="merchant-query-preview">已解析 {parsedPreview.length} 个商家</span>
+                    )}
+                  </div>
+                </div>
               ),
             },
             {
               key: 'import',
               label: 'Excel 导入',
               children: (
-                <Space direction="vertical" style={{ width: '100%' }}>
+                <div className="merchant-query-panel">
                   <Upload beforeUpload={onImportFile} accept=".xlsx,.xls,.csv" maxCount={1} showUploadList={false}>
-                    <Button icon={<UploadOutlined />} loading={loading}>
+                    <Button size="large" icon={<UploadOutlined />} loading={loading}>
                       选择 Excel / CSV 文件
                     </Button>
                   </Upload>
                   <Alert
                     type="info"
                     showIcon
+                    className="merchant-query-import-tip"
                     message="支持联盟推荐表：自动跳过标题行，识别 mcid / MID / Website（网址）列"
                   />
-                  {activeTab !== 'admin-summary' && accountSelector}
-                </Space>
+                </div>
               ),
             },
             ...(isAdmin
@@ -801,7 +742,7 @@ export default function MerchantStatusPage() {
                     key: 'admin-summary',
                     label: '管理员汇总',
                     children: (
-                      <Space direction="vertical" style={{ width: '100%' }}>
+                      <div className="merchant-query-panel">
                         <Alert
                           type="info"
                           showIcon
@@ -818,6 +759,7 @@ export default function MerchantStatusPage() {
                         />
                         <Input.TextArea
                           rows={6}
+                          className="merchant-query-textarea"
                           placeholder="粘贴 MID 列表，或使用下方导入"
                           value={pasteText}
                           onChange={(e) => setPasteText(e.target.value)}
@@ -825,6 +767,7 @@ export default function MerchantStatusPage() {
                         <Space>
                           <Button
                             type="primary"
+                            size="large"
                             loading={loading}
                             onClick={async () => {
                               const { data } = await api.post<ApiResult<MerchantQueryItem[]>>(
@@ -843,19 +786,32 @@ export default function MerchantStatusPage() {
                             maxCount={1}
                             showUploadList={false}
                           >
-                            <Button icon={<UploadOutlined />}>导入并汇总</Button>
+                            <Button size="large" icon={<UploadOutlined />}>
+                              导入并汇总
+                            </Button>
                           </Upload>
                         </Space>
-                      </Space>
+                      </div>
                     ),
                   },
                 ]
               : []),
           ]}
         />
+        {accountPicker}
       </Card>
 
-      {parsedPreview.length > 0 && activeTab !== 'admin-summary' && (
+      {showEmptyHint && (
+        <div className="merchant-status-empty">
+          <SearchOutlined className="merchant-status-empty-icon" />
+          <div className="merchant-status-empty-title">输入商家信息后开始查询</div>
+          <div className="merchant-status-empty-desc">
+            将在上方所选 {selectedAccountIds.length} 个平台账号中检测 Join 状态与上架情况
+          </div>
+        </div>
+      )}
+
+      {parsedPreview.length > 0 && activeTab !== 'admin-summary' && summary && (
         <Alert
           type="success"
           showIcon
@@ -865,7 +821,7 @@ export default function MerchantStatusPage() {
       )}
 
       {summary && activeTab !== 'admin-summary' && (
-        <Card size="small" style={{ marginBottom: 16 }}>
+        <Card size="small" className="merchant-status-summary-card">
           <SummaryBar summary={summary} />
         </Card>
       )}
@@ -930,6 +886,7 @@ export default function MerchantStatusPage() {
 
       {rows.length > 0 && activeTab !== 'admin-summary' && (
         <Card
+          className="merchant-status-results-card"
           title="查询结果"
           extra={
             <Space>

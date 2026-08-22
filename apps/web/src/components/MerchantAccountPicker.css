@@ -1,0 +1,158 @@
+.merchant-account-panel {
+  margin-top: 16px;
+  padding: 14px 16px;
+  background: #f8fafc;
+  border: 1px solid #e8ecf1;
+  border-radius: 10px;
+}
+
+.merchant-account-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.merchant-account-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: #334155;
+}
+
+.merchant-account-desc {
+  font-size: 12px;
+  color: #94a3b8;
+  margin-top: 2px;
+}
+
+.merchant-account-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+
+.merchant-account-count {
+  font-size: 12px;
+  font-weight: 600;
+  color: #64748b;
+  white-space: nowrap;
+}
+
+.merchant-account-quick {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.merchant-account-quick .ant-btn {
+  height: 28px;
+  padding-inline: 10px;
+  font-size: 12px;
+  border-radius: 6px;
+}
+
+.merchant-account-grid.ant-checkbox-group {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 10px;
+  width: 100%;
+}
+
+.merchant-account-card {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 12px 14px;
+  background: #fff;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: border-color 0.15s, box-shadow 0.15s, background 0.15s;
+  margin: 0;
+}
+
+.merchant-account-card:hover:not(.disabled) {
+  border-color: #cbd5e1;
+  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.06);
+}
+
+.merchant-account-card.selected {
+  border-color: #3b82f6;
+  background: #f0f7ff;
+  box-shadow: 0 0 0 1px rgba(59, 130, 246, 0.15);
+}
+
+.merchant-account-card.disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+  background: #f8fafc;
+}
+
+.merchant-account-card .ant-checkbox {
+  margin-top: 2px;
+}
+
+.merchant-account-card-body {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.merchant-platform-badge {
+  display: inline-block;
+  align-self: flex-start;
+  padding: 1px 8px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  border-radius: 4px;
+  line-height: 18px;
+}
+
+.merchant-platform-badge.partnermatic {
+  color: #1d4ed8;
+  background: #dbeafe;
+}
+
+.merchant-platform-badge.linkhaitao {
+  color: #6d28d9;
+  background: #ede9fe;
+}
+
+.merchant-platform-badge.linkbux {
+  color: #0f766e;
+  background: #ccfbf1;
+}
+
+.merchant-platform-badge.rewardoo {
+  color: #c2410c;
+  background: #ffedd5;
+}
+
+.merchant-platform-badge.ultrainfluence {
+  color: #7c3aed;
+  background: #ede9fe;
+}
+
+.merchant-account-name {
+  font-size: 14px;
+  font-weight: 600;
+  color: #0f172a;
+  line-height: 1.3;
+}
+
+.merchant-account-alias {
+  font-size: 12px;
+  color: #64748b;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+}
+
+.merchant-account-unsupported {
+  font-size: 11px;
+  color: #94a3b8;
+}

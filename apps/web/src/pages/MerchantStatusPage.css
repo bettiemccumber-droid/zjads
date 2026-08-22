@@ -11,36 +11,143 @@
   --ms-purple-bg: #f5f3ff;
 }
 
-/* ── 平台账号选择 ── */
-.merchant-status-account-card .ant-card-body {
-  padding: 12px 16px;
+/* ── 页头 ── */
+.merchant-status-hero {
+  margin-bottom: 16px;
 }
 
-.merchant-status-account-toolbar {
+.merchant-status-eyebrow {
+  display: block;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  color: #3b82f6;
+  margin-bottom: 4px;
+}
+
+.merchant-status-title {
+  margin: 0 0 8px;
+  font-size: 24px;
+  font-weight: 700;
+  color: #0f172a;
+  line-height: 1.25;
+}
+
+.merchant-status-desc {
+  margin: 0;
+  max-width: 720px;
+  font-size: 13px;
+  color: #64748b;
+  line-height: 1.6;
+}
+
+/* ── 主卡片与查询区 ── */
+.merchant-status-main-card {
+  margin-bottom: 16px;
+  border-radius: 10px;
+  border: 1px solid #e8ecf1;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+}
+
+.merchant-status-tabs .ant-tabs-nav {
+  margin-bottom: 0;
+}
+
+.merchant-query-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 4px 0 0;
+}
+
+.merchant-query-search {
+  max-width: 640px;
+}
+
+.merchant-query-search.ant-input-search-large .ant-input-group .ant-input {
+  font-size: 15px;
+}
+
+.merchant-query-hint {
+  margin: 0;
+  font-size: 12px;
+  color: #94a3b8;
+  line-height: 1.5;
+}
+
+.merchant-query-hint code {
+  padding: 0 4px;
+  font-size: 11px;
+  background: #f1f5f9;
+  border-radius: 4px;
+  color: #475569;
+}
+
+.merchant-query-textarea {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 13px;
+}
+
+.merchant-query-actions {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 10px 12px;
-  margin-bottom: 10px;
-  padding-bottom: 10px;
-  border-bottom: 1px solid #f1f5f9;
+  gap: 12px;
 }
 
-.merchant-status-account-title {
+.merchant-query-preview {
+  font-size: 13px;
+  color: #16a34a;
+  font-weight: 500;
+}
+
+.merchant-query-import-tip {
+  margin-top: 4px;
+}
+
+/* ── 空状态 ── */
+.merchant-status-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 48px 24px;
+  margin-bottom: 16px;
+  background: #fff;
+  border: 1px dashed #e2e8f0;
+  border-radius: 10px;
+  text-align: center;
+}
+
+.merchant-status-empty-icon {
+  font-size: 36px;
+  color: #cbd5e1;
+  margin-bottom: 12px;
+}
+
+.merchant-status-empty-title {
+  font-size: 15px;
   font-weight: 600;
-  font-size: 14px;
-  color: #334155;
-  margin-right: 4px;
+  color: #475569;
+  margin-bottom: 6px;
 }
 
-.merchant-status-account-actions {
-  flex: 1 1 auto;
+.merchant-status-empty-desc {
+  font-size: 13px;
+  color: #94a3b8;
 }
 
-.merchant-status-account-count {
-  font-size: 12px;
-  color: #64748b;
-  white-space: nowrap;
+.merchant-status-summary-card {
+  margin-bottom: 16px;
+  border-radius: 10px;
+}
+
+.merchant-status-results-card {
+  border-radius: 10px;
+}
+
+.merchant-status-results-card .ant-card-head {
+  border-bottom: 1px solid #f1f5f9;
 }
 
 /* ── 汇总指标 ── */

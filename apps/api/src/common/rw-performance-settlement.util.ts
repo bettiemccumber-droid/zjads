@@ -1,15 +1,21 @@
 import { isRwClickPseudoMerchant } from '../collectors/rewardoo-clicks';
 import { MerchantCommissionAgg } from './commission-aggregate.util';
+import { deploymentUnitKey } from './deployment-unit.util';
 
-/** RW 商家聚合键：merchantId|rewardoo|渠道别名 */
-export function rwMerchantAggKey(merchantId: string, affiliateAlias: string): string {
-  return `${merchantId}|rewardoo|${affiliateAlias.toLowerCase()}`;
+/** RW 商家 Performance 聚合键：merchantId + 投放单元 */
+export function rwMerchantAggKey(
+  merchantId: string,
+  displayName: string,
+  affiliateAlias: string,
+): string {
+  return `${merchantId}|${deploymentUnitKey('rewardoo', displayName, affiliateAlias)}`;
 }
 
 export interface RwPerformanceMerchantTotals {
   merchantId: string;
   merchantName: string;
   affiliateAlias: string;
+  displayName: string;
   platformName: string;
   orderCount: number;
   totalCommission: number;
@@ -22,12 +28,13 @@ export interface RwClickDailyPerformanceRow {
   performanceCommission: unknown;
   channelAccount: {
     affiliateAlias: string | null;
+    displayName?: string | null;
     platform: { code: string; name: string } | null;
   };
 }
 
 /**
- * 按商家汇总 RW Performance 逐日指标（Transaction Date 口径，与联盟后台 Channel 报表一致）
+ * 按商家+投放单元汇总 RW Performance（同 displayName+alias 的多 Channel 先加总）
  */
 export function aggregateRwPerformanceByMerchant(
   rows: RwClickDailyPerformanceRow[],
@@ -39,11 +46,13 @@ export function aggregateRwPerformanceByMerchant(
     if (isRwClickPseudoMerchant(c.merchantId)) continue;
 
     const alias = (c.channelAccount.affiliateAlias || '').toLowerCase();
-    const key = rwMerchantAggKey(c.merchantId, alias);
+    const displayName = (c.channelAccount.displayName || '').trim();
+    const key = rwMerchantAggKey(c.merchantId, displayName, alias);
     const prev = map.get(key) ?? {
       merchantId: c.merchantId,
       merchantName: c.merchantName ?? '',
       affiliateAlias: alias,
+      displayName,
       platformName: c.channelAccount.platform.name,
       orderCount: 0,
       totalCommission: 0,
@@ -59,7 +68,7 @@ export function aggregateRwPerformanceByMerchant(
 }
 
 /**
- * 将 RW 商家总佣金/订单数对齐为 Performance 逐日汇总（与数据采集看板一致）
+ * 将 RW 商家总佣金/订单数对齐为 Performance 逐日汇总（每个投放单元每商家只覆盖一次）
  */
 export function applyRwPerformanceCommissionOverlay(
   merchants: MerchantCommissionAgg[],
@@ -70,7 +79,8 @@ export function applyRwPerformanceCommissionOverlay(
   const result = merchants.map((m) => {
     if (m.platformCode !== 'rewardoo') return m;
 
-    const key = `${m.merchantId}|${m.platformCode}|${m.affiliateAlias}`;
+    const displayName = m.channelDisplayName ?? '';
+    const key = rwMerchantAggKey(m.merchantId, displayName, m.affiliateAlias);
     const perf = perfByKey.get(key);
     if (!perf) return m;
 
@@ -94,7 +104,9 @@ export function applyRwPerformanceCommissionOverlay(
   });
 
   const existingKeys = new Set(
-    result.map((m) => `${m.merchantId}|${m.platformCode}|${m.affiliateAlias}`),
+    result
+      .filter((m) => m.platformCode === 'rewardoo')
+      .map((m) => rwMerchantAggKey(m.merchantId, m.channelDisplayName ?? '', m.affiliateAlias)),
   );
 
   for (const [key, perf] of perfByKey) {
@@ -105,6 +117,7 @@ export function applyRwPerformanceCommissionOverlay(
       platformCode: 'rewardoo',
       platformName: perf.platformName,
       affiliateAlias: perf.affiliateAlias,
+      channelDisplayName: perf.displayName,
       orderCount: perf.orderCount,
       rejectedOrderCount: 0,
       totalCommission: perf.totalCommission,

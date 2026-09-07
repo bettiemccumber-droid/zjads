@@ -44,7 +44,10 @@ interface PlatformSummaryRow {
 }
 
 interface ChannelSummaryRow {
+  deploymentUnitKey?: string;
   channelAccountId: number;
+  channelAccountIds?: number[];
+  channelCount?: number;
   displayName: string;
   affiliateAlias: string;
   platformCode: string;
@@ -485,14 +488,14 @@ export default function SettlementPage() {
             </Typography.Text>
           ) : null}
           {' '}
-          下方按绑定的渠道账号分列，商家明细与统计卡片随筛选收窄。
+          下方按投放单元（显示名称 + 联盟序号）分列；同单元多 Channel 已合并。商家明细与统计卡片随筛选收窄。
         </Typography.Paragraph>
 
         {filteredChannelSummaries.length > 0 && (
           <Table
             size="small"
             style={{ marginBottom: 16 }}
-            rowKey="channelAccountId"
+            rowKey={(r) => r.deploymentUnitKey ?? String(r.channelAccountId)}
             pagination={false}
             dataSource={filteredChannelSummaries}
             columns={[
@@ -507,6 +510,11 @@ export default function SettlementPage() {
                       <Typography.Text type="secondary" style={{ marginLeft: 4 }}>
                         ({r.affiliateAlias})
                       </Typography.Text>
+                    ) : null}
+                    {(r.channelCount ?? 1) > 1 ? (
+                      <Tag color="blue" style={{ marginLeft: 6 }}>
+                        {r.channelCount} Channel
+                      </Tag>
                     ) : null}
                   </span>
                 ),

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { SyncOutlined } from '@ant-design/icons';
 import { Button, Checkbox, Space, Tooltip, Typography, message } from 'antd';
 import { api, type ApiResult } from '../api/client';
+import { accountIdsForDeploymentUnitFilter } from '../utils/deployment-unit.util';
 import SyncJobStatus, { type SyncJobDetail } from './SyncJobStatus';
 
 interface SyncAccountPick {
@@ -96,7 +97,7 @@ export default function SettlementSyncCollect({
 
   const accountIdsToCollect = useMemo(() => {
     if (channelAccountId !== 'all') {
-      return syncAccounts.some((a) => a.id === channelAccountId) ? [channelAccountId] : [];
+      return accountIdsForDeploymentUnitFilter(syncAccounts, channelAccountId);
     }
     if (platformCode !== 'all') {
       return syncAccounts.filter((a) => a.platformCode === platformCode).map((a) => a.id);

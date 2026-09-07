@@ -26,9 +26,13 @@ export interface MerchantCommissionAgg {
   rejectionRate: number;
 }
 
-/** 分渠道账号结算/巡检汇总 */
+/** 分投放单元结算汇总（同 displayName + affiliateAlias + platform 的多 Channel 合并） */
 export interface ChannelAccountCommissionSummary {
+  deploymentUnitKey: string;
+  /** 组内代表 id，供筛选下拉兼容 */
   channelAccountId: number;
+  channelAccountIds: number[];
+  channelCount: number;
   displayName: string;
   affiliateAlias: string;
   platformCode: string;
@@ -276,7 +280,8 @@ function mergeAliasList(existing: string, alias: string): string {
   return [...parts, alias].join(', ');
 }
 
-function finalizeMerchantRows(rows: MerchantCommissionAgg[]): MerchantCommissionAgg[] {
+/** @internal 供 deployment-unit 等模块复用 */
+export function finalizeMerchantRows(rows: MerchantCommissionAgg[]): MerchantCommissionAgg[] {
   return rows.map((r) => ({
     ...r,
     totalCommission: round2(r.totalCommission),
@@ -360,7 +365,10 @@ export function summarizeMerchantsByChannelAccount(
 
   for (const a of accounts) {
     map.set(a.id, {
+      deploymentUnitKey: `${a.platform.code}|${(a.displayName || '').trim().toLowerCase()}|${(a.affiliateAlias || '').trim().toLowerCase()}`,
       channelAccountId: a.id,
+      channelAccountIds: [a.id],
+      channelCount: 1,
       displayName: a.displayName,
       affiliateAlias: a.affiliateAlias,
       platformCode: a.platform.code,

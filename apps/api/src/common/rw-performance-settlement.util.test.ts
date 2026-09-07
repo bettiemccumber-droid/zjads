@@ -13,6 +13,7 @@ function baseMerchant(overrides: Partial<MerchantCommissionAgg> = {}): MerchantC
     platformCode: 'rewardoo',
     platformName: 'Rewardoo',
     affiliateAlias: 'rw3',
+    channelDisplayName: 'huanghuang',
     orderCount: 32,
     rejectedOrderCount: 0,
     totalCommission: 336.13,
@@ -25,8 +26,8 @@ function baseMerchant(overrides: Partial<MerchantCommissionAgg> = {}): MerchantC
 }
 
 function runTests() {
-  const key = rwMerchantAggKey('122309', 'rw3');
-  assert.equal(key, '122309|rewardoo|rw3');
+  const key = rwMerchantAggKey('122309', 'huanghuang', 'rw3');
+  assert.equal(key, '122309|rewardoo|huanghuang|rw3');
 
   const perfByKey = aggregateRwPerformanceByMerchant([
     {
@@ -36,6 +37,7 @@ function runTests() {
       performanceCommission: 200,
       channelAccount: {
         affiliateAlias: 'rw3',
+        displayName: 'huanghuang',
         platform: { code: 'rewardoo', name: 'Rewardoo' },
       },
     },
@@ -46,6 +48,7 @@ function runTests() {
       performanceCommission: 145.39,
       channelAccount: {
         affiliateAlias: 'rw3',
+        displayName: 'huanghuang',
         platform: { code: 'rewardoo', name: 'Rewardoo' },
       },
     },

@@ -342,6 +342,7 @@ export default function DashboardPage() {
             id: number;
             displayName: string;
             affiliateAlias: string;
+            externalChannelId?: string | null;
             isActive?: boolean;
           }>;
         }>
@@ -362,6 +363,7 @@ export default function DashboardPage() {
           platformName: g.platformName,
           displayName: a.displayName,
           affiliateAlias: a.affiliateAlias,
+          externalChannelId: a.externalChannelId,
         });
       }
     }

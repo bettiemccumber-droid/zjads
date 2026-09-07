@@ -1,5 +1,6 @@
 import { Button, Checkbox } from 'antd';
 import './SyncAccountPicker.css';
+import { groupAccountsByDeploymentUnit } from '../utils/deployment-unit.util';
 
 const PLATFORM_CODES = ['partnermatic', 'linkhaitao', 'linkbux', 'rewardoo', 'ultrainfluence'] as const;
 
@@ -17,6 +18,7 @@ export interface SyncAccountPick {
   platformName: string;
   displayName: string;
   affiliateAlias: string;
+  externalChannelId?: string | null;
 }
 
 interface SyncAccountPickerProps {
@@ -26,7 +28,7 @@ interface SyncAccountPickerProps {
 }
 
 /**
- * 采集范围：平台卡片多选 + 快捷筛选
+ * 采集范围：按投放单元分组（同 displayName+affiliateAlias 的多 Channel 折叠）
  */
 export default function SyncAccountPicker({
   accounts,
@@ -41,12 +43,34 @@ export default function SyncAccountPicker({
     onChange(accounts.filter((a) => a.platformCode === code).map((a) => a.id));
   };
 
+  const grouped = groupAccountsByDeploymentUnit(accounts);
+  const groups = [...grouped.entries()].sort((a, b) => {
+    const left = a[1][0];
+    const right = b[1][0];
+    return (
+      left.platformName.localeCompare(right.platformName) ||
+      left.displayName.localeCompare(right.displayName) ||
+      left.affiliateAlias.localeCompare(right.affiliateAlias)
+    );
+  });
+
+  const toggleGroup = (groupIds: number[], checked: boolean) => {
+    if (checked) {
+      onChange([...new Set([...selectedIds, ...groupIds])]);
+      return;
+    }
+    const drop = new Set(groupIds);
+    onChange(selectedIds.filter((id) => !drop.has(id)));
+  };
+
   return (
     <div className="sync-scope-panel">
       <div className="sync-scope-header">
         <div>
           <div className="sync-scope-title">采集范围</div>
-          <div className="sync-scope-desc">可只选单个平台重采，无需每次全平台一起跑</div>
+          <div className="sync-scope-desc">
+            同显示名称与联盟序号的多 Channel 已合并为一组；采集仍按各 Token 分别执行
+          </div>
         </div>
         <div className="sync-scope-quick">
           <Button size="small" onClick={selectAll}>
@@ -69,25 +93,75 @@ export default function SyncAccountPicker({
         onChange={(vals) => onChange(vals as number[])}
         className="sync-account-grid"
       >
-        {accounts.map((a) => {
-          const checked = selectedIds.includes(a.id);
-          const code = a.platformCode as (typeof PLATFORM_CODES)[number];
+        {groups.map(([unitKey, members]) => {
+          const sorted = [...members].sort((a, b) => a.id - b.id);
+          const groupIds = sorted.map((a) => a.id);
+          const allChecked = groupIds.every((id) => selectedIds.includes(id));
+          const indeterminate = !allChecked && groupIds.some((id) => selectedIds.includes(id));
+          const lead = sorted[0];
+          const code = lead.platformCode as (typeof PLATFORM_CODES)[number];
+
+          if (sorted.length === 1) {
+            const a = sorted[0];
+            const checked = selectedIds.includes(a.id);
+            return (
+              <label
+                key={unitKey}
+                className={`sync-account-card ${checked ? 'selected' : ''}`}
+              >
+                <Checkbox value={a.id} />
+                <span className="sync-account-card-body">
+                  <span className={`sync-platform-badge ${code}`}>
+                    {PLATFORM_SHORT[a.platformCode] ?? a.platformCode}
+                  </span>
+                  <span className="sync-account-name">{a.platformName}</span>
+                  <span className="sync-account-alias">
+                    {a.displayName} · {a.affiliateAlias}
+                  </span>
+                </span>
+              </label>
+            );
+          }
+
           return (
-            <label
-              key={a.id}
-              className={`sync-account-card ${checked ? 'selected' : ''}`}
+            <div
+              key={unitKey}
+              className={`sync-account-group ${allChecked ? 'selected' : ''}`}
             >
-              <Checkbox value={a.id} />
-              <span className="sync-account-card-body">
-                <span className={`sync-platform-badge ${code}`}>
-                  {PLATFORM_SHORT[a.platformCode] ?? a.platformCode}
+              <label className="sync-account-group-header">
+                <Checkbox
+                  indeterminate={indeterminate}
+                  checked={allChecked}
+                  onChange={(e) => toggleGroup(groupIds, e.target.checked)}
+                />
+                <span className="sync-account-card-body">
+                  <span className={`sync-platform-badge ${code}`}>
+                    {PLATFORM_SHORT[lead.platformCode] ?? lead.platformCode}
+                  </span>
+                  <span className="sync-account-name">{lead.platformName}</span>
+                  <span className="sync-account-alias">
+                    {lead.displayName} · {lead.affiliateAlias}
+                    <span className="sync-account-channel-count">{sorted.length} 个 Channel</span>
+                  </span>
                 </span>
-                <span className="sync-account-name">{a.platformName}</span>
-                <span className="sync-account-alias">
-                  {a.displayName} · {a.affiliateAlias}
-                </span>
-              </span>
-            </label>
+              </label>
+              <div className="sync-account-group-items">
+                {sorted.map((a) => {
+                  const checked = selectedIds.includes(a.id);
+                  return (
+                    <label
+                      key={a.id}
+                      className={`sync-account-channel-row ${checked ? 'selected' : ''}`}
+                    >
+                      <Checkbox value={a.id} />
+                      <span className="sync-account-channel-label">
+                        {a.externalChannelId?.trim() || `Channel #${a.id}`}
+                      </span>
+                    </label>
+                  );
+                })}
+              </div>
+            </div>
           );
         })}
       </Checkbox.Group>

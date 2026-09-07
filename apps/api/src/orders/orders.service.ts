@@ -5,9 +5,13 @@ import {
   mergePlatformCatalog,
   PlatformCommissionSummary,
   ChannelAccountCommissionSummary,
-  summarizeMerchantsByChannelAccount,
   summarizeMerchantsByPlatform,
 } from '../common/commission-aggregate.util';
+import {
+  filterAccountsByDeploymentUnit,
+  rollupMerchantsByDeploymentUnit,
+  summarizeMerchantsByDeploymentUnit,
+} from '../common/deployment-unit.util';
 import {
   aggregateRwPerformanceByMerchant,
   applyRwPerformanceCommissionOverlay,
@@ -183,13 +187,11 @@ export class OrdersService {
   }
 
   private async buildSettlementForOwnerIds(ownerIds: number[], q: OrdersQuery) {
-    const allAccounts = await this.prisma.channelAccount.findMany({
-      where: {
-        ownerUserId: { in: ownerIds },
-        ...(q.channelAccountId ? { id: q.channelAccountId } : {}),
-      },
+    const ownerAccounts = await this.prisma.channelAccount.findMany({
+      where: { ownerUserId: { in: ownerIds } },
       include: { platform: true },
     });
+    const allAccounts = filterAccountsByDeploymentUnit(ownerAccounts, q.channelAccountId);
     if (!allAccounts.length) {
       return {
         items: [] as SettlementMerchantRow[],
@@ -212,6 +214,8 @@ export class OrdersService {
     });
 
     let merchants = aggregateAffiliateOrders(orders, { groupByChannelAccount: true });
+    const accountById = new Map(allAccounts.map((a) => [a.id, a]));
+    merchants = rollupMerchantsByDeploymentUnit(merchants, accountById);
     if (dateRange) {
       const rwClickRows = await this.prisma.affiliateMerchantClickDaily.findMany({
         where: {
@@ -234,7 +238,7 @@ export class OrdersService {
       })),
     );
 
-    const channelSummaries = summarizeMerchantsByChannelAccount(
+    const channelSummaries = summarizeMerchantsByDeploymentUnit(
       merchants,
       allAccounts.map((a) => ({
         id: a.id,
@@ -247,9 +251,6 @@ export class OrdersService {
     let scoped = merchants;
     if (q.platformCode) {
       scoped = scoped.filter((m) => m.platformCode === q.platformCode);
-    }
-    if (q.channelAccountId) {
-      scoped = scoped.filter((m) => m.channelAccountId === q.channelAccountId);
     }
 
     const items = scoped

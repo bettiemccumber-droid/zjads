@@ -61,17 +61,15 @@ export default function MerchantAccountPicker({
   return (
     <div className="merchant-account-panel">
       <div className="merchant-account-header">
-        <div>
+        <div className="merchant-account-heading">
           <div className="merchant-account-title">平台账号</div>
           <div className="merchant-account-desc">
             在所选账号中查询 Join 状态与商家上架情况
           </div>
-        </div>
-        <div className="merchant-account-meta">
-          <span className="merchant-account-count">
-            已选 {selectedIds.length}/{supported.length}
-          </span>
           <div className="merchant-account-quick">
+            <span className="merchant-account-count">
+              已选 {selectedIds.length}/{supported.length}
+            </span>
             <Button size="small" type={isAllSelected ? 'primary' : 'default'} onClick={selectAll}>
               全选
             </Button>

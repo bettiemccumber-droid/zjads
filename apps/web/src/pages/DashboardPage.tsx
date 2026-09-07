@@ -38,6 +38,10 @@ import type { Dayjs } from 'dayjs';
 import { api, type ApiResult } from '../api/client';
 
 import SyncAccountPicker, { type SyncAccountPick } from '../components/SyncAccountPicker';
+import {
+  countSelectedDeploymentUnits,
+  normalizeSelectedSyncIds,
+} from '../utils/deployment-unit.util';
 import SyncJobStatus, { type SyncJobDetail } from '../components/SyncJobStatus';
 import { SheetCollectionCell } from '../components/CollectionStatusCells';
 import CampaignExpandableTable, {
@@ -315,6 +319,10 @@ export default function DashboardPage() {
   const [includeClicks, setIncludeClicks] = useState(false);
   const [syncAccountOptions, setSyncAccountOptions] = useState<SyncAccountPick[]>([]);
   const [selectedSyncAccountIds, setSelectedSyncAccountIds] = useState<number[]>([]);
+  const selectedUnitCount = useMemo(
+    () => countSelectedDeploymentUnits(selectedSyncAccountIds, syncAccountOptions),
+    [selectedSyncAccountIds, syncAccountOptions],
+  );
   const pollTimer = useRef<ReturnType<typeof setInterval> | null>(null);
   /** 最近一次采集涉及的平台名（用于采集完成后自动筛选报表） */
   const lastSyncPlatformNamesRef = useRef<string[]>([]);
@@ -372,7 +380,10 @@ export default function DashboardPage() {
     setSelectedSyncAccountIds((prev) => {
       const valid = new Set(picks.map((p) => p.id));
       const kept = prev.filter((id) => valid.has(id));
-      return kept.length > 0 ? kept : picks.map((p) => p.id);
+      if (kept.length > 0) {
+        return normalizeSelectedSyncIds(kept, picks);
+      }
+      return picks.map((p) => p.id);
     });
   }, [viewUserId]);
 
@@ -695,7 +706,8 @@ export default function DashboardPage() {
 
 
   const startSync = async () => {
-    if (!selectedSyncAccountIds.length) {
+    const accountIds = normalizeSelectedSyncIds(selectedSyncAccountIds, syncAccountOptions);
+    if (!accountIds.length) {
       message.warning('请至少选择一个要采集的账号');
       return;
     }
@@ -705,13 +717,12 @@ export default function DashboardPage() {
     lastSyncPlatformNamesRef.current = [
       ...new Set(
         syncAccountOptions
-          .filter((a) => selectedSyncAccountIds.includes(a.id))
+          .filter((a) => accountIds.includes(a.id))
           .map((a) => a.platformName),
       ),
     ];
 
     try {
-
       const { userId: _uid, ...syncDates } = dateParams as {
         userId?: number;
         startDate: string;
@@ -720,7 +731,7 @@ export default function DashboardPage() {
       const { data } = await api.post<ApiResult<SyncJobDetail>>('/sync/jobs', {
         ...syncDates,
         includeClicks,
-        channelAccountIds: selectedSyncAccountIds,
+        channelAccountIds: accountIds,
         ...(viewUserId ? { targetUserId: viewUserId } : {}),
       });
 
@@ -730,7 +741,7 @@ export default function DashboardPage() {
         else setSyncJob(data.data);
 
         const picked = syncAccountOptions
-          .filter((a) => selectedSyncAccountIds.includes(a.id))
+          .filter((a) => accountIds.includes(a.id))
           .map((a) => `${SYNC_PLATFORM_SHORT[a.platformCode] ?? a.platformName}·${a.affiliateAlias}`)
           .join('、');
         message.info(
@@ -746,10 +757,12 @@ export default function DashboardPage() {
 
       }
 
-    } catch {
-
-      message.error('采集请求失败');
-
+    } catch (err: unknown) {
+      const msg =
+        err && typeof err === 'object' && 'response' in err
+          ? (err as { response?: { data?: { message?: string } } }).response?.data?.message
+          : undefined;
+      message.error(msg || '采集请求失败');
     } finally {
 
       setSyncing(false);
@@ -1090,13 +1103,11 @@ export default function DashboardPage() {
             <Button
               type="primary"
               loading={syncing}
-              disabled={!selectedSyncAccountIds.length}
+              disabled={selectedUnitCount === 0}
               onClick={startSync}
             >
               开始采集
-              {selectedSyncAccountIds.length > 0
-                ? `（${selectedSyncAccountIds.length}）`
-                : ''}
+              {selectedUnitCount > 0 ? `（${selectedUnitCount}）` : ''}
             </Button>
           </div>
         </div>
@@ -1105,7 +1116,9 @@ export default function DashboardPage() {
           <SyncAccountPicker
             accounts={syncAccountOptions}
             selectedIds={selectedSyncAccountIds}
-            onChange={setSelectedSyncAccountIds}
+            onChange={(ids) =>
+              setSelectedSyncAccountIds(normalizeSelectedSyncIds(ids, syncAccountOptions))
+            }
           />
         ) : (
           <Typography.Text type="secondary" className="sync-collect-hint" style={{ display: 'block' }}>

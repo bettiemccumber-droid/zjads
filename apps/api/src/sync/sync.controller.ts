@@ -1,5 +1,6 @@
 import { Body, Controller, Get, Param, ParseIntPipe, Post, Query, UseGuards } from '@nestjs/common';
 import { AuthGuard } from '@nestjs/passport';
+import { Type } from 'class-transformer';
 import { IsArray, IsBoolean, IsDateString, IsInt, IsOptional, IsString } from 'class-validator';
 import { ok } from '../common/api-response';
 import { CurrentUser } from '../auth/current-user.decorator';
@@ -27,6 +28,7 @@ class CreateSyncJobDto {
   @IsOptional()
   @IsArray()
   @IsInt({ each: true })
+  @Type(() => Number)
   channelAccountIds?: number[];
 
   /** 仅采集指定平台 code（如 linkbux）；与 channelAccountIds 同时传时以账号列表为准 */

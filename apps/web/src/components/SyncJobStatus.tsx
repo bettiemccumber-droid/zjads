@@ -10,6 +10,7 @@ export interface SyncJobItemRow {
   channelAccount?: {
     displayName: string;
     affiliateAlias: string;
+    externalChannelId?: string | null;
     platform: { name: string };
   };
 }
@@ -52,6 +53,12 @@ function formatDate(d: string | Date) {
 function formatTime(d: string | null) {
   if (!d) return '—';
   return new Date(d).toLocaleString('zh-CN');
+}
+
+function formatSyncAccountLabel(ca: NonNullable<SyncJobItemRow['channelAccount']>): string {
+  const channelId = ca.externalChannelId?.trim();
+  const base = `${ca.platform.name} · ${ca.displayName} (${ca.affiliateAlias})`;
+  return channelId ? `${base} · ${channelId}` : base;
 }
 
 interface SyncJobStatusProps {
@@ -118,7 +125,7 @@ export default function SyncJobStatus({ job, loading, onCancel, cancelling }: Sy
               {formatDate(job.startDate)} ~ {formatDate(job.endDate)}
             </Descriptions.Item>
             <Descriptions.Item label="进度">
-              {job.completed + job.failed} / {job.totalItems} 个账号
+              {job.completed + job.failed} / {job.totalItems} 个 Channel
             </Descriptions.Item>
             <Descriptions.Item label="开始时间">{formatTime(job.startedAt)}</Descriptions.Item>
             <Descriptions.Item label="结束时间">{formatTime(job.completedAt)}            </Descriptions.Item>
@@ -134,11 +141,11 @@ export default function SyncJobStatus({ job, loading, onCancel, cancelling }: Sy
         dataSource={job.items ?? []}
         columns={[
           {
-            title: '账号',
+            title: '账号 / Channel',
             render: (_: unknown, r: SyncJobItemRow) => {
               const ca = r.channelAccount;
               if (!ca?.platform) return '—';
-              return `${ca.platform.name} · ${ca.displayName} (${ca.affiliateAlias})`;
+              return formatSyncAccountLabel(ca);
             },
           },
           {

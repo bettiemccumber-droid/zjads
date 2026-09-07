@@ -1,4 +1,4 @@
-import { Button, Checkbox } from 'antd';
+import { Button, Checkbox, Tooltip } from 'antd';
 import './SyncAccountPicker.css';
 import { groupAccountsByDeploymentUnit } from '../utils/deployment-unit.util';
 
@@ -32,12 +32,8 @@ function channelLabel(account: SyncAccountPick): string {
   return id || `#${account.id}`;
 }
 
-function formatChannelList(members: SyncAccountPick[]): string {
-  return members.map((a) => channelLabel(a)).join('、');
-}
-
 /**
- * 采集范围：按投放单元展示；同单元多 Channel 一张卡片、一次勾选（采集仍分 Token 执行）
+ * 采集范围：紧凑标签行；同单元多 Channel 合并为一项
  */
 export default function SyncAccountPicker({
   accounts,
@@ -75,21 +71,16 @@ export default function SyncAccountPicker({
   return (
     <div className="sync-scope-panel">
       <div className="sync-scope-header">
-        <div>
-          <div className="sync-scope-title">采集范围</div>
-          <div className="sync-scope-desc">
-            同显示名称与联盟序号的多 Channel 合并为一张卡片；勾选后会采集该账号下全部 Channel
-          </div>
-        </div>
+        <span className="sync-scope-title">采集范围</span>
         <div className="sync-scope-quick">
-          <Button size="small" onClick={selectAll}>
+          <Button size="small" type="link" onClick={selectAll}>
             全选
           </Button>
           {PLATFORM_CODES.map((code) => {
             const has = accounts.some((a) => a.platformCode === code);
             if (!has) return null;
             return (
-              <Button key={code} size="small" onClick={() => selectPlatform(code)}>
+              <Button key={code} size="small" type="link" onClick={() => selectPlatform(code)}>
                 仅 {PLATFORM_SHORT[code]}
               </Button>
             );
@@ -97,7 +88,7 @@ export default function SyncAccountPicker({
         </div>
       </div>
 
-      <div className="sync-account-grid">
+      <div className="sync-account-list">
         {groups.map(([unitKey, members]) => {
           const sorted = [...members].sort((a, b) => a.id - b.id);
           const groupIds = sorted.map((a) => a.id);
@@ -105,34 +96,32 @@ export default function SyncAccountPicker({
           const partial = !checked && groupIds.some((id) => selectedIds.includes(id));
           const lead = sorted[0];
           const code = lead.platformCode as (typeof PLATFORM_CODES)[number];
+          const channelTip =
+            sorted.length > 1
+              ? sorted.map((a) => channelLabel(a)).join('\n')
+              : channelLabel(lead);
 
           return (
-            <label
-              key={unitKey}
-              className={`sync-account-card ${checked ? 'selected' : ''} ${partial ? 'partial' : ''}`}
-            >
-              <Checkbox
-                checked={checked}
-                indeterminate={partial}
-                onChange={(e) => toggleUnit(groupIds, e.target.checked)}
-              />
-              <span className="sync-account-card-body">
+            <Tooltip key={unitKey} title={channelTip} placement="top">
+              <label
+                className={`sync-account-chip ${checked ? 'selected' : ''} ${partial ? 'partial' : ''}`}
+              >
+                <Checkbox
+                  checked={checked}
+                  indeterminate={partial}
+                  onChange={(e) => toggleUnit(groupIds, e.target.checked)}
+                />
                 <span className={`sync-platform-badge ${code}`}>
                   {PLATFORM_SHORT[lead.platformCode] ?? lead.platformCode}
                 </span>
-                <span className="sync-account-name">{lead.platformName}</span>
-                <span className="sync-account-alias">
+                <span className="sync-account-chip-label">
                   {lead.displayName} · {lead.affiliateAlias}
                 </span>
                 {sorted.length > 1 ? (
-                  <span className="sync-account-channel-detail">
-                    {sorted.length} 个 Channel：{formatChannelList(sorted)}
-                  </span>
-                ) : (
-                  <span className="sync-account-channel-detail">Channel：{channelLabel(lead)}</span>
-                )}
-              </span>
-            </label>
+                  <span className="sync-account-chip-meta">×{sorted.length}</span>
+                ) : null}
+              </label>
+            </Tooltip>
           );
         })}
       </div>

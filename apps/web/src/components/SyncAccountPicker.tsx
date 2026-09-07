@@ -1,9 +1,6 @@
-import { Button, Checkbox, Tooltip } from 'antd';
+import { Button, Checkbox } from 'antd';
 import './SyncAccountPicker.css';
-import {
-  countSelectedDeploymentUnits,
-  groupAccountsByDeploymentUnit,
-} from '../utils/deployment-unit.util';
+import { groupAccountsByDeploymentUnit } from '../utils/deployment-unit.util';
 
 const PLATFORM_CODES = ['partnermatic', 'linkhaitao', 'linkbux', 'rewardoo', 'ultrainfluence'] as const;
 
@@ -35,24 +32,12 @@ function channelLabel(account: SyncAccountPick): string {
   return id || `#${account.id}`;
 }
 
-function formatChannelTooltip(members: SyncAccountPick[]): string {
-  if (members.length === 1) {
-    return `Channel：${channelLabel(members[0])}`;
-  }
-  return members.map((a) => channelLabel(a)).join('\n');
-}
-
-function isPlatformFullySelected(
-  accounts: SyncAccountPick[],
-  selectedIds: number[],
-  code: string,
-): boolean {
-  const platformIds = accounts.filter((a) => a.platformCode === code).map((a) => a.id);
-  return platformIds.length > 0 && platformIds.every((id) => selectedIds.includes(id));
+function formatChannelList(members: SyncAccountPick[]): string {
+  return members.map((a) => channelLabel(a)).join('、');
 }
 
 /**
- * 采集范围：投放单元卡片；快捷筛选固定在标题栏右侧
+ * 采集范围：按投放单元展示；同单元多 Channel 一张卡片、一次勾选（采集仍分 Token 执行）
  */
 export default function SyncAccountPicker({
   accounts,
@@ -78,10 +63,6 @@ export default function SyncAccountPicker({
     );
   });
 
-  const selectedUnitCount = countSelectedDeploymentUnits(selectedIds, accounts);
-  const totalUnitCount = groups.length;
-  const allSelected = selectedUnitCount === totalUnitCount;
-
   const toggleUnit = (groupIds: number[], checked: boolean) => {
     if (checked) {
       onChange([...new Set([...selectedIds, ...groupIds])]);
@@ -93,35 +74,22 @@ export default function SyncAccountPicker({
 
   return (
     <div className="sync-scope-panel">
-      <div className="sync-scope-toolbar">
-        <div className="sync-scope-heading">
-          <span className="sync-scope-title">采集范围</span>
-          <span className={`sync-scope-stat${allSelected ? ' sync-scope-stat--full' : ''}`}>
-            {selectedUnitCount}/{totalUnitCount} 已选
-          </span>
+      <div className="sync-scope-header">
+        <div>
+          <div className="sync-scope-title">采集范围</div>
+          <div className="sync-scope-desc">
+            同显示名称与联盟序号的多 Channel 合并为一张卡片；勾选后会采集该账号下全部 Channel
+          </div>
         </div>
         <div className="sync-scope-quick">
-          <Button
-            size="small"
-            type={allSelected ? 'primary' : 'default'}
-            ghost={allSelected}
-            onClick={selectAll}
-          >
+          <Button size="small" onClick={selectAll}>
             全选
           </Button>
           {PLATFORM_CODES.map((code) => {
             const has = accounts.some((a) => a.platformCode === code);
             if (!has) return null;
-            const active = isPlatformFullySelected(accounts, selectedIds, code);
             return (
-              <Button
-                key={code}
-                size="small"
-                type={active ? 'primary' : 'default'}
-                ghost={active}
-                className={`sync-scope-quick-btn sync-scope-quick-btn--${code}`}
-                onClick={() => selectPlatform(code)}
-              >
+              <Button key={code} size="small" onClick={() => selectPlatform(code)}>
                 仅 {PLATFORM_SHORT[code]}
               </Button>
             );
@@ -136,43 +104,35 @@ export default function SyncAccountPicker({
           const checked = groupIds.every((id) => selectedIds.includes(id));
           const partial = !checked && groupIds.some((id) => selectedIds.includes(id));
           const lead = sorted[0];
-          const code = lead.platformCode;
+          const code = lead.platformCode as (typeof PLATFORM_CODES)[number];
 
           return (
-            <Tooltip key={unitKey} title={formatChannelTooltip(sorted)} placement="top">
-              <label
-                className={[
-                  'sync-account-card',
-                  `sync-account-card--${code}`,
-                  checked ? 'selected' : '',
-                  partial ? 'partial' : '',
-                ]
-                  .filter(Boolean)
-                  .join(' ')}
-              >
-                <div className="sync-account-card-top">
-                  <span className={`sync-platform-badge ${code}`}>
-                    {PLATFORM_SHORT[code] ?? code}
-                  </span>
-                  <Checkbox
-                    className="sync-account-card-check"
-                    checked={checked}
-                    indeterminate={partial}
-                    onChange={(e) => toggleUnit(groupIds, e.target.checked)}
-                  />
-                </div>
+            <label
+              key={unitKey}
+              className={`sync-account-card ${checked ? 'selected' : ''} ${partial ? 'partial' : ''}`}
+            >
+              <Checkbox
+                checked={checked}
+                indeterminate={partial}
+                onChange={(e) => toggleUnit(groupIds, e.target.checked)}
+              />
+              <span className="sync-account-card-body">
+                <span className={`sync-platform-badge ${code}`}>
+                  {PLATFORM_SHORT[lead.platformCode] ?? lead.platformCode}
+                </span>
+                <span className="sync-account-name">{lead.platformName}</span>
                 <span className="sync-account-alias">
-                  <span className="sync-account-name">{lead.displayName}</span>
-                  <span className="sync-account-alias-sep">·</span>
-                  <span className="sync-account-code">{lead.affiliateAlias}</span>
+                  {lead.displayName} · {lead.affiliateAlias}
                 </span>
                 {sorted.length > 1 ? (
-                  <span className="sync-account-channel-tag">{sorted.length} 个 Channel</span>
+                  <span className="sync-account-channel-detail">
+                    {sorted.length} 个 Channel：{formatChannelList(sorted)}
+                  </span>
                 ) : (
-                  <span className="sync-account-channel-hint">{channelLabel(sorted[0])}</span>
+                  <span className="sync-account-channel-detail">Channel：{channelLabel(lead)}</span>
                 )}
-              </label>
-            </Tooltip>
+              </span>
+            </label>
           );
         })}
       </div>

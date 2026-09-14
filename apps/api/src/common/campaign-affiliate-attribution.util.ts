@@ -18,6 +18,8 @@ export function affiliateAliasSamePlatformFamily(a: string, b: string): boolean 
   if (left.startsWith('pm') && right.startsWith('pm')) return true;
   if (left.startsWith('rw') && right.startsWith('rw')) return true;
   if (left.startsWith('ui') && right.startsWith('ui')) return true;
+  if (left.startsWith('cg') && right.startsWith('cg')) return true;
+  if (left.startsWith('fs') && right.startsWith('fs')) return true;
   return left === right;
 }
 
@@ -32,6 +34,8 @@ export function campaignAffiliateAttributionKey(merchantId: string, alias: strin
   if (a.startsWith('lh')) return `lh:${merchantId}`;
   if (a.startsWith('lb')) return `lb:${merchantId}`;
   if (a.startsWith('ui')) return `ui:${merchantId}`;
+  if (a.startsWith('cg')) return `cg:${merchantId}`;
+  if (a.startsWith('fs')) return `fs:${merchantId}`;
   return `${merchantId}|${a}`;
 }
 

@@ -68,6 +68,8 @@ const SYNC_PLATFORM_SHORT: Record<string, string> = {
   linkbux: 'LB',
   rewardoo: 'RW',
   ultrainfluence: 'UI',
+  collabglow: 'CG',
+  famesta: 'FS',
 };
 
 interface MerchantRow {

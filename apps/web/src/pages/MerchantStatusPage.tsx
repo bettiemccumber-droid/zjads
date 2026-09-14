@@ -161,6 +161,8 @@ const PLATFORM_CLASS: Record<string, string> = {
   linkbux: 'linkbux',
   rewardoo: 'rewardoo',
   ultrainfluence: 'ultrainfluence',
+  collabglow: 'collabglow',
+  famesta: 'famesta',
 };
 
 function renderStatusPill(label: string, variant: string, size: 'sm' | 'md' = 'md') {

@@ -431,6 +431,16 @@ export class SyncService implements OnModuleInit {
           `订单 ${result.uiApi.orderCount} 单 / $${result.uiApi.totalCommission.toFixed(2)}`,
         );
       }
+      if (result.cgApi) {
+        parts.push(
+          `订单 ${result.cgApi.orderCount} 单 / $${result.cgApi.totalCommission.toFixed(2)}`,
+        );
+      }
+      if (result.fsApi) {
+        parts.push(
+          `订单 ${result.fsApi.orderCount} 单 / $${result.fsApi.totalCommission.toFixed(2)}`,
+        );
+      }
       if (result.rwApi) {
         const src =
           result.rwApi.apiSource && result.rwApi.apiSource !== 'none'
@@ -470,6 +480,18 @@ export class SyncService implements OnModuleInit {
       }
       if (result.uiClickError) {
         parts.push(`UI 联盟点击失败: ${result.uiClickError}`);
+      }
+      if (result.cgClickTotal !== undefined) {
+        parts.push(`CG 联盟点击 ${result.cgClickTotal}（${start}~${end}）`);
+      }
+      if (result.cgClickError) {
+        parts.push(`CG 联盟点击失败: ${result.cgClickError}`);
+      }
+      if (result.fsClickTotal !== undefined) {
+        parts.push(`FS 联盟点击 ${result.fsClickTotal}（${start}~${end}）`);
+      }
+      if (result.fsClickError) {
+        parts.push(`FS 联盟点击失败: ${result.fsClickError}`);
       }
       if (result.lhClickTotal !== undefined) {
         parts.push(`LH 联盟点击 ${result.lhClickTotal}（${start}~${end}）`);

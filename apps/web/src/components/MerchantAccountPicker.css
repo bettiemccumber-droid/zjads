@@ -144,6 +144,16 @@
   background: #ede9fe;
 }
 
+.merchant-platform-badge.collabglow {
+  color: #047857;
+  background: #d1fae5;
+}
+
+.merchant-platform-badge.famesta {
+  color: #be123c;
+  background: #ffe4e6;
+}
+
 .merchant-account-name {
   font-size: 14px;
   font-weight: 600;

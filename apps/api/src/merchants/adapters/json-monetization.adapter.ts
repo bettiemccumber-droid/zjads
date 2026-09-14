@@ -13,6 +13,14 @@ const JSON_MONETIZATION: Record<
     url: 'https://api.partnermatic.com/api/monetization',
     source: 'partnermatic',
   },
+  collabglow: {
+    url: 'https://api.collabglow.com/api/monetization',
+    source: 'collabglow',
+  },
+  famesta: {
+    url: 'https://api.famesta.com/api/monetization',
+    source: 'famesta',
+  },
 };
 
 /**

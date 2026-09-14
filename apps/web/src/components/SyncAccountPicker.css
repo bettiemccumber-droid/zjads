@@ -124,6 +124,16 @@
   background: #ede9fe;
 }
 
+.sync-platform-badge.collabglow {
+  color: #047857;
+  background: #d1fae5;
+}
+
+.sync-platform-badge.famesta {
+  color: #be123c;
+  background: #ffe4e6;
+}
+
 .sync-account-name {
   font-size: 14px;
   font-weight: 600;

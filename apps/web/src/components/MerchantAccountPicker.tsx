@@ -1,7 +1,15 @@
 import { Button, Checkbox } from 'antd';
 import './MerchantAccountPicker.css';
 
-const PLATFORM_CODES = ['partnermatic', 'linkhaitao', 'linkbux', 'rewardoo', 'ultrainfluence'] as const;
+const PLATFORM_CODES = [
+  'partnermatic',
+  'linkhaitao',
+  'linkbux',
+  'rewardoo',
+  'ultrainfluence',
+  'collabglow',
+  'famesta',
+] as const;
 
 const PLATFORM_SHORT: Record<string, string> = {
   partnermatic: 'PM',
@@ -9,6 +17,8 @@ const PLATFORM_SHORT: Record<string, string> = {
   linkbux: 'LB',
   rewardoo: 'RW',
   ultrainfluence: 'UI',
+  collabglow: 'CG',
+  famesta: 'FS',
 };
 
 export interface MerchantAccountPick {

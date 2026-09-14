@@ -17,6 +17,18 @@ import {
 } from './ultrainfluence.collector';
 import { fetchUltraInfluenceClicks } from './ultrainfluence-clicks';
 import {
+  fetchCollabGlowOrders,
+  normalizeCollabGlowOrders,
+  summarizeCgTransactionApi,
+} from './collabglow.collector';
+import { fetchCollabGlowClicks } from './collabglow-clicks';
+import {
+  fetchFamestaOrders,
+  normalizeFamestaOrders,
+  summarizeFsTransactionApi,
+} from './famesta.collector';
+import { fetchFamestaClicks } from './famesta-clicks';
+import {
   fetchLinkHaitaoCommissions,
   normalizeLinkHaitaoOrders,
   summarizeLhCommissionApi,
@@ -91,6 +103,16 @@ export interface CollectResultWithPmMeta extends CollectResult {
     orderCount: number;
     totalCommission: number;
   };
+  cgApi?: {
+    apiListRows: number;
+    orderCount: number;
+    totalCommission: number;
+  };
+  fsApi?: {
+    apiListRows: number;
+    orderCount: number;
+    totalCommission: number;
+  };
   /** RW Performance 看板 Orders 汇总（与报表一致） */
   rwPerformanceOrderCount?: number;
   rwPerformanceOrderError?: string;
@@ -106,6 +128,10 @@ export interface CollectResultWithPmMeta extends CollectResult {
   pmClickError?: string;
   uiClickTotal?: number;
   uiClickError?: string;
+  cgClickTotal?: number;
+  cgClickError?: string;
+  fsClickTotal?: number;
+  fsClickError?: string;
   rwClickTotal?: number;
   /** RW 联盟点击采集失败时的错误信息（订单仍会写入） */
   rwClickError?: string;
@@ -144,6 +170,8 @@ export class CollectorsService {
     let lbApi: CollectResultWithPmMeta['lbApi'];
     let rwApi: CollectResultWithPmMeta['rwApi'];
     let uiApi: CollectResultWithPmMeta['uiApi'];
+    let cgApi: CollectResultWithPmMeta['cgApi'];
+    let fsApi: CollectResultWithPmMeta['fsApi'];
     let pmClickTotal: number | undefined;
     let lhClickTotal: number | undefined;
     let lbClickTotal: number | undefined;
@@ -152,6 +180,10 @@ export class CollectorsService {
     let pmClickError: string | undefined;
     let uiClickTotal: number | undefined;
     let uiClickError: string | undefined;
+    let cgClickTotal: number | undefined;
+    let cgClickError: string | undefined;
+    let fsClickTotal: number | undefined;
+    let fsClickError: string | undefined;
     let rwClickTotal: number | undefined;
     let rwClickError: string | undefined;
     let rwPerformanceOrderCount: number | undefined;
@@ -181,6 +213,50 @@ export class CollectorsService {
           } catch (clickErr) {
             uiClickError = clickErr instanceof Error ? clickErr.message : String(clickErr);
             await onProgress?.(`UI 联盟点击采集失败（订单仍会写入）: ${uiClickError}`);
+          }
+        }
+        break;
+      }
+      case 'collabglow': {
+        const raw = await fetchCollabGlowOrders(apiToken, startDate, endDate);
+        cgApi = summarizeCgTransactionApi(raw);
+        normalized = normalizeCollabGlowOrders(raw, mappings);
+
+        if (options.includeClicks) {
+          await onProgress?.('订单已拉取，正在采集 CG 联盟点击…');
+          try {
+            const clickAggs = await fetchCollabGlowClicks(apiToken, startDate, endDate, async (p) => {
+              await onProgress?.(
+                `CG 联盟点击 ${p.slotIndex}/${p.totalSlots}，已汇总 ${p.clicksSoFar} 次`,
+              );
+            });
+            await this.replaceClicksInRange(account.id, startDate, endDate);
+            cgClickTotal = await this.persistClicks(account.id, clickAggs);
+          } catch (clickErr) {
+            cgClickError = clickErr instanceof Error ? clickErr.message : String(clickErr);
+            await onProgress?.(`CG 联盟点击采集失败（订单仍会写入）: ${cgClickError}`);
+          }
+        }
+        break;
+      }
+      case 'famesta': {
+        const raw = await fetchFamestaOrders(apiToken, startDate, endDate);
+        fsApi = summarizeFsTransactionApi(raw);
+        normalized = normalizeFamestaOrders(raw, mappings);
+
+        if (options.includeClicks) {
+          await onProgress?.('订单已拉取，正在采集 FS 联盟点击…');
+          try {
+            const clickAggs = await fetchFamestaClicks(apiToken, startDate, endDate, async (p) => {
+              await onProgress?.(
+                `FS 联盟点击 ${p.slotIndex}/${p.totalSlots}，已汇总 ${p.clicksSoFar} 次`,
+              );
+            });
+            await this.replaceClicksInRange(account.id, startDate, endDate);
+            fsClickTotal = await this.persistClicks(account.id, clickAggs);
+          } catch (clickErr) {
+            fsClickError = clickErr instanceof Error ? clickErr.message : String(clickErr);
+            await onProgress?.(`FS 联盟点击采集失败（订单仍会写入）: ${fsClickError}`);
           }
         }
         break;
@@ -450,12 +526,18 @@ export class CollectorsService {
       lbApi,
       rwApi,
       uiApi,
+      cgApi,
+      fsApi,
       lbClickTotal,
       lbClickEstimatedDays,
       lbClickCollectDate,
       pmClickError,
       uiClickTotal,
       uiClickError,
+      cgClickTotal,
+      cgClickError,
+      fsClickTotal,
+      fsClickError,
       rwClickTotal,
       rwClickError,
       rwPerformanceOrderCount,

@@ -323,6 +323,14 @@
   background: #f5f3ff;
   color: #6d28d9;
 }
+.merchant-status-platform--collabglow {
+  background: #ecfdf5;
+  color: #047857;
+}
+.merchant-status-platform--famesta {
+  background: #fff1f2;
+  color: #be123c;
+}
 .merchant-status-platform--default {
   background: #f1f5f9;
   color: #475569;

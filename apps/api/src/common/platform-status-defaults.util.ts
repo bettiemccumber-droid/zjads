@@ -61,6 +61,8 @@ export function defaultStatusMappingsForPlatform(platformCode: string): StatusMa
     case 'partnermatic':
       return PM_DEFAULTS;
     case 'ultrainfluence':
+    case 'collabglow':
+    case 'famesta':
       return UI_DEFAULTS;
     case 'linkhaitao':
       return LH_DEFAULTS;

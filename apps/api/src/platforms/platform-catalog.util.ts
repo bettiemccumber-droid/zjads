@@ -19,6 +19,7 @@ export const PLATFORM_CATALOG: PlatformCatalogEntry[] = [
   { code: 'brandsparkhub', name: 'Brandsparkhub', sortOrder: 7 },
   { code: 'creatorflare', name: 'Creatorflare', sortOrder: 8 },
   { code: 'collabglow', name: 'CollabGlow', sortOrder: 9 },
+  { code: 'famesta', name: 'Famesta', sortOrder: 10 },
 ];
 
 /**

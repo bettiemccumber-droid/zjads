@@ -15,11 +15,11 @@ export const PLATFORM_CATALOG: PlatformCatalogEntry[] = [
   { code: 'linkbux', name: 'LinkBux', sortOrder: 3 },
   { code: 'rewardoo', name: 'Rewardoo', sortOrder: 4 },
   { code: 'ultrainfluence', name: 'UltraInfluence', sortOrder: 5 },
-  { code: 'partnerboost', name: 'PartnerBoost', sortOrder: 6 },
-  { code: 'brandsparkhub', name: 'Brandsparkhub', sortOrder: 7 },
-  { code: 'creatorflare', name: 'Creatorflare', sortOrder: 8 },
-  { code: 'collabglow', name: 'CollabGlow', sortOrder: 9 },
-  { code: 'famesta', name: 'Famesta', sortOrder: 10 },
+  { code: 'collabglow', name: 'CollabGlow', sortOrder: 6 },
+  { code: 'famesta', name: 'Famesta', sortOrder: 7 },
+  { code: 'partnerboost', name: 'PartnerBoost', sortOrder: 8 },
+  { code: 'brandsparkhub', name: 'Brandsparkhub', sortOrder: 9 },
+  { code: 'creatorflare', name: 'Creatorflare', sortOrder: 10 },
 ];
 
 /**

@@ -125,11 +125,12 @@ export class UsersService {
       role?: UserRole;
       passwordHash?: string;
     } = {};
-    if (params.username !== undefined) data.username = params.username;
-    if (params.email !== undefined) data.email = params.email;
+    if (params.username !== undefined) data.username = params.username.trim();
+    if (params.email !== undefined) data.email = params.email.trim().toLowerCase();
     if (params.role !== undefined) data.role = params.role;
-    if (params.password) {
-      data.passwordHash = await bcrypt.hash(params.password, 10);
+    const newPassword = params.password?.trim();
+    if (newPassword && newPassword.length >= 6) {
+      data.passwordHash = await bcrypt.hash(newPassword, 10);
     }
     if (params.reportsToId !== undefined) {
       await this.assertValidReportsTo_(params.reportsToId, id, organizationId);

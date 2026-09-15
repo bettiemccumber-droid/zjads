@@ -12,7 +12,8 @@ export class AuthService {
   ) {}
 
   async login(email: string, password: string) {
-    const user = await this.prisma.user.findUnique({ where: { email } });
+    const normalizedEmail = email.trim();
+    const user = await this.prisma.user.findUnique({ where: { email: normalizedEmail } });
     if (!user || !user.isActive) {
       throw new UnauthorizedException('邮箱或密码错误');
     }
@@ -24,7 +25,12 @@ export class AuthService {
       sub: user.id,
       email: user.email,
     });
-    const teamMembers = await loadTeamMembersForLeader(this.prisma, user.id);
+    let teamMembers: Awaited<ReturnType<typeof loadTeamMembersForLeader>> = [];
+    try {
+      teamMembers = await loadTeamMembersForLeader(this.prisma, user.id);
+    } catch {
+      /* 组员列表查询失败不应阻断登录 */
+    }
     return {
       token,
       user: {

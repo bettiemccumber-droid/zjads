@@ -48,6 +48,7 @@ export default function AdminUserManagePage() {
       email: row.email,
       role: row.role,
       reportsToId: row.reportsToId ?? undefined,
+      password: '',
     });
     setOpen(true);
   };
@@ -67,7 +68,8 @@ export default function AdminUserManagePage() {
         role: values.role,
         reportsToId: values.reportsToId ?? null,
       };
-      if (values.password) payload.password = values.password;
+      const pwd = typeof values.password === 'string' ? values.password.trim() : '';
+      if (pwd.length >= 6) payload.password = pwd;
       const { data } = await api.patch<ApiResult<UserRow>>(`/admin/users/${editing.id}`, payload);
       if (data.success) {
         message.success('员工信息已更新');
@@ -161,7 +163,10 @@ export default function AdminUserManagePage() {
             label={editing ? '新密码（留空则不修改）' : '初始密码'}
             rules={editing ? [{ min: 6, message: '密码至少 6 位' }] : [{ required: true, min: 6 }]}
           >
-            <Input.Password placeholder={editing ? '不修改请留空' : undefined} />
+            <Input.Password
+              autoComplete={editing ? 'new-password' : 'new-password'}
+              placeholder={editing ? '不修改请留空' : undefined}
+            />
           </Form.Item>
           <Form.Item name="role" label="角色" rules={[{ required: true }]}>
             <Select

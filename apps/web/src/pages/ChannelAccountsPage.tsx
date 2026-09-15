@@ -3,7 +3,6 @@ import { Alert, Button, Card, Form, Input, Modal, Space, Switch, Table, Tabs, Ta
 import { useSearchParams } from 'react-router-dom';
 import { api, type ApiResult } from '../api/client';
 import { useAuth } from '../hooks/useAuth';
-import TeamMemberScopeSelect from '../components/TeamMemberScopeSelect';
 import { parseScopedViewUserId } from '../utils/team-scope.util';
 import { AffiliateClickImportModal } from '../components/AffiliateClickImportModal';
 
@@ -250,7 +249,6 @@ export default function ChannelAccountsPage() {
 
   return (
     <Card title={readOnlyMemberView ? `平台账号（${scopeUsername ?? scopeUserId}，只读）` : '我的平台账号'}>
-      <TeamMemberScopeSelect user={user} isAdmin={isAdmin} basePath="/channel-accounts" />
       {readOnlyMemberView ? (
         <Alert
           type="info"

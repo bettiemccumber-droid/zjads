@@ -18,7 +18,6 @@ import dayjs, { type Dayjs } from 'dayjs';
 import { Link, useSearchParams } from 'react-router-dom';
 import { api, type ApiResult } from '../api/client';
 import { useAuth } from '../hooks/useAuth';
-import TeamMemberScopeSelect from '../components/TeamMemberScopeSelect';
 import { parseScopedViewUserId } from '../utils/team-scope.util';
 
 /** 与 Google Ads 脚本 lookback 对齐：默认回溯天数（含昨天） */
@@ -367,9 +366,6 @@ export default function AdSourcesPage({ adminMode = false }: AdSourcesPageProps)
 
   return (
     <div>
-      {!adminMode ? (
-        <TeamMemberScopeSelect user={user} isAdmin={isAdmin} basePath="/ad-sources" />
-      ) : null}
       {readOnlyMemberView ? (
         <Alert
           type="info"

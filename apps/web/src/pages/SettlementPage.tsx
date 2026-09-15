@@ -23,7 +23,6 @@ import CommissionMonitor from '../components/CommissionMonitor';
 import SettlementSyncCollect from '../components/SettlementSyncCollect';
 import '../components/SyncAccountPicker.css';
 import { useAuth } from '../hooks/useAuth';
-import TeamMemberScopeSelect from '../components/TeamMemberScopeSelect';
 import { parseScopedViewUserId } from '../utils/team-scope.util';
 import { useSearchParams } from 'react-router-dom';
 import {
@@ -351,7 +350,6 @@ export default function SettlementPage() {
 
   return (
     <div>
-      <TeamMemberScopeSelect user={user} isAdmin={isAdmin} basePath="/settlement" />
       {isAdmin && (
         <Alert
           type="info"

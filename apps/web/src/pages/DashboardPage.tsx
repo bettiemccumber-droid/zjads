@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useSearchParams, Link } from 'react-router-dom';
 import { useAuth } from '../hooks/useAuth';
-import TeamMemberScopeSelect from '../components/TeamMemberScopeSelect';
 import { parseScopedViewUserId } from '../utils/team-scope.util';
 
 import {
@@ -1031,8 +1030,6 @@ export default function DashboardPage() {
   return (
 
     <div>
-
-      <TeamMemberScopeSelect user={user} isAdmin={isAdmin} basePath="/dashboard" />
 
       <CommissionAlertBanner
         startDate={dateParams.startDate}

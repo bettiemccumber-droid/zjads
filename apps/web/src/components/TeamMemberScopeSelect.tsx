@@ -1,40 +1,84 @@
-import { Select, Space, Typography } from 'antd';
-import { useNavigate, useSearchParams } from 'react-router-dom';
+import { TeamOutlined, UserOutlined } from '@ant-design/icons';
+import { Card, Select, Space, Tag, Typography } from 'antd';
+import { useMemo } from 'react';
+import { useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import type { AuthUser } from '../hooks/useAuth';
-import { canScopeTeamMembers } from '../utils/team-scope.util';
+import { canScopeTeamMembers, parseScopedViewUserId } from '../utils/team-scope.util';
 
 interface TeamMemberScopeSelectProps {
   user: AuthUser | null;
   isAdmin: boolean;
   /** 当前路径（不含 query），用于切换成员时保留其它 search 参数 */
   basePath?: string;
+  /** 嵌入 AppLayout 时不加外边距 */
+  embedded?: boolean;
 }
 
+/** 组长可切换查看组员的页面 */
+export const TEAM_SCOPE_PATHS = [
+  '/dashboard',
+  '/settlement',
+  '/channel-accounts',
+  '/ad-sources',
+  '/merchants',
+];
+
 /**
- * 组长 / 管理员：切换查看的员工数据（仅改 URL userId）
+ * 组长工作台：切换查看直属组员数据（只读）
  */
 export default function TeamMemberScopeSelect({
   user,
   isAdmin,
   basePath,
+  embedded = false,
 }: TeamMemberScopeSelectProps) {
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
-
-  if (!canScopeTeamMembers(user, isAdmin) || isAdmin) {
-    return null;
-  }
+  const location = useLocation();
 
   const members = user?.teamMembers ?? [];
-  if (members.length === 0) return null;
+  const showBar = canScopeTeamMembers(user, isAdmin) && !isAdmin && members.length > 0;
 
-  const raw = searchParams.get('userId');
-  const currentId = raw ? parseInt(raw, 10) : user?.id;
+  const path = basePath ?? location.pathname;
+  const onScopeRoute =
+    embedded &&
+    TEAM_SCOPE_PATHS.some((p) => location.pathname === p || location.pathname.startsWith(`${p}/`));
 
-  const options = [
-    { value: user!.id, label: `自己（${user!.username}）` },
-    ...members.map((m) => ({ value: m.id, label: m.username })),
-  ];
+  const viewUserId = parseScopedViewUserId(user, isAdmin, searchParams.get('userId'));
+  const viewingSelf = viewUserId == null || viewUserId === user?.id;
+  const viewedMember = members.find((m) => m.id === viewUserId);
+
+  const options = useMemo(() => {
+    if (!user) return [];
+    return [
+      {
+        value: user.id,
+        label: (
+          <Space>
+            <UserOutlined />
+            <span>我的数据</span>
+            <Typography.Text type="secondary">（{user.username}）</Typography.Text>
+          </Space>
+        ),
+      },
+      ...members.map((m) => ({
+        value: m.id,
+        label: (
+          <Space>
+            <TeamOutlined />
+            <span>组员</span>
+            <Typography.Text strong>{m.username}</Typography.Text>
+          </Space>
+        ),
+      })),
+    ];
+  }, [members, user]);
+
+  if (!showBar) return null;
+  if (embedded && !onScopeRoute) return null;
+  if (!user) return null;
+
+  const selectValue = viewingSelf ? user.id : viewUserId;
 
   const onChange = (id: number) => {
     const next = new URLSearchParams(searchParams);
@@ -46,19 +90,64 @@ export default function TeamMemberScopeSelect({
       const name = members.find((m) => m.id === id)?.username;
       if (name) next.set('username', name);
     }
-    const path = basePath ?? window.location.pathname;
-    navigate(`${path}?${next.toString()}`, { replace: true });
+    const q = next.toString();
+    navigate(q ? `${path}?${q}` : path, { replace: true });
   };
 
   return (
-    <Space style={{ marginBottom: 16 }} wrap>
-      <Typography.Text type="secondary">查看成员：</Typography.Text>
-      <Select
-        style={{ minWidth: 180 }}
-        value={Number.isNaN(currentId!) ? user?.id : currentId}
-        options={options}
-        onChange={onChange}
-      />
-    </Space>
+    <Card
+      size="small"
+      style={{
+        marginBottom: embedded ? 0 : 16,
+        borderColor: '#91caff',
+        background: 'linear-gradient(90deg, #f0f5ff 0%, #ffffff 100%)',
+      }}
+    >
+      <div
+        style={{
+          display: 'flex',
+          flexWrap: 'wrap',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          gap: 12,
+        }}
+      >
+        <Space direction="vertical" size={4} style={{ flex: 1, minWidth: 220 }}>
+          <Space wrap>
+            <Tag color="processing" icon={<TeamOutlined />}>
+              组长工作台
+            </Tag>
+            <Typography.Text strong>组员数据查看（只读）</Typography.Text>
+          </Space>
+          <Typography.Text type="secondary" style={{ fontSize: 13 }}>
+            {viewingSelf ? (
+              <>
+                您名下有 <Typography.Text strong>{members.length}</Typography.Text>{' '}
+                名组员；切换后可查看其广告、结算、平台绑定与 Sheet 配置，无法代操作采集或改 Token。
+              </>
+            ) : (
+              <>
+                当前查看组员{' '}
+                <Typography.Text strong type="warning">
+                  {viewedMember?.username ?? searchParams.get('username') ?? viewUserId}
+                </Typography.Text>{' '}
+                的数据
+              </>
+            )}
+          </Typography.Text>
+        </Space>
+        <Space wrap align="center">
+          <Typography.Text type="secondary">切换对象</Typography.Text>
+          <Select
+            size="large"
+            style={{ minWidth: 240 }}
+            value={selectValue}
+            options={options}
+            onChange={onChange}
+            popupMatchSelectWidth={280}
+          />
+        </Space>
+      </div>
+    </Card>
   );
 }

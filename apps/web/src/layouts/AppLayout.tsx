@@ -14,6 +14,7 @@ import {
 } from '@ant-design/icons';
 import { Link, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../hooks/useAuth';
+import TeamMemberScopeSelect from '../components/TeamMemberScopeSelect';
 
 const { Header, Sider, Content } = Layout;
 
@@ -69,7 +70,7 @@ const adminMenuItems = [
 ];
 
 export default function AppLayout() {
-  const { user, logout, isAdmin } = useAuth();
+  const { user, logout, isAdmin, isTeamLead } = useAuth();
   const location = useLocation();
   const navigate = useNavigate();
 
@@ -98,7 +99,11 @@ export default function AppLayout() {
           }}
         >
           <Typography.Text type="secondary">
-            {isAdmin ? '管理员后台 · 联盟数据采集与投放分析' : '联盟数据采集与投放分析'}
+            {isAdmin
+              ? '管理员后台 · 联盟数据采集与投放分析'
+              : isTeamLead
+                ? '组长工作台 · 联盟数据采集与投放分析'
+                : '联盟数据采集与投放分析'}
           </Typography.Text>
           <Typography.Link
             onClick={() => {
@@ -111,11 +116,21 @@ export default function AppLayout() {
               <Tag color="gold" style={{ marginLeft: 8, verticalAlign: 'middle' }}>
                 管理员
               </Tag>
+            )}
+            {!isAdmin && isTeamLead && (
+              <Tag color="processing" style={{ marginLeft: 8, verticalAlign: 'middle' }}>
+                组长
+              </Tag>
             )}{' '}
             退出
           </Typography.Link>
         </Header>
         <Content style={{ margin: 24 }}>
+          {isTeamLead && !isAdmin ? (
+            <div style={{ marginBottom: 16 }}>
+              <TeamMemberScopeSelect user={user} isAdmin={isAdmin} embedded />
+            </div>
+          ) : null}
           <Outlet />
         </Content>
       </Layout>

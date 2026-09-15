@@ -1,11 +1,18 @@
 import { useCallback, useEffect, useState } from 'react';
 import { api, clearToken, getToken, type ApiResult } from '../api/client';
 
+export interface TeamMemberBrief {
+  id: number;
+  username: string;
+}
+
 export interface AuthUser {
   id: number;
   email: string;
   username: string;
   role: 'ADMIN' | 'OPERATOR' | 'VIEWER';
+  /** 作为组长时的直属组员（可为空数组） */
+  teamMembers?: TeamMemberBrief[];
 }
 
 export function useAuth() {
@@ -42,5 +49,7 @@ export function useAuth() {
     setUser(null);
   };
 
-  return { user, loading, refresh, logout, isAdmin: user?.role === 'ADMIN' };
+  const isAdmin = user?.role === 'ADMIN';
+  const isTeamLead = (user?.teamMembers?.length ?? 0) > 0;
+  return { user, loading, refresh, logout, isAdmin, isTeamLead };
 }

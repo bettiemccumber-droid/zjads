@@ -17,6 +17,9 @@ import {
 import dayjs, { type Dayjs } from 'dayjs';
 import { Link, useSearchParams } from 'react-router-dom';
 import { api, type ApiResult } from '../api/client';
+import { useAuth } from '../hooks/useAuth';
+import TeamMemberScopeSelect from '../components/TeamMemberScopeSelect';
+import { parseScopedViewUserId } from '../utils/team-scope.util';
 
 /** 与 Google Ads 脚本 lookback 对齐：默认回溯天数（含昨天） */
 const DEFAULT_LOOKBACK_DAYS = 7;
@@ -81,10 +84,14 @@ function getImportDateRange(lookbackDays: number): { start: string; end: string 
 }
 
 export default function AdSourcesPage({ adminMode = false }: AdSourcesPageProps) {
+  const { user, isAdmin } = useAuth();
   const [searchParams, setSearchParams] = useSearchParams();
   const urlUserId = searchParams.get('userId');
+  const teamScopedId = !adminMode ? parseScopedViewUserId(user, isAdmin, urlUserId) : undefined;
   const scopeUserId =
-    adminMode && urlUserId ? parseInt(urlUserId, 10) : undefined;
+    adminMode && urlUserId ? parseInt(urlUserId, 10) : teamScopedId;
+  const readOnlyMemberView =
+    !adminMode && scopeUserId != null && user != null && scopeUserId !== user.id;
 
   const [list, setList] = useState<AdDataSourceRow[]>([]);
   const [employees, setEmployees] = useState<EmployeeOption[]>([]);
@@ -96,10 +103,12 @@ export default function AdSourcesPage({ adminMode = false }: AdSourcesPageProps)
   const [customRange, setCustomRange] = useState<[Dayjs, Dayjs] | null>(null);
   const [form] = Form.useForm();
 
-  const scopeUsername = useMemo(
-    () => employees.find((e) => e.id === scopeUserId)?.username,
-    [employees, scopeUserId],
-  );
+  const scopeUsername = useMemo(() => {
+    if (searchParams.get('username')) return searchParams.get('username')!;
+    const fromTeam = user?.teamMembers?.find((m) => m.id === scopeUserId)?.username;
+    if (fromTeam) return fromTeam;
+    return employees.find((e) => e.id === scopeUserId)?.username;
+  }, [employees, scopeUserId, searchParams, user?.teamMembers]);
 
   const loadEmployees = useCallback(async () => {
     if (!adminMode) return;
@@ -352,10 +361,23 @@ export default function AdSourcesPage({ adminMode = false }: AdSourcesPageProps)
     ? scopeUsername
       ? `员工「${scopeUsername}」`
       : '（请先选择员工）'
-    : '我的';
+    : readOnlyMemberView
+      ? `组员「${scopeUsername ?? scopeUserId}」（只读）`
+      : '我的';
 
   return (
     <div>
+      {!adminMode ? (
+        <TeamMemberScopeSelect user={user} isAdmin={isAdmin} basePath="/ad-sources" />
+      ) : null}
+      {readOnlyMemberView ? (
+        <Alert
+          type="info"
+          showIcon
+          style={{ marginBottom: 16 }}
+          message="组长只读查看 Sheet 配置，无法替组员添加或导入。"
+        />
+      ) : null}
       {adminMode && (
         <Alert
           type="info"
@@ -394,6 +416,7 @@ export default function AdSourcesPage({ adminMode = false }: AdSourcesPageProps)
         </Card>
       )}
 
+      {!readOnlyMemberView ? (
       <Card
         title={`添加 Google Sheet — ${ownerLabel}`}
         style={{ marginBottom: 16 }}
@@ -420,10 +443,12 @@ export default function AdSourcesPage({ adminMode = false }: AdSourcesPageProps)
           {defaultRange.end}）。
         </Typography.Paragraph>
       </Card>
+      ) : null}
 
       <Card
         title={`${ownerLabel} 广告数据源`}
         extra={
+          readOnlyMemberView ? undefined : (
           <Space wrap>
             <Button
               type="primary"
@@ -478,6 +503,7 @@ export default function AdSourcesPage({ adminMode = false }: AdSourcesPageProps)
               按日期清空
             </Button>
           </Space>
+          )
         }
       >
         <Table
@@ -508,54 +534,58 @@ export default function AdSourcesPage({ adminMode = false }: AdSourcesPageProps)
               width: 170,
               render: (v: string) => new Date(v).toLocaleString('zh-CN'),
             },
-            {
-              title: '操作',
-              width: 320,
-              fixed: 'right',
-              render: (_: unknown, r: AdDataSourceRow) => (
-                <Space wrap size="small">
-                  <Button
-                    type="primary"
-                    size="small"
-                    loading={importingId === r.id}
-                    onClick={() => onImportRecent(r.id)}
-                  >
-                    导入近 {DEFAULT_LOOKBACK_DAYS} 天
-                  </Button>
-                  <Button
-                    size="small"
-                    loading={importingId === r.id}
-                    onClick={() => openRangeModal(r.id)}
-                  >
-                    自定义日期
-                  </Button>
-                  <Popconfirm
-                    title="导入 Sheet 中全部日数据？"
-                    onConfirm={() => onImportAll(r.id)}
-                  >
-                    <Button size="small" loading={importingId === r.id}>
-                      全量
-                    </Button>
-                  </Popconfirm>
-                  <Popconfirm
-                    title="确定删除此数据源？"
-                    onConfirm={() => onDelete(r.id, false)}
-                  >
-                    <Button size="small" danger>
-                      删除
-                    </Button>
-                  </Popconfirm>
-                  <Popconfirm
-                    title="删除并清空全部导入的广告数据？"
-                    onConfirm={() => onDelete(r.id, true)}
-                  >
-                    <Button size="small" danger type="primary">
-                      删除并清空
-                    </Button>
-                  </Popconfirm>
-                </Space>
-              ),
-            },
+            ...(readOnlyMemberView
+              ? []
+              : [
+                  {
+                    title: '操作',
+                    width: 320,
+                    fixed: 'right' as const,
+                    render: (_: unknown, r: AdDataSourceRow) => (
+                      <Space wrap size="small">
+                        <Button
+                          type="primary"
+                          size="small"
+                          loading={importingId === r.id}
+                          onClick={() => onImportRecent(r.id)}
+                        >
+                          导入近 {DEFAULT_LOOKBACK_DAYS} 天
+                        </Button>
+                        <Button
+                          size="small"
+                          loading={importingId === r.id}
+                          onClick={() => openRangeModal(r.id)}
+                        >
+                          自定义日期
+                        </Button>
+                        <Popconfirm
+                          title="导入 Sheet 中全部日数据？"
+                          onConfirm={() => onImportAll(r.id)}
+                        >
+                          <Button size="small" loading={importingId === r.id}>
+                            全量
+                          </Button>
+                        </Popconfirm>
+                        <Popconfirm
+                          title="确定删除此数据源？"
+                          onConfirm={() => onDelete(r.id, false)}
+                        >
+                          <Button size="small" danger>
+                            删除
+                          </Button>
+                        </Popconfirm>
+                        <Popconfirm
+                          title="删除并清空全部导入的广告数据？"
+                          onConfirm={() => onDelete(r.id, true)}
+                        >
+                          <Button size="small" danger type="primary">
+                            删除并清空
+                          </Button>
+                        </Popconfirm>
+                      </Space>
+                    ),
+                  },
+                ]),
           ]}
         />
       </Card>

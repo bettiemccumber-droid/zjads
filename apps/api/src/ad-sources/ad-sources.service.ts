@@ -1,4 +1,4 @@
-import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import axios from 'axios';
 import { UserRole } from '@prisma/client';
 import { AuthUser, isAdmin, resolveOwnerUserId } from '../common/ownership.util';
@@ -52,7 +52,7 @@ export class AdSourcesService {
   constructor(private readonly prisma: PrismaService) {}
 
   async list(user: AuthUser, queryUserId?: number) {
-    const ownerUserId = this.resolveOwnerUserId(user, queryUserId);
+    const ownerUserId = resolveOwnerUserId(user, queryUserId, 'read');
     return this.prisma.adDataSource.findMany({
       where: { ownerUserId },
       orderBy: { updatedAt: 'desc' },
@@ -63,7 +63,7 @@ export class AdSourcesService {
     if (user.role === UserRole.VIEWER) {
       throw new BadRequestException('只读账号无法配置广告数据源');
     }
-    const ownerUserId = this.resolveOwnerUserId(user, queryUserId);
+    const ownerUserId = resolveOwnerUserId(user, queryUserId, 'write');
     const sheetId = extractSheetId(dto.sheetUrl);
     if (!sheetId) {
       throw new BadRequestException('无效的 Google Sheet URL');
@@ -96,16 +96,6 @@ export class AdSourcesService {
     return { deleted: true, purged: purgeImported };
   }
 
-  private resolveOwnerUserId(user: AuthUser, queryUserId?: number): number {
-    if (queryUserId != null) {
-      if (user.role !== UserRole.ADMIN && queryUserId !== user.id) {
-        throw new ForbiddenException('无权查看其他员工的广告数据源');
-      }
-      return queryUserId;
-    }
-    return user.id;
-  }
-
   /**
    * 清空已导入的 Google Sheet 广告日数据（误导入 Sheet 后使用）
    */
@@ -117,14 +107,7 @@ export class AdSourcesService {
       throw new BadRequestException('只读账号无法清空广告数据');
     }
 
-    const ownerUserId =
-      user.role === UserRole.ADMIN && opts.userId != null
-        ? opts.userId
-        : resolveOwnerUserId(user, opts.userId);
-
-    if (opts.userId != null && user.role !== UserRole.ADMIN && opts.userId !== user.id) {
-      throw new BadRequestException('无权操作其他员工的数据');
-    }
+    const ownerUserId = resolveOwnerUserId(user, opts.userId, 'write');
 
     const dateRange = buildOrderDateRangeFilter(opts.startDate, opts.endDate);
     const result = await this.prisma.adCampaignDaily.deleteMany({
@@ -187,7 +170,7 @@ export class AdSourcesService {
       throw new BadRequestException('只读账号无法导入广告数据');
     }
 
-    const ownerUserId = this.resolveOwnerUserId(user, queryUserId);
+    const ownerUserId = resolveOwnerUserId(user, queryUserId, 'write');
     const batch = await this.importAllSourcesForOwnerId(ownerUserId, startDate, endDate);
     if (!batch) {
       throw new BadRequestException('暂无广告数据源，请先添加 Sheet');

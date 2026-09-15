@@ -23,6 +23,9 @@ import CommissionMonitor from '../components/CommissionMonitor';
 import SettlementSyncCollect from '../components/SettlementSyncCollect';
 import '../components/SyncAccountPicker.css';
 import { useAuth } from '../hooks/useAuth';
+import TeamMemberScopeSelect from '../components/TeamMemberScopeSelect';
+import { parseScopedViewUserId } from '../utils/team-scope.util';
+import { useSearchParams } from 'react-router-dom';
 import {
   adminDefaultDateRange,
   employeeDefaultDateRange,
@@ -116,7 +119,9 @@ function pct(v: number) {
 }
 
 export default function SettlementPage() {
-  const { isAdmin } = useAuth();
+  const { user, isAdmin } = useAuth();
+  const [searchParams] = useSearchParams();
+  const scopedMemberId = parseScopedViewUserId(user, isAdmin, searchParams.get('userId'));
   const [range, setRange] = useState<[Dayjs, Dayjs]>(() =>
     isAdmin ? adminDefaultDateRange() : employeeDefaultDateRange(),
   );
@@ -138,8 +143,9 @@ export default function SettlementPage() {
   const [channelAccountFilter, setChannelAccountFilter] = useState<number | 'all'>('all');
   const [merchantSearch, setMerchantSearch] = useState('');
   const [highlightMerchantId, setHighlightMerchantId] = useState<string | null>(null);
-  /** 管理员：null = 全公司，数字 = 指定员工 */
+  /** 管理员：null = 全公司，数字 = 指定员工；组长用 URL userId */
   const [scopeUserId, setScopeUserId] = useState<number | null>(null);
+  const effectiveScopeUserId = isAdmin ? scopeUserId : scopedMemberId ?? null;
   const [employeeSummaries, setEmployeeSummaries] = useState<SettlementEmployeeSummary[]>([]);
   const [employees, setEmployees] = useState<EmployeeOption[]>([]);
   const [dataScope, setDataScope] = useState<'company' | 'user'>('user');
@@ -181,7 +187,7 @@ export default function SettlementPage() {
           endDate: range[1].format('YYYY-MM-DD'),
           ...(platformFilter !== 'all' ? { platformCode: platformFilter } : {}),
           ...(channelAccountFilter !== 'all' ? { channelAccountId: channelAccountFilter } : {}),
-          ...(isAdmin && scopeUserId != null ? { userId: scopeUserId } : {}),
+          ...(effectiveScopeUserId != null ? { userId: effectiveScopeUserId } : {}),
         },
       });
       if (data.success) {
@@ -197,7 +203,7 @@ export default function SettlementPage() {
     } finally {
       setLoading(false);
     }
-  }, [range, platformFilter, channelAccountFilter, isAdmin, scopeUserId]);
+  }, [range, platformFilter, channelAccountFilter, effectiveScopeUserId]);
 
   useEffect(() => {
     loadSettlement();
@@ -345,6 +351,7 @@ export default function SettlementPage() {
 
   return (
     <div>
+      <TeamMemberScopeSelect user={user} isAdmin={isAdmin} basePath="/settlement" />
       {isAdmin && (
         <Alert
           type="info"
@@ -382,7 +389,7 @@ export default function SettlementPage() {
           endDate={range[1].format('YYYY-MM-DD')}
           platformCode={platformFilter}
           channelAccountId={channelAccountFilter}
-          targetUserId={isAdmin ? scopeUserId : undefined}
+          targetUserId={isAdmin ? scopeUserId : effectiveScopeUserId ?? undefined}
           isAdmin={isAdmin}
           companyWideScope={scopeUserId == null && isAdmin}
           onCompleted={loadSettlement}
@@ -393,7 +400,7 @@ export default function SettlementPage() {
         range={range}
         platformFilter={platformFilter}
         onPlatformFilterChange={setPlatformFilter}
-        scopeUserId={isAdmin ? scopeUserId : undefined}
+        scopeUserId={isAdmin ? scopeUserId : effectiveScopeUserId ?? undefined}
         onScopeUserChange={isAdmin ? setScopeUserId : undefined}
         onFocusMerchant={(merchantId, platformCode) => {
           setMerchantSearch(merchantId);

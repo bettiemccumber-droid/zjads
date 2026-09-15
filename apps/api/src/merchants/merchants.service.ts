@@ -5,6 +5,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { UserRole } from '@prisma/client';
+import { resolveOwnerUserId } from '../common/ownership.util';
 import { CryptoService } from '../common/crypto.service';
 import { AuthUser, isAdmin } from '../common/ownership.util';
 import { PrismaService } from '../prisma/prisma.service';
@@ -127,13 +128,7 @@ export class MerchantsService {
   }
 
   private resolveTargetOwnerId_(user: AuthUser, targetUserId?: number): number {
-    if (targetUserId != null) {
-      if (user.role !== UserRole.ADMIN && targetUserId !== user.id) {
-        throw new ForbiddenException('无权查看其他员工的商家状态');
-      }
-      return targetUserId;
-    }
-    return user.id;
+    return resolveOwnerUserId(user, targetUserId, 'read');
   }
 
   private normalizeQueryItems_(items: MerchantQueryItem[]): MerchantQueryItem[] {

@@ -8,6 +8,8 @@ interface UserRow {
   username: string;
   role: string;
   isActive: boolean;
+  reportsToId?: number | null;
+  reportsTo?: { id: number; username: string } | null;
 }
 
 const ROLE_LABELS: Record<string, string> = {
@@ -45,6 +47,7 @@ export default function AdminUserManagePage() {
       username: row.username,
       email: row.email,
       role: row.role,
+      reportsToId: row.reportsToId ?? undefined,
     });
     setOpen(true);
   };
@@ -58,10 +61,11 @@ export default function AdminUserManagePage() {
   const submit = async () => {
     const values = await form.validateFields();
     if (editing) {
-      const payload: Record<string, string> = {
+      const payload: Record<string, string | number | null> = {
         username: values.username,
         email: values.email,
         role: values.role,
+        reportsToId: values.reportsToId ?? null,
       };
       if (values.password) payload.password = values.password;
       const { data } = await api.patch<ApiResult<UserRow>>(`/admin/users/${editing.id}`, payload);
@@ -115,6 +119,10 @@ export default function AdminUserManagePage() {
             render: (role: string) => ROLE_LABELS[role] ?? role,
           },
           {
+            title: '所属组长',
+            render: (_, r) => r.reportsTo?.username ?? '—',
+          },
+          {
             title: '状态',
             dataIndex: 'isActive',
             render: (v: boolean) => (v ? '启用' : '停用'),
@@ -163,6 +171,22 @@ export default function AdminUserManagePage() {
               ]}
             />
           </Form.Item>
+          {editing ? (
+            <Form.Item name="reportsToId" label="所属组长">
+              <Select
+                allowClear
+                placeholder="无（不属于任何组）"
+                options={users
+                  .filter(
+                    (u) =>
+                      u.id !== editing.id &&
+                      u.isActive &&
+                      u.role !== 'ADMIN',
+                  )
+                  .map((u) => ({ value: u.id, label: u.username }))}
+              />
+            </Form.Item>
+          ) : null}
         </Form>
       </Modal>
     </Card>

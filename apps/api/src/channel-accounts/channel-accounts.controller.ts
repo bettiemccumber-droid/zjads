@@ -15,7 +15,7 @@ import { UserRole } from '@prisma/client';
 import { IsArray, IsBoolean, IsInt, IsOptional, IsString, Min, ValidateNested } from 'class-validator';
 import { Type } from 'class-transformer';
 import { ok } from '../common/api-response';
-import { AuthUser, isAdmin } from '../common/ownership.util';
+import { AuthUser, resolveOwnerUserId } from '../common/ownership.util';
 import { CurrentUser } from '../auth/current-user.decorator';
 import { ChannelAccountsService } from './channel-accounts.service';
 import { AffiliateClicksService } from './affiliate-clicks.service';
@@ -100,13 +100,13 @@ export class ChannelAccountsController {
 
   @Get()
   async list(@CurrentUser() user: AuthUser, @Query('userId') userId?: string) {
-    const filterId = userId && isAdmin(user) ? parseInt(userId, 10) : undefined;
+    const filterId = userId ? resolveOwnerUserId(user, parseInt(userId, 10), 'read') : undefined;
     return ok(await this.service.list(user, filterId));
   }
 
   @Get('by-platform')
   async listByPlatform(@CurrentUser() user: AuthUser, @Query('userId') userId?: string) {
-    const filterId = userId && isAdmin(user) ? parseInt(userId, 10) : undefined;
+    const filterId = userId ? resolveOwnerUserId(user, parseInt(userId, 10), 'read') : undefined;
     return ok(await this.service.listGroupedByPlatform(user, filterId));
   }
 

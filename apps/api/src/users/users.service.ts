@@ -1,4 +1,10 @@
-import { ConflictException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ConflictException,
+  ForbiddenException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import { UserRole } from '@prisma/client';
 import * as bcrypt from 'bcryptjs';
 import { PrismaService } from '../prisma/prisma.service';
@@ -16,6 +22,8 @@ export class UsersService {
         username: true,
         role: true,
         isActive: true,
+        reportsToId: true,
+        reportsTo: { select: { id: true, username: true } },
         createdAt: true,
       },
       orderBy: { id: 'asc' },
@@ -57,6 +65,33 @@ export class UsersService {
   /**
    * 更新员工账号（用户名、邮箱、角色、密码）
    */
+  /**
+   * 校验「所属组长」关系（同组织、非管理员、非自身）
+   */
+  private async assertValidReportsTo_(
+    reportsToId: number | null | undefined,
+    userId: number,
+    organizationId: number,
+  ) {
+    if (reportsToId == null) return;
+    if (reportsToId === userId) {
+      throw new BadRequestException('不能将自己设为所属组长');
+    }
+    const leader = await this.prisma.user.findUnique({
+      where: { id: reportsToId },
+      select: { id: true, organizationId: true, role: true, isActive: true },
+    });
+    if (!leader || leader.organizationId !== organizationId) {
+      throw new BadRequestException('指定的组长不存在');
+    }
+    if (leader.role === UserRole.ADMIN) {
+      throw new BadRequestException('管理员不能作为组长');
+    }
+    if (!leader.isActive) {
+      throw new BadRequestException('组长账号已停用');
+    }
+  }
+
   async update(
     id: number,
     organizationId: number,
@@ -65,9 +100,13 @@ export class UsersService {
       email?: string;
       role?: UserRole;
       password?: string;
+      reportsToId?: number | null;
     },
   ) {
-    const user = await this.prisma.user.findUnique({ where: { id } });
+    const user = await this.prisma.user.findUnique({
+      where: { id },
+      include: { reportsTo: { select: { id: true, username: true } } },
+    });
     if (!user || user.organizationId !== organizationId) {
       throw new NotFoundException('用户不存在');
     }
@@ -92,26 +131,38 @@ export class UsersService {
     if (params.password) {
       data.passwordHash = await bcrypt.hash(params.password, 10);
     }
+    if (params.reportsToId !== undefined) {
+      await this.assertValidReportsTo_(params.reportsToId, id, organizationId);
+    }
 
-    if (Object.keys(data).length === 0) {
+    const updateData: typeof data & { reportsToId?: number | null } = { ...data };
+    if (params.reportsToId !== undefined) {
+      updateData.reportsToId = params.reportsToId;
+    }
+
+    if (Object.keys(updateData).length === 0) {
       return {
         id: user.id,
         email: user.email,
         username: user.username,
         role: user.role,
         isActive: user.isActive,
+        reportsToId: user.reportsToId,
+        reportsTo: user.reportsTo,
       };
     }
 
     return this.prisma.user.update({
       where: { id },
-      data,
+      data: updateData,
       select: {
         id: true,
         email: true,
         username: true,
         role: true,
         isActive: true,
+        reportsToId: true,
+        reportsTo: { select: { id: true, username: true } },
       },
     });
   }

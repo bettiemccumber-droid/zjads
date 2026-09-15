@@ -1,7 +1,10 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { Alert, Button, Card, Form, Input, Modal, Space, Switch, Table, Tabs, Tag, message } from 'antd';
+import { useSearchParams } from 'react-router-dom';
 import { api, type ApiResult } from '../api/client';
 import { useAuth } from '../hooks/useAuth';
+import TeamMemberScopeSelect from '../components/TeamMemberScopeSelect';
+import { parseScopedViewUserId } from '../utils/team-scope.util';
 import { AffiliateClickImportModal } from '../components/AffiliateClickImportModal';
 
 interface Platform {
@@ -24,7 +27,13 @@ interface ChannelAccount {
 }
 
 export default function ChannelAccountsPage() {
-  const { user } = useAuth();
+  const { user, isAdmin } = useAuth();
+  const [searchParams] = useSearchParams();
+  const scopeUserId = parseScopedViewUserId(user, isAdmin, searchParams.get('userId'));
+  const scopeUsername =
+    searchParams.get('username') ??
+    user?.teamMembers?.find((m) => m.id === scopeUserId)?.username;
+  const readOnlyMemberView = scopeUserId != null && user != null && scopeUserId !== user.id;
   const [platforms, setPlatforms] = useState<Platform[]>([]);
   const [grouped, setGrouped] = useState<
     Array<{ platformCode: string; platformName: string; accounts: ChannelAccount[] }>
@@ -35,20 +44,26 @@ export default function ChannelAccountsPage() {
   const [form] = Form.useForm();
   const [importAccount, setImportAccount] = useState<ChannelAccount | null>(null);
 
-  const load = async () => {
+  const load = useCallback(async () => {
     const [pRes, aRes] = await Promise.all([
       api.get<ApiResult<Platform[]>>('/platforms'),
-      api.get<ApiResult<typeof grouped>>('/channel-accounts/by-platform'),
+      api.get<ApiResult<typeof grouped>>('/channel-accounts/by-platform', {
+        params: scopeUserId != null ? { userId: scopeUserId } : undefined,
+      }),
     ]);
     if (pRes.data.success) setPlatforms(pRes.data.data);
     if (aRes.data.success) setGrouped(aRes.data.data);
-  };
+  }, [scopeUserId]);
 
   useEffect(() => {
-    load();
-  }, []);
+    void load();
+  }, [load]);
 
   const openAdd = (platform: Platform) => {
+    if (readOnlyMemberView) {
+      message.info('查看组员账号时为只读');
+      return;
+    }
     if (user?.role === 'VIEWER') {
       message.warning('只读账号无法添加');
       return;
@@ -64,6 +79,10 @@ export default function ChannelAccountsPage() {
   };
 
   const openEdit = (account: ChannelAccount) => {
+    if (readOnlyMemberView) {
+      message.info('查看组员账号时为只读');
+      return;
+    }
     if (user?.role === 'VIEWER') {
       message.warning('只读账号无法修改');
       return;
@@ -173,9 +192,11 @@ export default function ChannelAccountsPage() {
               description="日常采集写入订单与佣金；「含联盟点击」不影响 RW（RW 不通过 API 拉点击）。与后台 Performance 的点击/订单不一致时，请用「Performance 校准导入」对齐点击与订单数（不改佣金，导入后采集不覆盖）。"
             />
           ) : null}
-          <Button type="primary" style={{ marginBottom: 12 }} onClick={() => openAdd(p)}>
-            添加 {p.name} 渠道
-          </Button>
+          {!readOnlyMemberView ? (
+            <Button type="primary" style={{ marginBottom: 12 }} onClick={() => openAdd(p)}>
+              添加 {p.name} 渠道
+            </Button>
+          ) : null}
           <Table
             rowKey="id"
             dataSource={accounts}
@@ -189,29 +210,33 @@ export default function ChannelAccountsPage() {
                 dataIndex: 'isActive',
                 render: (v: boolean | undefined) => (v === false ? '已停用' : '启用'),
               },
-              {
-                title: '操作',
-                render: (_, row) => (
-                  <Space>
-                    <Button size="small" onClick={() => openEdit(row)}>
-                      编辑
-                    </Button>
-                    {p.code === 'linkbux' && user?.role !== 'VIEWER' ? (
-                      <Button size="small" onClick={() => setImportAccount(row)}>
-                        点击校准导入
-                      </Button>
-                    ) : null}
-                    {p.code === 'rewardoo' && user?.role !== 'VIEWER' ? (
-                      <Button size="small" onClick={() => setImportAccount(row)}>
-                        Performance 校准导入
-                      </Button>
-                    ) : null}
-                    <Button danger size="small" onClick={() => onDelete(row.id)}>
-                      删除
-                    </Button>
-                  </Space>
-                ),
-              },
+              ...(readOnlyMemberView
+                ? []
+                : [
+                    {
+                      title: '操作',
+                      render: (_: unknown, row: ChannelAccount) => (
+                        <Space>
+                          <Button size="small" onClick={() => openEdit(row)}>
+                            编辑
+                          </Button>
+                          {p.code === 'linkbux' && user?.role !== 'VIEWER' ? (
+                            <Button size="small" onClick={() => setImportAccount(row)}>
+                              点击校准导入
+                            </Button>
+                          ) : null}
+                          {p.code === 'rewardoo' && user?.role !== 'VIEWER' ? (
+                            <Button size="small" onClick={() => setImportAccount(row)}>
+                              Performance 校准导入
+                            </Button>
+                          ) : null}
+                          <Button danger size="small" onClick={() => onDelete(row.id)}>
+                            删除
+                          </Button>
+                        </Space>
+                      ),
+                    },
+                  ]),
             ]}
             pagination={false}
           />
@@ -224,7 +249,16 @@ export default function ChannelAccountsPage() {
   const isEdit = !!editingAccount;
 
   return (
-    <Card title="我的平台账号">
+    <Card title={readOnlyMemberView ? `平台账号（${scopeUsername ?? scopeUserId}，只读）` : '我的平台账号'}>
+      <TeamMemberScopeSelect user={user} isAdmin={isAdmin} basePath="/channel-accounts" />
+      {readOnlyMemberView ? (
+        <Alert
+          type="info"
+          showIcon
+          style={{ marginBottom: 12 }}
+          message="组长只读查看：用于核对平台绑定与序号，无法修改组员 Token 或 Channel。"
+        />
+      ) : null}
       <p style={{ color: '#666' }}>
         请按平台分别添加 API Token 与 Channel ID；同一平台同一 Channel 不可重复。
         联盟序号需与广告系列名一致（如 lh2），可直接编辑修改，无需删除重建。

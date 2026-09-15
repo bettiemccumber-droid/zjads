@@ -2,6 +2,7 @@ import { Injectable, UnauthorizedException } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import * as bcrypt from 'bcryptjs';
 import { PrismaService } from '../prisma/prisma.service';
+import { loadTeamMembersForLeader } from '../common/team-scope.util';
 
 @Injectable()
 export class AuthService {
@@ -23,6 +24,7 @@ export class AuthService {
       sub: user.id,
       email: user.email,
     });
+    const teamMembers = await loadTeamMembersForLeader(this.prisma, user.id);
     return {
       token,
       user: {
@@ -30,6 +32,7 @@ export class AuthService {
         email: user.email,
         username: user.username,
         role: user.role,
+        teamMembers,
       },
     };
   }
@@ -48,6 +51,7 @@ export class AuthService {
     if (!user) {
       throw new UnauthorizedException('用户不存在');
     }
-    return user;
+    const teamMembers = await loadTeamMembersForLeader(this.prisma, userId);
+    return { ...user, teamMembers };
   }
 }

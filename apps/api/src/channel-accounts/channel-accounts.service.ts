@@ -7,7 +7,7 @@ import {
 import { Prisma } from '@prisma/client';
 import { isCollectorImplemented } from '../collectors/collectors.registry';
 import { CryptoService } from '../common/crypto.service';
-import { AuthUser, isAdmin } from '../common/ownership.util';
+import { AuthUser, isAdmin, resolveOwnerUserId } from '../common/ownership.util';
 import { PrismaService } from '../prisma/prisma.service';
 
 export interface CreateChannelAccountDto {
@@ -67,7 +67,8 @@ export class ChannelAccountsService {
   }
 
   async list(user: AuthUser, filterUserId?: number) {
-    const ownerId = isAdmin(user) && filterUserId ? filterUserId : user.id;
+    const ownerId =
+      filterUserId != null ? resolveOwnerUserId(user, filterUserId, 'read') : user.id;
     const accounts = await this.prisma.channelAccount.findMany({
       where: { ownerUserId: ownerId },
       include: { platform: true },

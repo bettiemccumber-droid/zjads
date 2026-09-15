@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useSearchParams, Link } from 'react-router-dom';
 import { useAuth } from '../hooks/useAuth';
+import TeamMemberScopeSelect from '../components/TeamMemberScopeSelect';
+import { parseScopedViewUserId } from '../utils/team-scope.util';
 
 import {
 
@@ -235,12 +237,15 @@ function ReportSummaryBar({
 
 export default function DashboardPage() {
 
-  const { isAdmin } = useAuth();
+  const { user, isAdmin } = useAuth();
   const [searchParams] = useSearchParams();
-  const viewUserId = isAdmin && searchParams.get('userId')
-    ? parseInt(searchParams.get('userId')!, 10)
-    : undefined;
-  const viewUsername = searchParams.get('username') ?? `用户#${viewUserId}`;
+  const viewUserId = parseScopedViewUserId(user, isAdmin, searchParams.get('userId'));
+  const viewingOtherEmployee =
+    viewUserId != null && user != null && viewUserId !== user.id;
+  const viewUsername =
+    searchParams.get('username') ??
+    user?.teamMembers?.find((m) => m.id === viewUserId)?.username ??
+    (viewUserId != null ? `用户#${viewUserId}` : '');
 
   const [employeeSheetStatus, setEmployeeSheetStatus] = useState<{
     adSourceCount: number;
@@ -394,7 +399,7 @@ export default function DashboardPage() {
   }, [loadSyncAccounts]);
 
   useEffect(() => {
-    if (!viewUserId) {
+    if (!viewingOtherEmployee || !isAdmin) {
       setEmployeeSheetStatus(null);
       return;
     }
@@ -423,7 +428,7 @@ export default function DashboardPage() {
         });
       }
     })();
-  }, [viewUserId]);
+  }, [viewUserId, viewingOtherEmployee, isAdmin]);
 
   const fetchSyncJob = useCallback(async (jobId: number) => {
     try {
@@ -652,9 +657,12 @@ export default function DashboardPage() {
   useEffect(() => {
     stopPolling();
     setSyncJob(null);
+    if (viewingOtherEmployee && !isAdmin) {
+      return () => stopPolling();
+    }
     void (async () => {
       const { data } = await api.get<ApiResult<SyncJobDetail[]>>('/sync/jobs/recent', {
-        params: viewUserId ? { userId: viewUserId } : undefined,
+        params: viewUserId && isAdmin ? { userId: viewUserId } : undefined,
       });
 
       if (data.success && data.data[0]) {
@@ -667,7 +675,7 @@ export default function DashboardPage() {
     })();
 
     return () => stopPolling();
-  }, [viewUserId, startPolling, stopPolling]);
+  }, [viewUserId, viewingOtherEmployee, isAdmin, startPolling, stopPolling]);
 
 
 
@@ -1018,9 +1026,13 @@ export default function DashboardPage() {
     return { ...totals, overallRoi, profit: totals.totalCommission - totals.totalAdSpend };
   }, [filteredMerchantRows]);
 
+  const showMemberSyncCollect = !viewingOtherEmployee || isAdmin;
+
   return (
 
     <div>
+
+      <TeamMemberScopeSelect user={user} isAdmin={isAdmin} basePath="/dashboard" />
 
       <CommissionAlertBanner
         startDate={dateParams.startDate}
@@ -1029,7 +1041,7 @@ export default function DashboardPage() {
         refreshToken={alertBannerRefresh}
       />
 
-      {viewUserId && (
+      {viewingOtherEmployee && isAdmin && viewUserId && (
         <Alert
           type="info"
           showIcon
@@ -1039,7 +1051,26 @@ export default function DashboardPage() {
         />
       )}
 
-      {viewUserId && employeeSheetStatus && (
+      {viewingOtherEmployee && !isAdmin && viewUserId && (
+        <Alert
+          type="info"
+          showIcon
+          style={{ marginBottom: 16 }}
+          message={`正在查看组员「${viewUsername}」的数据（只读）`}
+          description={
+            <Space wrap>
+              <Link to={`/channel-accounts?userId=${viewUserId}&username=${encodeURIComponent(viewUsername)}`}>
+                查看平台账号绑定
+              </Link>
+              <Link to={`/ad-sources?userId=${viewUserId}&username=${encodeURIComponent(viewUsername)}`}>
+                查看广告 Sheet 配置
+              </Link>
+            </Space>
+          }
+        />
+      )}
+
+      {viewingOtherEmployee && isAdmin && viewUserId && employeeSheetStatus && (
         <Alert
           type={
             employeeSheetStatus.adSourceCount === 0 || !employeeSheetStatus.lastSheetImportAt
@@ -1088,7 +1119,8 @@ export default function DashboardPage() {
         />
       )}
 
-      <Card title={viewUserId ? `数据采集（${viewUsername}）` : '数据采集'} style={{ marginBottom: 16 }}>
+      {showMemberSyncCollect ? (
+      <Card title={viewUserId && isAdmin ? `数据采集（${viewUsername}）` : '数据采集'} style={{ marginBottom: 16 }}>
 
         <div className="sync-collect-toolbar">
           <RangePicker value={range} onChange={(v) => v && setRange(v as [Dayjs, Dayjs])} />
@@ -1145,6 +1177,7 @@ export default function DashboardPage() {
         />
 
       </Card>
+      ) : null}
 
 
 

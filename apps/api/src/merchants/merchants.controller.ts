@@ -10,7 +10,7 @@ import {
 } from 'class-validator';
 import { ok } from '../common/api-response';
 import { CurrentUser } from '../auth/current-user.decorator';
-import { AuthUser, isAdmin } from '../common/ownership.util';
+import { AuthUser, resolveOwnerUserId } from '../common/ownership.util';
 import { MerchantsService } from './merchants.service';
 import { MerchantQueryItem } from './merchant-status.types';
 
@@ -69,7 +69,7 @@ export class MerchantsController {
   /** 列出可用于商家状态查询的渠道账号 */
   @Get('accounts')
   async listAccounts(@CurrentUser() user: AuthUser, @Query('userId') userId?: string) {
-    const targetUserId = userId && isAdmin(user) ? parseInt(userId, 10) : undefined;
+    const targetUserId = userId ? resolveOwnerUserId(user, parseInt(userId, 10), 'read') : undefined;
     return ok(await this.merchants.listQueryableAccounts(user, targetUserId));
   }
 

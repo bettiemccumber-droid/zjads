@@ -4,6 +4,8 @@ import { PassportStrategy } from '@nestjs/passport';
 import { ExtractJwt, Strategy } from 'passport-jwt';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuthUser } from '../common/ownership.util';
+import { loadTeamMemberIds } from '../common/team-scope.util';
+import { UserRole } from '@prisma/client';
 
 export interface JwtPayload {
   sub: number;
@@ -30,10 +32,15 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
     if (!user || !user.isActive) {
       throw new UnauthorizedException('用户无效或已停用');
     }
+    const teamMemberIds =
+      user.role === UserRole.ADMIN
+        ? undefined
+        : await loadTeamMemberIds(this.prisma, user.id);
     return {
       id: user.id,
       role: user.role,
       organizationId: user.organizationId,
+      teamMemberIds: teamMemberIds?.length ? teamMemberIds : undefined,
     };
   }
 }

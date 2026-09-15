@@ -1,7 +1,7 @@
 import { Body, Controller, Get, Param, ParseIntPipe, Patch, Post, UseGuards } from '@nestjs/common';
 import { AuthGuard } from '@nestjs/passport';
 import { UserRole } from '@prisma/client';
-import { IsBoolean, IsEmail, IsEnum, IsOptional, IsString, MinLength } from 'class-validator';
+import { IsBoolean, IsEmail, IsEnum, IsInt, IsOptional, IsString, MinLength, ValidateIf } from 'class-validator';
 import { ok } from '../common/api-response';
 import { AuthUser } from '../common/ownership.util';
 import { CurrentUser } from '../auth/current-user.decorator';
@@ -46,6 +46,12 @@ class UpdateUserDto {
   @IsString()
   @MinLength(6)
   password?: string;
+
+  /** 所属组长；传 null 表示清除 */
+  @IsOptional()
+  @ValidateIf((_, v) => v !== null && v !== undefined)
+  @IsInt()
+  reportsToId?: number | null;
 }
 
 @Controller('admin/users')

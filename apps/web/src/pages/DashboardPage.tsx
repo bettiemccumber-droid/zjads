@@ -55,7 +55,11 @@ import CampaignReportToolbar, {
 } from '../components/CampaignReportToolbar';
 import CommissionAlertBanner from '../components/CommissionAlertBanner';
 import '../components/CampaignReportToolbar.css';
-import { inferPlatformNameFromAlias } from '../utils/campaign-name.util';
+import {
+  CAMPAIGN_PLATFORM_FILTER_NAMES,
+  inferPlatformNameForCampaignRow,
+  inferPlatformNameFromAlias,
+} from '../utils/campaign-name.util';
 
 
 
@@ -870,10 +874,11 @@ export default function DashboardPage() {
   const ct = campaignTotals;
 
   const campaignPlatformOptions = useMemo(() => {
+    const fromRows = campaignRows
+      .map((r) => inferPlatformNameForCampaignRow(r.affiliateAlias, r.campaignName))
+      .filter(Boolean);
     const names = [
-      ...new Set(
-        campaignRows.map((r) => inferPlatformNameFromAlias(r.affiliateAlias)).filter(Boolean),
-      ),
+      ...new Set([...CAMPAIGN_PLATFORM_FILTER_NAMES, ...fromRows]),
     ].sort();
     return [{ value: 'all', label: '全部平台' }, ...names.map((n) => ({ value: n, label: n }))];
   }, [campaignRows]);
@@ -881,7 +886,10 @@ export default function DashboardPage() {
   const filteredCampaignRows = useMemo(() => {
     let rows = campaignRows;
     if (campaignPlatform !== 'all') {
-      rows = rows.filter((r) => inferPlatformNameFromAlias(r.affiliateAlias) === campaignPlatform);
+      rows = rows.filter(
+        (r) =>
+          inferPlatformNameForCampaignRow(r.affiliateAlias, r.campaignName) === campaignPlatform,
+      );
     }
     const q = campaignSearch.trim().toLowerCase();
     if (q) {
@@ -893,7 +901,10 @@ export default function DashboardPage() {
   const filteredCampaignDailyRows = useMemo(() => {
     let rows = campaignDailyRows;
     if (campaignPlatform !== 'all') {
-      rows = rows.filter((r) => inferPlatformNameFromAlias(r.affiliateAlias) === campaignPlatform);
+      rows = rows.filter(
+        (r) =>
+          inferPlatformNameForCampaignRow(r.affiliateAlias, r.campaignName) === campaignPlatform,
+      );
     }
     const q = campaignSearch.trim().toLowerCase();
     if (q) {
@@ -911,7 +922,8 @@ export default function DashboardPage() {
   const platformCampaignRows = useMemo(() => {
     if (campaignPlatform === 'all') return campaignRows;
     return campaignRows.filter(
-      (r) => inferPlatformNameFromAlias(r.affiliateAlias) === campaignPlatform,
+      (r) =>
+        inferPlatformNameForCampaignRow(r.affiliateAlias, r.campaignName) === campaignPlatform,
     );
   }, [campaignRows, campaignPlatform]);
 

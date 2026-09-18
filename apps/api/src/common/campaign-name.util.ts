@@ -39,5 +39,7 @@ export function inferPlatformNameFromAlias(alias: string): string {
   if (a.startsWith('lb')) return 'LinkBux';
   if (a.startsWith('rw')) return 'Rewardoo';
   if (a.startsWith('ui')) return 'UltraInfluence';
+  if (a.startsWith('cg')) return 'CollabGlow';
+  if (a.startsWith('fs')) return 'Famesta';
   return '';
 }

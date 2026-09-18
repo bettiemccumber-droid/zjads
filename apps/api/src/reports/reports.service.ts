@@ -948,6 +948,14 @@ export class ReportsService {
       return aggregateAffiliateMetricsByFamilyForDay(index.byKey, merchantId, 'lh', dateStr);
     }
 
+    if (campaignAlias.startsWith('cg')) {
+      return aggregateAffiliateMetricsByFamilyForDay(index.byKey, merchantId, 'cg', dateStr);
+    }
+
+    if (campaignAlias.startsWith('fs')) {
+      return aggregateAffiliateMetricsByFamilyForDay(index.byKey, merchantId, 'fs', dateStr);
+    }
+
     return { ...EMPTY_AFFILIATE };
   }
 
@@ -1553,6 +1561,14 @@ export class ReportsService {
 
     if (campaignAlias.startsWith('lh')) {
       return aggregateAffiliateMetricsByFamily(index.byKey, merchantId, 'lh');
+    }
+
+    if (campaignAlias.startsWith('cg')) {
+      return aggregateAffiliateMetricsByFamily(index.byKey, merchantId, 'cg');
+    }
+
+    if (campaignAlias.startsWith('fs')) {
+      return aggregateAffiliateMetricsByFamily(index.byKey, merchantId, 'fs');
     }
 
     return { ...EMPTY_AFFILIATE };

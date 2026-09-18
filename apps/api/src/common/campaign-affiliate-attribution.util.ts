@@ -45,7 +45,7 @@ export function campaignAffiliateAttributionKey(merchantId: string, alias: strin
 export function aggregateAffiliateMetricsByFamily(
   byKey: ReadonlyMap<string, AffiliateMetricsSlice>,
   merchantId: string,
-  familyPrefix: 'lh' | 'lb' | 'pm' | 'ui',
+  familyPrefix: 'lh' | 'lb' | 'pm' | 'ui' | 'cg' | 'fs',
 ): AffiliateMetricsSlice {
   const result: AffiliateMetricsSlice = { orderCount: 0, commission: 0, affiliateClicks: 0 };
   for (const [key, metrics] of byKey) {
@@ -67,7 +67,7 @@ export function aggregateAffiliateMetricsByFamily(
 export function aggregateAffiliateMetricsByFamilyForDay(
   byKey: ReadonlyMap<string, AffiliateMetricsSlice>,
   merchantId: string,
-  familyPrefix: 'lh' | 'lb' | 'pm' | 'ui',
+  familyPrefix: 'lh' | 'lb' | 'pm' | 'ui' | 'cg' | 'fs',
   dateStr: string,
 ): AffiliateMetricsSlice {
   const suffix = `|${dateStr}`;

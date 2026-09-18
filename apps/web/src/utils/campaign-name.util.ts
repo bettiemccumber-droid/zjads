@@ -28,17 +28,6 @@ export function parseCampaignName(name: string): ParsedCampaignName {
   return { affiliateAlias, merchantId, merchantSlug };
 }
 
-/** 广告系列分析平台筛选项（与已接入采集器一致，按展示名排序） */
-export const CAMPAIGN_PLATFORM_FILTER_NAMES = [
-  'CollabGlow',
-  'Famesta',
-  'LinkBux',
-  'LinkHaitao',
-  'PartnerMatic',
-  'Rewardoo',
-  'UltraInfluence',
-] as const;
-
 /**
  * 从广告系列联盟序号推断平台名（与后端 campaign-name.util 一致）
  */

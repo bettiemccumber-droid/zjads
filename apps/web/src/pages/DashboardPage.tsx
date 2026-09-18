@@ -56,7 +56,6 @@ import CampaignReportToolbar, {
 import CommissionAlertBanner from '../components/CommissionAlertBanner';
 import '../components/CampaignReportToolbar.css';
 import {
-  CAMPAIGN_PLATFORM_FILTER_NAMES,
   inferPlatformNameForCampaignRow,
   inferPlatformNameFromAlias,
 } from '../utils/campaign-name.util';
@@ -874,11 +873,12 @@ export default function DashboardPage() {
   const ct = campaignTotals;
 
   const campaignPlatformOptions = useMemo(() => {
-    const fromRows = campaignRows
-      .map((r) => inferPlatformNameForCampaignRow(r.affiliateAlias, r.campaignName))
-      .filter(Boolean);
     const names = [
-      ...new Set([...CAMPAIGN_PLATFORM_FILTER_NAMES, ...fromRows]),
+      ...new Set(
+        campaignRows
+          .map((r) => inferPlatformNameForCampaignRow(r.affiliateAlias, r.campaignName))
+          .filter(Boolean),
+      ),
     ].sort();
     return [{ value: 'all', label: '全部平台' }, ...names.map((n) => ({ value: n, label: n }))];
   }, [campaignRows]);

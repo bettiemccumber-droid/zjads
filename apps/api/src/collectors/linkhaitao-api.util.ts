@@ -27,9 +27,18 @@ export function buildLhDailySlots(startDate: string, endDate: string): { begin: 
 }
 
 /**
- * 佣金 cashback2 单次请求最多 31 天
+ * cashback2 文档允许单次最多 31 天，但长区间常漏单；与人工分段采集一致，默认按 7 天切片。
  */
-export function buildLhCommissionSlots(startDate: string, endDate: string, maxDays = 31): { begin: string; end: string }[] {
+export const LH_CASHBACK2_FETCH_CHUNK_DAYS = 7;
+
+/**
+ * 佣金 cashback2 按自然日区间切片（闭区间 begin~end，每段不超过 maxDays 天）
+ */
+export function buildLhCommissionSlots(
+  startDate: string,
+  endDate: string,
+  maxDays = LH_CASHBACK2_FETCH_CHUNK_DAYS,
+): { begin: string; end: string }[] {
   const slots: { begin: string; end: string }[] = [];
   const cur = new Date(`${startDate}T00:00:00`);
   const last = new Date(`${endDate}T00:00:00`);
@@ -223,7 +232,7 @@ export async function fetchLhByDailySlots<T>(
 }
 
 /**
- * 按最多 31 天切片拉取佣金（cashback2）
+ * 按短区间切片拉取佣金（cashback2），合并各段 list 后由 normalize 按 order_id 去重
  */
 export async function fetchLhByCommissionSlots<T>(
   token: string,

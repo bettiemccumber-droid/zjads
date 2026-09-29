@@ -290,7 +290,7 @@ export class CollectorsService {
           startDate,
           endDate,
           async (dayIndex, totalDays) => {
-            await onProgress?.(`LH 佣金 ${dayIndex}/${totalDays} 天…`);
+            await onProgress?.(`LH 佣金 ${dayIndex}/${totalDays} 段…`);
           },
         );
         lhApi = summarizeLhCommissionApi(raw);

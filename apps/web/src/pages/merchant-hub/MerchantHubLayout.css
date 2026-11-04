@@ -1,0 +1,12 @@
+.merchant-hub-module__title {
+  margin-top: 0;
+  margin-bottom: 12px;
+}
+
+.merchant-hub-module__tabs {
+  margin-bottom: 16px;
+}
+
+.merchant-hub-module__tabs .ant-tabs-nav {
+  margin-bottom: 0;
+}

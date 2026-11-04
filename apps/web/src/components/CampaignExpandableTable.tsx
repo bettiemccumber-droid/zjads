@@ -6,7 +6,7 @@ import { isEnabledCampaignStatus } from '../utils/campaign-status';
 import './CampaignExpandableTable.css';
 
 /** 主表列宽合计 + 展开列留白 */
-export const CAMPAIGN_MAIN_SCROLL_X = 1600;
+export const CAMPAIGN_MAIN_SCROLL_X = 1780;
 
 /** 按天子表列宽合计 */
 export const CAMPAIGN_DAILY_SCROLL_X = 1176;
@@ -25,6 +25,7 @@ export interface CampaignDailyRow {
   cost: number;
   orderCount: number;
   commission: number;
+  rejectedCommission?: number;
   affiliateClicks: number;
   searchBudgetLostIs: number;
   searchRankLostIs: number;
@@ -32,6 +33,7 @@ export interface CampaignDailyRow {
   maxCpc: number;
   epc: number;
   roi: number;
+  netProfit?: number;
   operationSuggestion: string;
 }
 
@@ -51,6 +53,7 @@ export interface CampaignSummaryRow {
   cost: number;
   orderCount: number;
   commission: number;
+  rejectedCommission?: number;
   affiliateClicks: number;
   searchBudgetLostIs: number;
   searchRankLostIs: number;
@@ -58,6 +61,7 @@ export interface CampaignSummaryRow {
   maxCpc: number;
   epc: number;
   roi: number;
+  netProfit?: number;
   operationSuggestion: string;
   daily: CampaignDailyRow[];
 }
@@ -571,6 +575,35 @@ export default function CampaignExpandableTable({
         align: 'center',
         ...kpiColumn('commission'),
         render: (v: number) => <MoneyCell value={v} variant="commission" kpi />,
+      },
+      {
+        title: '拒付佣金',
+        dataIndex: 'rejectedCommission',
+        width: 96,
+        align: 'center',
+        render: (v: number | undefined) =>
+          (v ?? 0) > 0 ? (
+            <MoneyCell value={v ?? 0} variant="cost" kpi />
+          ) : (
+            <span className="cell-metric-muted">—</span>
+          ),
+      },
+      {
+        title: '净利润',
+        dataIndex: 'netProfit',
+        width: 96,
+        align: 'center',
+        render: (v: number | undefined, r) => {
+          const n = v ?? r.commission - (r.rejectedCommission ?? 0) - r.cost;
+          return (
+            <span
+              className="cell-money"
+              style={{ color: n >= 0 ? '#16a34a' : '#dc2626', fontWeight: 600 }}
+            >
+              ${n.toFixed(2)}
+            </span>
+          );
+        },
       },
       {
         title: 'CR',

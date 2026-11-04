@@ -18,6 +18,7 @@ interface TeamMemberScopeSelectProps {
 export const TEAM_SCOPE_PATHS = [
   '/dashboard',
   '/settlement',
+  '/settlement-report',
   '/channel-accounts',
   '/ad-sources',
   '/merchants',

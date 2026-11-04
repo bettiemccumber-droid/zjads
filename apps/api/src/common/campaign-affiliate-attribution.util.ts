@@ -7,6 +7,7 @@ export interface AffiliateMetricsSlice {
   orderCount: number;
   commission: number;
   affiliateClicks: number;
+  rejectedCommission: number;
 }
 
 /** 两联盟序号是否同属一个平台族（PM/LH/LB/RW/UI） */
@@ -47,7 +48,12 @@ export function aggregateAffiliateMetricsByFamily(
   merchantId: string,
   familyPrefix: 'lh' | 'lb' | 'pm' | 'ui' | 'cg' | 'fs',
 ): AffiliateMetricsSlice {
-  const result: AffiliateMetricsSlice = { orderCount: 0, commission: 0, affiliateClicks: 0 };
+  const result: AffiliateMetricsSlice = {
+    orderCount: 0,
+    commission: 0,
+    affiliateClicks: 0,
+    rejectedCommission: 0,
+  };
   for (const [key, metrics] of byKey) {
     const pipe = key.indexOf('|');
     if (pipe < 0) continue;
@@ -57,6 +63,7 @@ export function aggregateAffiliateMetricsByFamily(
     result.commission += metrics.commission;
     result.orderCount += metrics.orderCount;
     result.affiliateClicks += metrics.affiliateClicks;
+    result.rejectedCommission += metrics.rejectedCommission;
   }
   return result;
 }
@@ -71,7 +78,12 @@ export function aggregateAffiliateMetricsByFamilyForDay(
   dateStr: string,
 ): AffiliateMetricsSlice {
   const suffix = `|${dateStr}`;
-  const result: AffiliateMetricsSlice = { orderCount: 0, commission: 0, affiliateClicks: 0 };
+  const result: AffiliateMetricsSlice = {
+    orderCount: 0,
+    commission: 0,
+    affiliateClicks: 0,
+    rejectedCommission: 0,
+  };
   for (const [key, metrics] of byKey) {
     if (!key.endsWith(suffix)) continue;
     const body = key.slice(0, -suffix.length);
@@ -83,6 +95,7 @@ export function aggregateAffiliateMetricsByFamilyForDay(
     result.commission += metrics.commission;
     result.orderCount += metrics.orderCount;
     result.affiliateClicks += metrics.affiliateClicks;
+    result.rejectedCommission += metrics.rejectedCommission;
   }
   return result;
 }

@@ -41,6 +41,7 @@ type AffiliateMetrics = {
   orderCount: number;
   commission: number;
   affiliateClicks: number;
+  rejectedCommission: number;
 };
 
 type AffiliateMetricsIndex = {
@@ -52,6 +53,7 @@ const EMPTY_AFFILIATE: AffiliateMetrics = {
   orderCount: 0,
   commission: 0,
   affiliateClicks: 0,
+  rejectedCommission: 0,
 };
 
 @Injectable()
@@ -459,6 +461,8 @@ export class ReportsService {
         const epc = clicks > 0 ? commission / clicks : 0;
         const affiliateClicks =
           clicksByCampaign.get(r.campaignGroupKey) ?? affiliate.affiliateClicks;
+        const rejectedCommission = affiliate.rejectedCommission;
+        const netProfit = commission - rejectedCommission - cost;
 
         return {
           campaignGroupKey: r.campaignGroupKey,
@@ -475,6 +479,7 @@ export class ReportsService {
           cost,
           orderCount: affiliate.orderCount,
           commission,
+          rejectedCommission,
           affiliateClicks,
           searchBudgetLostIs: r.searchBudgetLostIs,
           searchRankLostIs: r.searchRankLostIs,
@@ -483,6 +488,7 @@ export class ReportsService {
           epc,
           roi,
           profit: commission - cost,
+          netProfit,
           operationSuggestion: suggestOperation(roi, affiliate.orderCount, cost),
         };
       });
@@ -511,6 +517,7 @@ export class ReportsService {
         acc.cost += r.cost;
         acc.orderCount += r.orderCount;
         acc.commission += r.commission;
+        acc.rejectedCommission += r.rejectedCommission;
         acc.affiliateClicks += r.affiliateClicks;
         return acc;
       },
@@ -520,6 +527,7 @@ export class ReportsService {
         cost: 0,
         orderCount: 0,
         commission: 0,
+        rejectedCommission: 0,
         affiliateClicks: 0,
       },
     );
@@ -534,7 +542,12 @@ export class ReportsService {
       enabledOnly: statusMode === 'active',
       statusFilterSkipped,
       totalBeforeStatusFilter: countBeforeStatusFilter,
-      totals: { ...totals, overallRoi, profit: totals.commission - totals.cost },
+      totals: {
+        ...totals,
+        overallRoi,
+        profit: totals.commission - totals.cost,
+        netProfit: totals.commission - totals.rejectedCommission - totals.cost,
+      },
     };
   }
 
@@ -579,6 +592,7 @@ export class ReportsService {
           const cost = Number(ad.cost);
           const clicks = ad.clicks;
           const commission = affiliate.commission;
+          const rejectedCommission = affiliate.rejectedCommission;
           const roi = cost > 0 ? (commission - cost) / cost : 0;
           const avgCpc = clicks > 0 ? cost / clicks : Number(ad.avgCpc);
           const campaignGroupKey = resolveCampaignGroupKey({
@@ -604,6 +618,7 @@ export class ReportsService {
             cost,
             orderCount: affiliate.orderCount,
             commission,
+            rejectedCommission,
             affiliateClicks: affiliate.affiliateClicks,
             searchBudgetLostIs: Number(ad.searchBudgetLostIs),
             searchRankLostIs: Number(ad.searchRankLostIs),
@@ -612,6 +627,7 @@ export class ReportsService {
             epc: clicks > 0 ? commission / clicks : 0,
             roi,
             profit: commission - cost,
+            netProfit: commission - rejectedCommission - cost,
             operationSuggestion: suggestOperation(roi, affiliate.orderCount, cost),
           };
         }),
@@ -701,7 +717,10 @@ export class ReportsService {
       const orderKey = `${o.channelAccountId}|${dedupeAffiliateOrderRecord(o)}`;
       const comm = Number(o.commission);
       const isRw = o.channelAccount.platform?.code === 'rewardoo';
+      const rejected = resolveOrderCommissionBuckets(o).rejected;
 
+      ensure(byKey, merchantKey).rejectedCommission += rejected;
+      ensure(byMerchantId, merchantId).rejectedCommission += rejected;
       ensure(byKey, merchantKey).commission += isRw ? 0 : comm;
       ensure(byMerchantId, merchantId).commission += isRw ? 0 : comm;
 
@@ -781,6 +800,10 @@ export class ReportsService {
       const orderKey = `${o.channelAccountId}|${dedupeAffiliateOrderRecord(o)}`;
       const comm = Number(o.commission);
       const isRw = o.channelAccount.platform?.code === 'rewardoo';
+      const rejected = resolveOrderCommissionBuckets(o).rejected;
+
+      ensureKey(byKey, dayKey).rejectedCommission += rejected;
+      ensureKey(byMerchantDay, merchantDayKey).rejectedCommission += rejected;
 
       if (!isRw) {
         ensureKey(byKey, dayKey).commission += comm;
@@ -991,6 +1014,8 @@ export class ReportsService {
       affiliateClicks: number;
       roi: number;
       profit: number;
+      rejectedCommission: number;
+      netProfit: number;
       epc: number;
       operationSuggestion: string;
     };
@@ -1008,6 +1033,7 @@ export class ReportsService {
       );
       const cost = Number(ad.cost);
       const clicks = ad.clicks;
+      const rejectedCommission = affiliate.rejectedCommission;
       const roi = cost > 0 ? (affiliate.commission - cost) / cost : 0;
       return {
         date: dateStr,
@@ -1020,9 +1046,11 @@ export class ReportsService {
         clicks,
         orderCount: affiliate.orderCount,
         commission: affiliate.commission,
+        rejectedCommission,
         affiliateClicks: affiliate.affiliateClicks,
         roi,
         profit: affiliate.commission - cost,
+        netProfit: affiliate.commission - rejectedCommission - cost,
         epc: clicks > 0 ? affiliate.commission / clicks : 0,
         operationSuggestion: suggestOperation(roi, affiliate.orderCount, cost),
       };
@@ -1090,6 +1118,8 @@ export class ReportsService {
       epc: number;
       roi: number;
       profit: number;
+      rejectedCommission: number;
+      netProfit: number;
       operationSuggestion: string;
     },
   >(rows: T[]): T[] {
@@ -1108,6 +1138,7 @@ export class ReportsService {
       const clicks = prev.clicks + row.clicks;
       const cost = prev.cost + row.cost;
       const commission = prev.commission;
+      const rejectedCommission = prev.rejectedCommission + row.rejectedCommission;
       const orderCount = prev.orderCount;
       const affiliateClicks = prev.affiliateClicks;
       const roi = cost > 0 ? (commission - cost) / cost : 0;
@@ -1124,6 +1155,7 @@ export class ReportsService {
         cost,
         orderCount,
         commission,
+        rejectedCommission,
         affiliateClicks,
         searchBudgetLostIs: this.weightedPercent(
           prev.searchBudgetLostIs,
@@ -1142,6 +1174,7 @@ export class ReportsService {
         epc: clicks > 0 ? commission / clicks : 0,
         roi,
         profit: commission - cost,
+        netProfit: commission - rejectedCommission - cost,
         operationSuggestion: suggestOperation(roi, orderCount, cost),
       });
     }
@@ -1229,9 +1262,11 @@ export class ReportsService {
           maxCpc: 0,
           orderCount: affiliate.orderCount,
           commission: affiliate.commission,
+          rejectedCommission: affiliate.rejectedCommission,
           affiliateClicks: affiliate.affiliateClicks,
           roi: 0,
           profit: affiliate.commission,
+          netProfit: affiliate.commission - affiliate.rejectedCommission,
           epc: 0,
           operationSuggestion: suggestOperation(0, affiliate.orderCount, 0),
         });

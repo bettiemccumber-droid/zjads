@@ -1,0 +1,239 @@
+.settlement-report-classic {
+  --sr-border: #c8e6c9;
+  --sr-head: #e8f5e9;
+  --sr-head-deep: #c8e6c9;
+  --sr-accent: #f6ffed;
+  --sr-section-title: #389e0d;
+  --sr-page-bg: #f5f7fa;
+}
+
+.settlement-report-classic .sr-toolbar {
+  background: #fff;
+  border: 1px solid #e8e8e8;
+  border-radius: 8px;
+  padding: 12px 16px;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
+}
+
+.settlement-report-classic .sr-rate-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: linear-gradient(90deg, #e6f4ff 0%, #f0f9ff 100%);
+  border: 1px solid #91caff;
+  border-radius: 8px;
+  padding: 10px 14px;
+  margin-top: 12px;
+  font-size: 13px;
+  color: #0958d9;
+}
+
+.settlement-report-classic .sr-rate-bar::before {
+  content: 'ℹ';
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: #1677ff;
+  color: #fff;
+  font-size: 12px;
+  flex-shrink: 0;
+}
+
+.settlement-report-classic .sr-tip {
+  margin-top: 8px;
+  font-size: 12px;
+  color: rgba(0, 0, 0, 0.45);
+}
+
+.settlement-report-classic .sr-section {
+  margin-top: 16px;
+  background: #fff;
+  border: 1px solid #e8e8e8;
+  border-radius: 8px;
+  overflow: hidden;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.06);
+}
+
+.settlement-report-classic .sr-section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 16px;
+  background: linear-gradient(180deg, var(--sr-head) 0%, #fff 100%);
+  border-bottom: 2px solid var(--sr-section-title);
+}
+
+.settlement-report-classic .sr-section-head h3 {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+  color: #135200;
+}
+
+.settlement-report-classic .sr-section-body {
+  padding: 0;
+}
+
+.settlement-report-classic .sr-table-wrap {
+  overflow-x: auto;
+}
+
+.settlement-report-classic table.sr-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.settlement-report-classic table.sr-table th,
+.settlement-report-classic table.sr-table td {
+  border: 1px solid var(--sr-border);
+  padding: 8px 10px;
+  vertical-align: middle;
+}
+
+.settlement-report-classic table.sr-table thead th {
+  background: var(--sr-head);
+  text-align: center;
+  font-weight: 600;
+  color: #237804;
+}
+
+.settlement-report-classic table.sr-table thead tr:last-child th {
+  background: var(--sr-head-deep);
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.settlement-report-classic table.sr-table tbody tr:nth-child(even) td:not(.sr-group):not(.sr-total-col) {
+  background: #fcfcfc;
+}
+
+.settlement-report-classic table.sr-table .sr-label,
+.settlement-report-classic table.sr-table .sr-sublabel {
+  background: #fafafa;
+  font-weight: 500;
+  text-align: left;
+  color: rgba(0, 0, 0, 0.85);
+}
+
+.settlement-report-classic table.sr-table .sr-sublabel {
+  padding-left: 20px;
+  font-weight: 400;
+  font-size: 12px;
+  color: rgba(0, 0, 0, 0.65);
+  min-width: 120px;
+}
+
+.settlement-report-classic table.sr-table .sr-group {
+  background: #f0f9f0;
+  font-weight: 600;
+  text-align: center;
+  vertical-align: middle;
+  color: #135200;
+  min-width: 88px;
+  line-height: 1.4;
+}
+
+.settlement-report-classic table.sr-table .sr-channel-head {
+  font-size: 14px;
+  letter-spacing: 0.02em;
+}
+
+.settlement-report-classic table.sr-table .sr-sub {
+  font-size: 11px;
+  color: rgba(0, 0, 0, 0.45);
+  font-weight: normal;
+}
+
+.settlement-report-classic table.sr-matrix thead .sr-label {
+  background: var(--sr-head-deep);
+}
+
+.settlement-report-classic table.sr-table .sr-account-hint {
+  font-size: 11px;
+  color: rgba(0, 0, 0, 0.55);
+  font-weight: normal;
+  margin-top: 2px;
+  word-break: break-all;
+}
+
+.settlement-report-classic table.sr-table tfoot td {
+  background: var(--sr-accent);
+  font-weight: 600;
+  color: #135200;
+}
+
+.settlement-report-classic .sr-money-usd {
+  font-variant-numeric: tabular-nums;
+  font-weight: 500;
+}
+
+.settlement-report-classic .sr-money-cny {
+  display: block;
+  font-size: 11px;
+  color: rgba(0, 0, 0, 0.45);
+  font-variant-numeric: tabular-nums;
+  margin-top: 2px;
+}
+
+.settlement-report-classic .sr-total-col {
+  background: #f6ffed !important;
+  font-weight: 600;
+}
+
+.settlement-report-classic .sr-cell-editable {
+  background: #fffbe6 !important;
+}
+
+.settlement-report-classic .sr-cell-editable .ant-input-number {
+  background: #fff;
+  border-color: #ffe58f;
+}
+
+.settlement-report-classic .sr-mcc-name {
+  font-weight: 500;
+}
+
+.settlement-report-classic .sr-profit-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+  margin-top: 16px;
+  padding: 14px 18px;
+  background: #fff;
+  border: 1px solid #e8e8e8;
+  border-radius: 8px;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
+}
+
+.settlement-report-classic .sr-profit-item {
+  flex: 1;
+  min-width: 200px;
+}
+
+.settlement-report-classic .sr-profit-item .sr-profit-label {
+  font-size: 12px;
+  color: rgba(0, 0, 0, 0.45);
+  margin-bottom: 4px;
+}
+
+.settlement-report-classic .sr-profit-item .sr-profit-value {
+  font-size: 20px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.settlement-report-classic .sr-profit-item.sr-profit-main .sr-profit-value {
+  font-size: 22px;
+}
+
+.settlement-report-classic .sr-profit-negative {
+  color: #cf1322;
+}
+
+.settlement-report-classic .sr-profit-positive {
+  color: #389e0d;
+}

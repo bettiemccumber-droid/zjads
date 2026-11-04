@@ -1,92 +1,36 @@
 import { Layout, Menu, Tag, Typography } from 'antd';
-import {
-  DashboardOutlined,
-  TeamOutlined,
-  BankOutlined,
-  LogoutOutlined,
-  UserOutlined,
-  BarChartOutlined,
-  FileExcelOutlined,
-  CrownOutlined,
-  SyncOutlined,
-  PieChartOutlined,
-  ShopOutlined,
-} from '@ant-design/icons';
-import { Link, Outlet, useLocation, useNavigate } from 'react-router-dom';
+import { LogoutOutlined } from '@ant-design/icons';
+import { Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../hooks/useAuth';
 import TeamMemberScopeSelect from '../components/TeamMemberScopeSelect';
+import {
+  buildAdminSidebarMenu,
+  buildEmployeeSidebarMenu,
+  resolveSidebarSelectedKey,
+} from './sidebar-menu.config';
+import './AppLayout.css';
 
 const { Header, Sider, Content } = Layout;
-
-/** 员工（运营/只读）侧边栏 */
-const employeeMenuItems = [
-  { key: '/dashboard', icon: <DashboardOutlined />, label: <Link to="/dashboard">数据采集</Link> },
-  {
-    key: '/channel-accounts',
-    icon: <BankOutlined />,
-    label: <Link to="/channel-accounts">我的平台账号</Link>,
-  },
-  {
-    key: '/merchants',
-    icon: <ShopOutlined />,
-    label: <Link to="/merchants">商家状态查询</Link>,
-  },
-  { key: '/settlement', icon: <BarChartOutlined />, label: <Link to="/settlement">结算查询</Link> },
-  {
-    key: '/ad-sources',
-    icon: <FileExcelOutlined />,
-    label: <Link to="/ad-sources">广告数据源</Link>,
-  },
-];
-
-/** 管理员侧边栏（平台账号在员工侧配置；Sheet 在「广告数据源」代员工导入） */
-const adminMenuItems = [
-  { key: '/admin', icon: <CrownOutlined />, label: <Link to="/admin">管理员中心</Link> },
-  { key: '/admin/stats', icon: <PieChartOutlined />, label: <Link to="/admin/stats">平台统计</Link> },
-  { key: '/admin/users', icon: <TeamOutlined />, label: <Link to="/admin/users">用户管理</Link> },
-  { key: '/admin/sync', icon: <SyncOutlined />, label: <Link to="/admin/sync">数据采集中心</Link> },
-  {
-    key: '/admin/ad-sources',
-    icon: <FileExcelOutlined />,
-    label: <Link to="/admin/ad-sources">广告数据源</Link>,
-  },
-  {
-    key: '/admin/users/manage',
-    icon: <UserOutlined />,
-    label: <Link to="/admin/users/manage">创建员工</Link>,
-  },
-  { type: 'divider' as const },
-  { key: '/settlement', icon: <BarChartOutlined />, label: <Link to="/settlement">结算查询</Link> },
-  {
-    key: '/dashboard',
-    icon: <DashboardOutlined />,
-    label: <Link to="/dashboard">员工工作台</Link>,
-  },
-  {
-    key: '/merchants',
-    icon: <ShopOutlined />,
-    label: <Link to="/merchants">商家状态查询</Link>,
-  },
-];
 
 export default function AppLayout() {
   const { user, logout, isAdmin, isTeamLead } = useAuth();
   const location = useLocation();
   const navigate = useNavigate();
 
-  const items = isAdmin ? adminMenuItems : employeeMenuItems;
-
-  let selectedKey = location.pathname;
-  if (isAdmin && location.pathname.startsWith('/admin/users')) {
-    selectedKey =
-      location.pathname === '/admin/users/manage' ? '/admin/users/manage' : '/admin/users';
-  }
+  const items = isAdmin ? buildAdminSidebarMenu() : buildEmployeeSidebarMenu();
+  const selectedKey = resolveSidebarSelectedKey(location.pathname, isAdmin);
 
   return (
     <Layout style={{ minHeight: '100vh' }}>
       <Sider width={220} theme="dark">
         <div style={{ padding: 16, color: '#fff', fontWeight: 700, fontSize: 18 }}>ZJADS</div>
-        <Menu theme="dark" mode="inline" selectedKeys={[selectedKey]} items={items} />
+        <Menu
+          theme="dark"
+          mode="inline"
+          className="app-sider-menu"
+          selectedKeys={[selectedKey]}
+          items={items}
+        />
       </Sider>
       <Layout>
         <Header

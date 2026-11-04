@@ -4,8 +4,12 @@ import AppLayout from './layouts/AppLayout';
 import DashboardPage from './pages/DashboardPage';
 import ChannelAccountsPage from './pages/ChannelAccountsPage';
 import SettlementPage from './pages/SettlementPage';
+import SettlementReportPage from './pages/SettlementReportPage';
 import AdSourcesPage from './pages/AdSourcesPage';
 import MerchantStatusPage from './pages/MerchantStatusPage';
+import MerchantHubLayout from './pages/merchant-hub/MerchantHubLayout';
+import ChargebackMerchantsPage from './pages/merchant-hub/ChargebackMerchantsPage';
+import { merchantHubDefaultPath } from './pages/merchant-hub/merchant-hub.routes';
 import AdminRoute from './components/AdminRoute';
 import AdminHomePage from './pages/admin/AdminHomePage';
 import AdminStatsPage from './pages/admin/AdminStatsPage';
@@ -53,7 +57,23 @@ export default function App() {
         >
           <Route index element={<HomeRedirect />} />
           <Route path="dashboard" element={<DashboardPage />} />
-          <Route path="merchants" element={<MerchantStatusPage />} />
+          <Route path="merchants" element={<MerchantHubLayout />}>
+            <Route index element={<Navigate to={merchantHubDefaultPath()} replace />} />
+            <Route path="status" element={<MerchantStatusPage />} />
+            <Route path="chargebacks" element={<ChargebackMerchantsPage />} />
+          </Route>
+          <Route
+            path="chargeback-analysis"
+            element={<Navigate to="/merchants/chargebacks" replace />}
+          />
+          <Route
+            path="chargeback-analysis/merchants"
+            element={<Navigate to="/merchants/chargebacks" replace />}
+          />
+          <Route
+            path="chargeback-merchants"
+            element={<Navigate to="/merchants/chargebacks" replace />}
+          />
           <Route
             path="channel-accounts"
             element={
@@ -63,6 +83,7 @@ export default function App() {
             }
           />
           <Route path="settlement" element={<SettlementPage />} />
+          <Route path="settlement-report" element={<SettlementReportPage />} />
           <Route
             path="ad-sources"
             element={

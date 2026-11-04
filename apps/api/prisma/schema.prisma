@@ -298,6 +298,26 @@ model AdAccountMonthly {
   @@map("ad_account_monthly")
 }
 
+/** 结算报表 · 实收佣金手工录入（按报表 scope + 月 + 联盟序号列） */
+model SettlementActualCommission {
+  id           Int      @id @default(autoincrement())
+  scopeKey     String   @map("scope_key") @db.VarChar(32)
+  month        String   @db.VarChar(7)
+  affiliateKey String   @map("affiliate_key") @db.VarChar(80)
+  /** 实收·上半月 (USD)，与下半月之和同步写入 amountUsd */
+  amountUsdH1  Decimal  @default(0) @map("amount_usd_h1") @db.Decimal(14, 2)
+  /** 实收·下半月 (USD) */
+  amountUsdH2  Decimal  @default(0) @map("amount_usd_h2") @db.Decimal(14, 2)
+  amountUsd    Decimal  @default(0) @map("amount_usd") @db.Decimal(14, 2)
+  updatedById  Int?     @map("updated_by_id")
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  @@unique([scopeKey, month, affiliateKey])
+  @@index([scopeKey, month])
+  @@map("settlement_actual_commissions")
+}
+
 model CommissionAlertRule {
   id                      Int      @id @default(autoincrement())
   userId                  Int      @unique @map("user_id")

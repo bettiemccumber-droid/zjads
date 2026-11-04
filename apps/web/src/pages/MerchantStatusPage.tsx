@@ -803,8 +803,8 @@ export default function MerchantStatusPage() {
       )}
 
       <div className="merchant-status-hero">
-        <span className="merchant-status-eyebrow">MERCHANT STATUS</span>
-        <h1 className="merchant-status-title">商家状态查询</h1>
+        <span className="merchant-status-eyebrow">JOIN · AVAILABILITY</span>
+        <h1 className="merchant-status-title">Join 与上架检测</h1>
         <p className="merchant-status-desc">
           输入 MID、mcid 或域名，在所选平台账号中检测 Join 关系、商家上架与投前建议。支持单个查询、批量粘贴与 Excel 导入。
         </p>

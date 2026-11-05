@@ -13,18 +13,21 @@ export const CAMPAIGN_DAILY_SCROLL_X = 1040;
 
 const OPTIONAL_COLUMN_STORAGE_KEY = 'zjads.campaignOptionalColumns';
 
-type OptionalColumnKey = 'impressions' | 'affiliateClicks' | 'epc' | 'cpc';
+type OptionalColumnKey = 'impressions' | 'affiliateClicks' | 'cr' | 'epc' | 'cpc';
 
 const OPTIONAL_COLUMN_LABELS: Record<OptionalColumnKey, string> = {
   impressions: '展示',
   affiliateClicks: '联盟点击',
+  cr: 'CR（转化率）',
   epc: 'EPC',
   cpc: 'CPC',
 };
 
+/** 次要指标默认隐藏，需要时在「列设置」打开 */
 const DEFAULT_OPTIONAL_COLUMNS: Record<OptionalColumnKey, boolean> = {
   impressions: false,
   affiliateClicks: true,
+  cr: false,
   epc: false,
   cpc: false,
 };
@@ -740,7 +743,10 @@ export default function CampaignExpandableTable({
           );
         },
       },
-      {
+    );
+
+    if (optionalColumns.cr) {
+      cols.push({
         title: 'CR',
         width: 56,
         align: 'center',
@@ -752,8 +758,8 @@ export default function CampaignExpandableTable({
             '—'
           );
         },
-      },
-    );
+      });
+    }
 
     if (optionalColumns.epc) {
       cols.push({
@@ -823,7 +829,7 @@ export default function CampaignExpandableTable({
             </Checkbox>
           ))}
           <Typography.Text type="secondary" style={{ fontSize: 11 }}>
-            核心列固定显示；左侧系列名、右侧分析固定不滚动。
+            默认隐藏 CR/EPC/CPC 等次要列；系列名、分析列固定不随横向滚动。
           </Typography.Text>
         </Space>
       }

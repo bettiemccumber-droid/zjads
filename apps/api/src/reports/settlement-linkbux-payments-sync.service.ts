@@ -111,17 +111,18 @@ export class SettlementLinkbuxPaymentsSyncService {
           receivable.usdH1 + receivable.usdH2 + actual.usdH1 + actual.usdH2;
 
         let lineError = fetchError;
-        if (aggSum <= 0 && apiRowCount > 0) {
-          lineError = lineError ?? zeroAggregateHint(month, apiRowCount);
-        } else if (aggSum <= 0 && apiRowCount === 0) {
-          lineError =
-            lineError ??
-            `${month} Payment Details 无数据（begin_date/end_date 与 paid_date 区间各查一次）`;
+        if (!lineError && aggSum <= 0 && apiRowCount > 0) {
+          lineError = zeroAggregateHint(month, apiRowCount);
+        } else if (!lineError && aggSum <= 0 && apiRowCount === 0) {
+          lineError = `${month} Payment Details 无返回行（validation 与 paid_date 各查一次）`;
         }
 
         if (shouldPersistPaymentSyncLine(receivable, actual, apiRowCount)) {
           receivableBatch[key] = receivable;
           actualBatch[key] = actual;
+          if (lineError && aggSum > 0) {
+            lineError = undefined;
+          }
         } else if (!lineError) {
           lineError = zeroAggregateHint(month, apiRowCount);
         }

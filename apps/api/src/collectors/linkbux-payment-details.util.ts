@@ -59,10 +59,15 @@ function parseMoney(v: unknown): number {
   return Number.isFinite(n) ? n : 0;
 }
 
+/**
+ * 解析日期（文档 YYYY-MM-DD；后台表格常见 MM-DD-YYYY）
+ */
 function parseYmd(raw: string | null | undefined): string | null {
   const s = String(raw ?? '').trim();
   if (!s) return null;
   if (/^\d{4}-\d{2}-\d{2}/.test(s)) return s.slice(0, 10);
+  const m = s.match(/^(\d{2})-(\d{2})-(\d{4})/);
+  if (m) return `${m[3]}-${m[1]}-${m[2]}`;
   return null;
 }
 

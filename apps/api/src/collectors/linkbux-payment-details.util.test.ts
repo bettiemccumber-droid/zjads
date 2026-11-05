@@ -10,7 +10,7 @@ function runTests() {
   const unpaid: LinkbuxMerchantCommissionRow[] = [
     {
       sale_comm: '100',
-      settlement_date: '2026-11-05',
+      settlement_date: '11-05-2026',
       payment_id: 18540,
       paid_date: null,
     },

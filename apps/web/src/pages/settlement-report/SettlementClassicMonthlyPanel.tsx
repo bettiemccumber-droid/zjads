@@ -409,7 +409,16 @@ export default function SettlementClassicMonthlyPanel({
       const failed = data.data.synced.filter((s) => s.error);
       if (!opts?.quiet) {
         if (failed.length) {
-          message.warning(`${label} 部分账号失败：${failed.map((f) => f.displayName).join('、')}`);
+          const detail = failed
+            .map((f) => `${f.displayName}${f.error ? ` — ${f.error}` : ''}`)
+            .join('\n');
+          message.warning({
+            content: `${label} 部分账号未写入（见详情）`,
+            duration: 12,
+          });
+          setLastSyncSummary((prev) =>
+            [prev, `${label}:`, ...detail.split('\n')].filter(Boolean).join('\n'),
+          );
         } else {
           message.success(`已同步 ${data.data.synced.length} 个 ${label} 账号`);
         }

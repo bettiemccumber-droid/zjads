@@ -4,6 +4,10 @@ import {
   aggregateLinkbuxCommissionsForSettlement,
   fetchLinkbuxMerchantCommissions,
 } from '../collectors/linkbux-payment-details.util';
+import {
+  aggregateLinkbuxPaymentsForSettlement,
+  fetchLinkbuxPayments,
+} from '../collectors/linkbux-payments.util';
 import { AuthUser, isCompanyWideScope, resolveOwnerUserId } from '../common/ownership.util';
 import { CryptoService } from '../common/crypto.service';
 import { PrismaService } from '../prisma/prisma.service';
@@ -37,7 +41,8 @@ export class SettlementLinkbuxPaymentsSyncService {
   ) {}
 
   /**
-   * 从 LinkBux Payment Details API 同步 LB 渠道账号应收/实收到结算报表
+   * 从 LinkBux 付款历史 + Payment Details 同步 LB 列应收/实收
+   * 应收优先对齐后台 Payment in Progress / Pending 提现单金额
    */
   async syncForMonth(
     user: AuthUser,
@@ -74,17 +79,43 @@ export class SettlementLinkbuxPaymentsSyncService {
           continue;
         }
 
-        const rows = await fetchLinkbuxMerchantCommissions(token, startDate, endDate);
-        const agg = aggregateLinkbuxCommissionsForSettlement(rows, month);
-        receivableBatch[key] = { usdH1: agg.receivableH1, usdH2: agg.receivableH2 };
-        actualBatch[key] = { usdH1: agg.actualH1, usdH2: agg.actualH2 };
+        let paymentRows: Awaited<ReturnType<typeof fetchLinkbuxPayments>> = [];
+        let paymentError: string | undefined;
+        try {
+          paymentRows = await fetchLinkbuxPayments(token, startDate, endDate);
+        } catch (err) {
+          paymentError = err instanceof Error ? err.message : String(err);
+        }
+
+        const commissionRows = await fetchLinkbuxMerchantCommissions(token, startDate, endDate);
+        const fromPayments = aggregateLinkbuxPaymentsForSettlement(paymentRows, month);
+        const fromCommissions = aggregateLinkbuxCommissionsForSettlement(commissionRows, month);
+
+        const hasPaymentHistory =
+          paymentRows.length > 0 ||
+          fromPayments.receivableH1 +
+            fromPayments.receivableH2 +
+            fromPayments.actualH1 +
+            fromPayments.actualH2 >
+            0;
+
+        const receivable = hasPaymentHistory
+          ? { usdH1: fromPayments.receivableH1, usdH2: fromPayments.receivableH2 }
+          : { usdH1: fromCommissions.receivableH1, usdH2: fromCommissions.receivableH2 };
+        const actual = hasPaymentHistory
+          ? { usdH1: fromPayments.actualH1, usdH2: fromPayments.actualH2 }
+          : { usdH1: fromCommissions.actualH1, usdH2: fromCommissions.actualH2 };
+
+        receivableBatch[key] = receivable;
+        actualBatch[key] = actual;
         synced.push({
           channelAccountId: account.id,
           displayName: account.displayName,
           affiliateAlias: account.affiliateAlias,
-          receivable: receivableBatch[key],
-          actual: actualBatch[key],
-          commissionRowCount: rows.length,
+          receivable,
+          actual,
+          commissionRowCount: paymentRows.length + commissionRows.length,
+          error: paymentError && !hasPaymentHistory ? paymentError : undefined,
         });
       } catch (err) {
         synced.push({

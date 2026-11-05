@@ -979,8 +979,9 @@ export default function SettlementClassicMonthlyPanel({
             )}
           </Spin>
           <p className="sr-tip" style={{ padding: '8px 16px 12px' }}>
-            账期/失效来自订单同步。应收/实收按各平台分列：可点各平台「同步打款」，或手工填。V2 系（LH/PM/UI/FS/CG）
-            未打款 → 应收（validation_date）；paid_date 在当月 → 实收。Summary 的 amount 可与 Detail 对账。CNY
+            账期/失效来自订单同步。应收/实收按各平台分列：可点各平台「同步打款」，或手工填。RW/LB 应收对齐
+            Payment in Progress / Pending；RW 实收按 Paid Date。LH 应收按 Payment History Date（无 paid_date）。
+            PM/UI/FS/CG 优先 Payment Summary。CNY
             按页头汇率。收款人/卡号见 <Link to="/channel-accounts">平台账号</Link>。
           </p>
         </div>

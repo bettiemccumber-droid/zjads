@@ -4,6 +4,8 @@ import {
   aggregateFamestaPaymentDetailsForSettlement,
   fetchFamestaPaymentDetailsForSettlement,
 } from '../collectors/famesta-payment-details.util';
+import { fetchFamestaPaymentSummary } from '../collectors/famesta-payments.util';
+import { resolveV2SummaryOrDetailSettlement } from '../collectors/network-v2-payment-summary.util';
 import { AuthUser, isCompanyWideScope, resolveOwnerUserId } from '../common/ownership.util';
 import { CryptoService } from '../common/crypto.service';
 import { PrismaService } from '../prisma/prisma.service';
@@ -75,21 +77,36 @@ export class SettlementFamestaPaymentsSyncService {
           continue;
         }
 
+        let summaryRows: Awaited<ReturnType<typeof fetchFamestaPaymentSummary>> = [];
+        let summaryError: string | undefined;
+        try {
+          summaryRows = await fetchFamestaPaymentSummary(token, startDate, endDate);
+        } catch (err) {
+          summaryError = err instanceof Error ? err.message : String(err);
+        }
+
         const { paidRows, validationRows } = await fetchFamestaPaymentDetailsForSettlement(
           token,
           startDate,
           endDate,
         );
-        const agg = aggregateFamestaPaymentDetailsForSettlement(paidRows, validationRows, month);
-        receivableBatch[key] = { usdH1: agg.receivableH1, usdH2: agg.receivableH2 };
-        actualBatch[key] = { usdH1: agg.actualH1, usdH2: agg.actualH2 };
+        const fromDetail = aggregateFamestaPaymentDetailsForSettlement(paidRows, validationRows, month);
+        const { receivable, actual, hasSummary } = resolveV2SummaryOrDetailSettlement(
+          summaryRows,
+          fromDetail,
+          month,
+        );
+
+        receivableBatch[key] = receivable;
+        actualBatch[key] = actual;
         synced.push({
           channelAccountId: account.id,
           displayName: account.displayName,
           affiliateAlias: account.affiliateAlias,
-          receivable: receivableBatch[key],
-          actual: actualBatch[key],
-          detailRowCount: paidRows.length + validationRows.length,
+          receivable,
+          actual,
+          detailRowCount: summaryRows.length + paidRows.length + validationRows.length,
+          error: summaryError && !hasSummary ? summaryError : undefined,
         });
       } catch (err) {
         synced.push({

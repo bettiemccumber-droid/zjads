@@ -6,11 +6,15 @@ export interface RewardooPaymentRow {
   withdrawal_time?: string;
   withdrawal_amount?: string | number;
   commission?: string | number;
+  amount?: string | number;
   advertising_fee?: string | number;
   other_revenue?: string | number;
   status?: string;
   account_balance?: string | number;
   update_time?: string;
+  request_date?: string;
+  paid_date?: string;
+  payment_date?: string;
   withdrawal_account?: string;
   bank_name?: string;
   recipient?: string;
@@ -24,36 +28,75 @@ export interface RewardooPaymentHalfTotals {
 }
 
 function parseMoney(v: unknown): number {
-  const n = Number(v);
+  const n = Number(String(v ?? '').replace(/,/g, ''));
   return Number.isFinite(n) ? n : 0;
 }
 
-/**
- * 解析打款时间（优先 withdrawal_time，其次 update_time）
- */
-export function parseRewardooPaymentDate(row: RewardooPaymentRow): string | null {
-  const raw = (row.withdrawal_time || row.update_time || '').trim();
-  if (!raw) return null;
-  if (/^\d{4}-\d{2}-\d{2}/.test(raw)) {
-    return raw.slice(0, 10);
-  }
-  const d = new Date(raw);
+function parseYmdFlexible(raw: string | null | undefined): string | null {
+  const s = String(raw ?? '').trim();
+  if (!s) return null;
+  if (/^\d{4}-\d{2}-\d{2}/.test(s)) return s.slice(0, 10);
+  const m = s.match(/^(\d{2})-(\d{2})-(\d{4})/);
+  if (m) return `${m[3]}-${m[1]}-${m[2]}`;
+  const d = new Date(s);
   if (Number.isNaN(d.getTime())) return null;
   return d.toISOString().slice(0, 10);
 }
 
 /**
- * 拉取 Rewardoo 打款记录（payment_begin/end 为平台付款日期区间）
+ * 解析申请/在途日期（对齐后台 Request Date、Payment in Progress 更新时间）
  */
-export async function fetchRewardooPayments(
+export function parseRewardooRequestDate(row: RewardooPaymentRow): string | null {
+  for (const raw of [row.request_date, row.withdrawal_time, row.update_time]) {
+    const ymd = parseYmdFlexible(raw);
+    if (ymd) return ymd;
+  }
+  return null;
+}
+
+/**
+ * 解析实付日期（对齐后台 Paid Date）
+ */
+export function parseRewardooPaidDate(row: RewardooPaymentRow): string | null {
+  for (const raw of [row.paid_date, row.payment_date, row.withdrawal_time, row.update_time]) {
+    const ymd = parseYmdFlexible(raw);
+    if (ymd) return ymd;
+  }
+  return null;
+}
+
+/** @deprecated 使用 parseRewardooRequestDate / parseRewardooPaidDate */
+export function parseRewardooPaymentDate(row: RewardooPaymentRow): string | null {
+  return parseRewardooRequestDate(row) ?? parseRewardooPaidDate(row);
+}
+
+function isRewardooReceivableStatus(status: string): boolean {
+  return (
+    status === 'processing' ||
+    status.includes('pending') ||
+    status.includes('progress') ||
+    status === 'unpaid'
+  );
+}
+
+function isRewardooActualStatus(status: string): boolean {
+  return status === 'withdrawn' || status === 'paid' || status === 'success' || status === 'successed';
+}
+
+function dedupeKey(row: RewardooPaymentRow): string {
+  if (row.withdrawal_id != null && String(row.withdrawal_id).trim()) {
+    return String(row.withdrawal_id);
+  }
+  return `${parseRewardooRequestDate(row) ?? ''}|${parseRewardooPaidDate(row) ?? ''}|${parseMoney(row.commission)}`;
+}
+
+async function fetchRewardooPaymentsOnce(
   apiToken: string,
-  paymentBegin: string,
-  paymentEnd: string,
+  dateParams: Record<string, string>,
 ): Promise<RewardooPaymentRow[]> {
   const parsed = await postRewardooApi('commission', 'payments', {
     token: apiToken.trim(),
-    payment_begin: paymentBegin,
-    payment_end: paymentEnd,
+    ...dateParams,
   });
   if (parsed.code !== 0) {
     throw new Error(parsed.message || `Rewardoo Payments API 错误 code=${parsed.code}`);
@@ -62,11 +105,45 @@ export async function fetchRewardooPayments(
 }
 
 /**
+ * 拉取 Rewardoo 打款记录（合并付款日 + 申请日区间，避免漏掉 Payment in Progress）
+ */
+export async function fetchRewardooPayments(
+  apiToken: string,
+  rangeBegin: string,
+  rangeEnd: string,
+): Promise<RewardooPaymentRow[]> {
+  const variants: Record<string, string>[] = [
+    { payment_begin: rangeBegin, payment_end: rangeEnd },
+    { request_begin: rangeBegin, request_end: rangeEnd },
+    { withdrawal_begin: rangeBegin, withdrawal_end: rangeEnd },
+  ];
+
+  const merged = new Map<string, RewardooPaymentRow>();
+  let lastError: Error | null = null;
+
+  for (const params of variants) {
+    try {
+      const rows = await fetchRewardooPaymentsOnce(apiToken, params);
+      for (const row of rows) {
+        merged.set(dedupeKey(row), row);
+      }
+    } catch (err) {
+      lastError = err instanceof Error ? err : new Error(String(err));
+    }
+  }
+
+  if (merged.size === 0 && lastError) {
+    throw lastError;
+  }
+
+  return [...merged.values()];
+}
+
+/**
  * 将打款记录汇总为结算报表上下半月应收/实收（USD）
  *
- * - status=processing → 应收（在途）
- * - status=withdrawn → 实收（已打款）
- * - 金额优先用 commission，否则 withdrawal_amount
+ * - 在途（processing / pending / Payment in Progress）→ 应收，按 Request Date
+ * - withdrawn / paid → 实收，按 Paid Date
  */
 export function aggregateRewardooPaymentsForSettlement(
   rows: RewardooPaymentRow[],
@@ -80,23 +157,27 @@ export function aggregateRewardooPaymentsForSettlement(
   };
 
   for (const row of rows) {
-    const dateStr = parseRewardooPaymentDate(row);
-    if (!dateStr || !dateStr.startsWith(`${month}-`)) continue;
-
     const status = String(row.status ?? '').trim().toLowerCase();
     if (status === 'rejected') continue;
 
-    const amount = parseMoney(row.commission) || parseMoney(row.withdrawal_amount);
+    const amount =
+      parseMoney(row.commission) || parseMoney(row.withdrawal_amount) || parseMoney(row.amount);
     if (amount <= 0) continue;
 
-    const day = Number(dateStr.slice(8, 10));
-    const isH1 = day <= 15;
-
-    if (status === 'processing') {
-      if (isH1) out.receivableH1 += amount;
+    if (isRewardooReceivableStatus(status)) {
+      const dateStr = parseRewardooRequestDate(row);
+      if (!dateStr || !dateStr.startsWith(`${month}-`)) continue;
+      const day = Number(dateStr.slice(8, 10));
+      if (day <= 15) out.receivableH1 += amount;
       else out.receivableH2 += amount;
-    } else if (status === 'withdrawn') {
-      if (isH1) out.actualH1 += amount;
+      continue;
+    }
+
+    if (isRewardooActualStatus(status)) {
+      const dateStr = parseRewardooPaidDate(row);
+      if (!dateStr || !dateStr.startsWith(`${month}-`)) continue;
+      const day = Number(dateStr.slice(8, 10));
+      if (day <= 15) out.actualH1 += amount;
       else out.actualH2 += amount;
     }
   }

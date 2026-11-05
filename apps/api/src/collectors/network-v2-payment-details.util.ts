@@ -35,17 +35,18 @@ export function parseNetworkV2Ymd(raw: string | null | undefined): string | null
   return null;
 }
 
+/**
+ * 仅 paid_date 表示已实收。
+ * LH 等后台 Payment History 的 payment_id 为佣金批次号，Withdrawal 为空仍属可提现应收。
+ */
 export function isNetworkV2PaidRow(row: NetworkV2PaymentDetailRow): boolean {
-  if (parseNetworkV2Ymd(row.paid_date)) return true;
-  const pid = row.payment_id;
-  if (pid == null || pid === '' || pid === 0 || pid === '0') return false;
-  return true;
+  return Boolean(parseNetworkV2Ymd(row.paid_date));
 }
 
 /**
  * 汇总为结算报表上下半月应收/实收（USD）
  *
- * - 未打款 → 应收，按 validation_date 落月/半月
+ * - 未打款（无 paid_date，含 LH Available for withdrawal）→ 应收，按 validation_date / Date 落月/半月
  * - 已打款且 paid_date 在结算月内 → 实收，按 paid_date 落半月
  */
 export function aggregateNetworkV2PaymentDetailsForSettlement(

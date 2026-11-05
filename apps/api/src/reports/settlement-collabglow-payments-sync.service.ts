@@ -4,6 +4,8 @@ import {
   aggregateCollabglowPaymentDetailsForSettlement,
   fetchCollabglowPaymentDetailsForSettlement,
 } from '../collectors/collabglow-payment-details.util';
+import { fetchCollabglowPaymentSummary } from '../collectors/collabglow-payments.util';
+import { resolveV2SummaryOrDetailSettlement } from '../collectors/network-v2-payment-summary.util';
 import { AuthUser, isCompanyWideScope, resolveOwnerUserId } from '../common/ownership.util';
 import { CryptoService } from '../common/crypto.service';
 import { PrismaService } from '../prisma/prisma.service';
@@ -75,25 +77,40 @@ export class SettlementCollabglowPaymentsSyncService {
           continue;
         }
 
+        let summaryRows: Awaited<ReturnType<typeof fetchCollabglowPaymentSummary>> = [];
+        let summaryError: string | undefined;
+        try {
+          summaryRows = await fetchCollabglowPaymentSummary(token, startDate, endDate);
+        } catch (err) {
+          summaryError = err instanceof Error ? err.message : String(err);
+        }
+
         const { paidRows, validationRows } = await fetchCollabglowPaymentDetailsForSettlement(
           token,
           startDate,
           endDate,
         );
-        const agg = aggregateCollabglowPaymentDetailsForSettlement(
+        const fromDetail = aggregateCollabglowPaymentDetailsForSettlement(
           paidRows,
           validationRows,
           month,
         );
-        receivableBatch[key] = { usdH1: agg.receivableH1, usdH2: agg.receivableH2 };
-        actualBatch[key] = { usdH1: agg.actualH1, usdH2: agg.actualH2 };
+        const { receivable, actual, hasSummary } = resolveV2SummaryOrDetailSettlement(
+          summaryRows,
+          fromDetail,
+          month,
+        );
+
+        receivableBatch[key] = receivable;
+        actualBatch[key] = actual;
         synced.push({
           channelAccountId: account.id,
           displayName: account.displayName,
           affiliateAlias: account.affiliateAlias,
-          receivable: receivableBatch[key],
-          actual: actualBatch[key],
-          detailRowCount: paidRows.length + validationRows.length,
+          receivable,
+          actual,
+          detailRowCount: summaryRows.length + paidRows.length + validationRows.length,
+          error: summaryError && !hasSummary ? summaryError : undefined,
         });
       } catch (err) {
         synced.push({

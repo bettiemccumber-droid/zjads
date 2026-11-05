@@ -1,0 +1,209 @@
+import axios from 'axios';
+import { LB_API } from './linkbux-api.util';
+import type { LinkbuxPaymentHalfTotals } from './linkbux-payment-details.util';
+
+/** LinkBux 付款历史 / Payment Summary 单行（与后台 Payment ID 列表一致） */
+export interface LinkbuxPaymentRow {
+  payment_id?: string | number;
+  amount?: string | number;
+  payment_amount?: string | number;
+  total?: string | number;
+  status?: string;
+  date?: string;
+  request_date?: string;
+  create_date?: string;
+  paid_date?: string | null;
+  payment_date?: string | null;
+}
+
+const MIN_REQUEST_INTERVAL_MS = 2500;
+let lastRequestAt = 0;
+
+async function throttleLbRequest() {
+  const now = Date.now();
+  const wait = lastRequestAt + MIN_REQUEST_INTERVAL_MS - now;
+  if (wait > 0) {
+    await new Promise((r) => setTimeout(r, wait));
+  }
+  lastRequestAt = Date.now();
+}
+
+function parseMoney(v: unknown): number {
+  const n = Number(String(v ?? '').replace(/,/g, ''));
+  return Number.isFinite(n) ? n : 0;
+}
+
+/**
+ * 解析 LinkBux 界面日期（支持 YYYY-MM-DD 与 MM-DD-YYYY）
+ */
+export function parseLinkbuxPaymentDate(row: LinkbuxPaymentRow, preferPaid = false): string | null {
+  const candidates = preferPaid
+    ? [row.paid_date, row.payment_date, row.date, row.request_date, row.create_date]
+    : [row.date, row.request_date, row.create_date, row.paid_date, row.payment_date];
+  for (const raw of candidates) {
+    const ymd = parseYmdFlexible(raw);
+    if (ymd) return ymd;
+  }
+  return null;
+}
+
+function parseYmdFlexible(raw: string | null | undefined): string | null {
+  const s = String(raw ?? '').trim();
+  if (!s) return null;
+  if (/^\d{4}-\d{2}-\d{2}/.test(s)) return s.slice(0, 10);
+  const m = s.match(/^(\d{2})-(\d{2})-(\d{4})/);
+  if (m) return `${m[3]}-${m[1]}-${m[2]}`;
+  return null;
+}
+
+function assertLbSuccess(body: unknown): void {
+  const root = body as Record<string, unknown>;
+  const status = root.status as { code?: number | string; msg?: string } | undefined;
+  const code = status?.code ?? root.code;
+  if (code !== 0 && code !== '0' && code !== 200 && code !== '200') {
+    const msg = String(status?.msg ?? root.msg ?? 'LinkBux API 错误');
+    throw new Error(`${msg} (code=${String(code)})`);
+  }
+}
+
+function extractPaymentList(body: unknown): LinkbuxPaymentRow[] {
+  const root = body as Record<string, unknown>;
+  if (Array.isArray(root.data)) return root.data as LinkbuxPaymentRow[];
+  const payload = root.payload ?? root.payliad;
+  if (Array.isArray(payload)) return payload as LinkbuxPaymentRow[];
+  if (Array.isArray(root.list)) return root.list as LinkbuxPaymentRow[];
+  const data = root.data as Record<string, unknown> | undefined;
+  if (data && Array.isArray(data.list)) return data.list as LinkbuxPaymentRow[];
+  return [];
+}
+
+function isLinkbuxPendingStatus(status: string): boolean {
+  const s = status.toLowerCase();
+  return (
+    s.includes('pending') ||
+    s.includes('progress') ||
+    s.includes('processing') ||
+    s === 'unpaid'
+  );
+}
+
+function isLinkbuxPaidStatus(status: string): boolean {
+  const s = status.toLowerCase();
+  return s === 'paid' || s === 'success' || s === 'successed' || s === 'completed';
+}
+
+/**
+ * 拉取 LinkBux 付款历史（Payment Summary / Payment in Progress）
+ * 依次尝试常见 settlement 子接口，直到返回列表。
+ */
+export async function fetchLinkbuxPayments(
+  token: string,
+  beginDate: string,
+  endDate: string,
+): Promise<LinkbuxPaymentRow[]> {
+  const attempts: Array<{ mod: string; op: string; extra: Record<string, string> }> = [
+    {
+      mod: 'settlement',
+      op: 'payments',
+      extra: { payment_begin: beginDate, payment_end: endDate },
+    },
+    {
+      mod: 'settlement',
+      op: 'payments',
+      extra: { begin_date: beginDate, end_date: endDate },
+    },
+    {
+      mod: 'settlement',
+      op: 'payment',
+      extra: { begin_date: beginDate, end_date: endDate },
+    },
+    {
+      mod: 'settlement',
+      op: 'payment_history',
+      extra: { begin_date: beginDate, end_date: endDate },
+    },
+    {
+      mod: 'linkpayment',
+      op: 'payment2',
+      extra: { payment_begin: beginDate, payment_end: endDate },
+    },
+  ];
+
+  let lastError: Error | null = null;
+
+  for (const attempt of attempts) {
+    try {
+      await throttleLbRequest();
+      const { data } = await axios.get(LB_API, {
+        params: {
+          mod: attempt.mod,
+          op: attempt.op,
+          token: token.trim(),
+          type: 'json',
+          ...attempt.extra,
+        },
+        timeout: 120000,
+        validateStatus: () => true,
+      });
+      assertLbSuccess(data);
+      const list = extractPaymentList(data);
+      if (list.length > 0) {
+        return list;
+      }
+    } catch (err) {
+      lastError = err instanceof Error ? err : new Error(String(err));
+    }
+  }
+
+  if (lastError) throw lastError;
+  return [];
+}
+
+/**
+ * 按付款历史汇总应收/实收（对齐后台 Payment Summary）
+ *
+ * - Pending / Payment in Progress → 应收（按列表 DATE / request_date）
+ * - Paid → 实收（优先 paid_date，否则列表 DATE）
+ */
+export function aggregateLinkbuxPaymentsForSettlement(
+  rows: LinkbuxPaymentRow[],
+  month: string,
+): LinkbuxPaymentHalfTotals {
+  const out: LinkbuxPaymentHalfTotals = {
+    receivableH1: 0,
+    receivableH2: 0,
+    actualH1: 0,
+    actualH2: 0,
+  };
+
+  for (const row of rows) {
+    const status = String(row.status ?? '').trim();
+    const amount =
+      parseMoney(row.amount) || parseMoney(row.payment_amount) || parseMoney(row.total);
+    if (amount <= 0) continue;
+
+    if (isLinkbuxPendingStatus(status)) {
+      const dateStr = parseLinkbuxPaymentDate(row, false);
+      if (!dateStr || !dateStr.startsWith(`${month}-`)) continue;
+      const day = Number(dateStr.slice(8, 10));
+      if (day <= 15) out.receivableH1 += amount;
+      else out.receivableH2 += amount;
+      continue;
+    }
+
+    if (isLinkbuxPaidStatus(status)) {
+      const dateStr = parseLinkbuxPaymentDate(row, true);
+      if (!dateStr || !dateStr.startsWith(`${month}-`)) continue;
+      const day = Number(dateStr.slice(8, 10));
+      if (day <= 15) out.actualH1 += amount;
+      else out.actualH2 += amount;
+    }
+  }
+
+  const round = (n: number) => Math.round(n * 100) / 100;
+  out.receivableH1 = round(out.receivableH1);
+  out.receivableH2 = round(out.receivableH2);
+  out.actualH1 = round(out.actualH1);
+  out.actualH2 = round(out.actualH2);
+  return out;
+}

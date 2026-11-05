@@ -66,12 +66,9 @@ function parseYmd(raw: string | null | undefined): string | null {
   return null;
 }
 
+/** 仅 paid_date 表示已实收；有 payment_id 但无 paid_date 为在途提现（Pending） */
 function isPaid(row: LinkbuxMerchantCommissionRow): boolean {
-  const paid = parseYmd(row.paid_date);
-  if (paid) return true;
-  const pid = row.payment_id;
-  if (pid == null || pid === '' || pid === '0') return false;
-  return true;
+  return Boolean(parseYmd(row.paid_date));
 }
 
 /**
@@ -102,7 +99,7 @@ export async function fetchLinkbuxMerchantCommissions(
 /**
  * 汇总为结算报表上下半月应收/实收（USD）
  *
- * - 未打款（paid_date 为空）→ 应收，按 settlement_date 落月/半月
+ * - 未打款（无 paid_date）→ 应收，按 settlement_date 落月/半月（明细兜底，与 Payment Summary 可能不一致）
  * - 已打款且 paid_date 在结算月内 → 实收，按 paid_date 落半月
  */
 export function aggregateLinkbuxCommissionsForSettlement(

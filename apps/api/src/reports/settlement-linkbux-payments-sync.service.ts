@@ -14,6 +14,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { monthToDateRange } from './settlement-monthly.util';
 import { SettlementActualCommissionService } from './settlement-actual-commission.service';
 import { SettlementReceivableCommissionService } from './settlement-receivable-commission.service';
+import { persistPaymentHalvesByAccountOwner } from './settlement-commission-persist.util';
 import { canEditSettlementActualCommission } from './settlement-report-scope.util';
 
 export interface LinkbuxPaymentsSyncLineResult {
@@ -125,11 +126,16 @@ export class SettlementLinkbuxPaymentsSyncService {
       }
     }
 
-    if (Object.keys(receivableBatch).length) {
-      await this.receivable.saveHalves(user, month, receivableBatch, queryUserId);
-    }
-    if (Object.keys(actualBatch).length) {
-      await this.actual.saveHalves(user, month, actualBatch, queryUserId);
+    if (Object.keys(receivableBatch).length || Object.keys(actualBatch).length) {
+      await persistPaymentHalvesByAccountOwner(
+        this.receivable,
+        this.actual,
+        user,
+        month,
+        accounts.map((a) => ({ id: a.id, ownerUserId: a.ownerUserId })),
+        receivableBatch,
+        actualBatch,
+      );
     }
 
     return { month, synced };

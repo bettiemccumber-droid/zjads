@@ -15,6 +15,10 @@ import {
 } from './settlement-column-order.util';
 import { monthToDateRange, roundMoney, utcMonthKey, yearToDateRange } from './settlement-monthly.util';
 import {
+  buildScopeKeysForCommissionLoad,
+  pickCommissionHalfForAccount,
+} from './settlement-commission-load.util';
+import {
   canEditSettlementActualCommission,
   resolveSettlementReportScopeKey,
 } from './settlement-report-scope.util';
@@ -137,8 +141,6 @@ export class SettlementMonthlyReportService {
 
     const scopeKey = resolveSettlementReportScopeKey(user, queryUserId);
     const ownerIds = await this.resolveOwnerUserIds(user, queryUserId);
-    const actualHalves = await this.loadMergedActualHalves(scopeKey, month, ownerIds);
-    const receivableHalves = await this.loadMergedReceivableHalves(scopeKey, month, ownerIds);
 
     const adSpendSaved = await this.adSpend.loadLinesForMonth(scopeKey, month);
     const adSpendMeta = await this.adSpend.loadMeta(scopeKey, month);
@@ -152,8 +154,8 @@ export class SettlementMonthlyReportService {
       ownerIds,
       startDate,
       endDate,
-      actualHalves,
-      receivableHalves,
+      month,
+      scopeKey,
     );
 
     const bookRow = matrixRows.find((r) => r.rowKey === 'book');
@@ -232,8 +234,9 @@ export class SettlementMonthlyReportService {
       ownerIds,
       startDate,
       endDate,
-      actualHalvesYear,
-      {},
+      `${year}-12`,
+      scopeKey,
+      { actualHalves: actualHalvesYear, receivableHalves: {} },
     );
 
     const monthlyRows = await this.buildYearlyMonthlyRows(ownerIds, year, startDate, endDate);
@@ -282,45 +285,6 @@ export class SettlementMonthlyReportService {
       return employees.map((e) => e.id);
     }
     return [resolveOwnerUserId(user, queryUserId)];
-  }
-
-  /**
-   * 全公司视图合并各员工 scope 下的实收/应收（按渠道账号 id 列）
-   * 避免「按员工同步、全公司查看」时表格全为 0
-   */
-  private async loadMergedActualHalves(
-    scopeKey: string,
-    month: string,
-    ownerIds: number[],
-  ): Promise<Record<string, { usdH1: number; usdH2: number }>> {
-    if (scopeKey !== 'company') {
-      return this.actualCommission.loadHalvesForMonth(scopeKey, month);
-    }
-    const merged: Record<string, { usdH1: number; usdH2: number }> = {};
-    for (const ownerId of ownerIds) {
-      Object.assign(merged, await this.actualCommission.loadHalvesForMonth(`user:${ownerId}`, month));
-    }
-    Object.assign(merged, await this.actualCommission.loadHalvesForMonth('company', month));
-    return merged;
-  }
-
-  private async loadMergedReceivableHalves(
-    scopeKey: string,
-    month: string,
-    ownerIds: number[],
-  ): Promise<Record<string, { usdH1: number; usdH2: number }>> {
-    if (scopeKey !== 'company') {
-      return this.receivableCommission.loadHalvesForMonth(scopeKey, month);
-    }
-    const merged: Record<string, { usdH1: number; usdH2: number }> = {};
-    for (const ownerId of ownerIds) {
-      Object.assign(
-        merged,
-        await this.receivableCommission.loadHalvesForMonth(`user:${ownerId}`, month),
-      );
-    }
-    Object.assign(merged, await this.receivableCommission.loadHalvesForMonth('company', month));
-    return merged;
   }
 
   private async buildAdSpendRows(
@@ -622,8 +586,12 @@ export class SettlementMonthlyReportService {
     ownerIds: number[],
     startDate: string,
     endDate: string,
-    actualHalves: Record<string, { usdH1: number; usdH2: number }> = {},
-    receivableHalves: Record<string, { usdH1: number; usdH2: number }> = {},
+    month: string,
+    reportScopeKey: string,
+    overrides?: {
+      actualHalves?: Record<string, { usdH1: number; usdH2: number }>;
+      receivableHalves?: Record<string, { usdH1: number; usdH2: number }>;
+    },
   ): Promise<{ columns: SettlementMonthlyColumn[]; matrixRows: SettlementMonthlyMatrixRow[] }> {
     const empty = { columns: [] as SettlementMonthlyColumn[], matrixRows: [] as SettlementMonthlyMatrixRow[] };
     if (!ownerIds.length) return empty;
@@ -702,17 +670,51 @@ export class SettlementMonthlyReportService {
     const sumVals = (vals: Record<string, number>) =>
       roundMoney(Object.values(vals).reduce((s, v) => s + v, 0));
 
-    const pickHalf = (
-      halves: Record<string, { usdH1: number; usdH2: number }>,
-      colKey: string,
-    ) => halves[colKey] ?? halves[colKey.toLowerCase()] ?? { usdH1: 0, usdH2: 0 };
+    const accountByKey = new Map(accounts.map((a) => [String(a.id), a]));
 
-    const pickReceivableHalf = (colKey: string) => pickHalf(receivableHalves, colKey);
+    const pickOverrideHalf = (
+      halves: Record<string, { usdH1: number; usdH2: number }> | undefined,
+      colKey: string,
+    ) => halves?.[colKey] ?? halves?.[colKey.toLowerCase()] ?? { usdH1: 0, usdH2: 0 };
+
+    let receivableRows: Awaited<
+      ReturnType<PrismaService['settlementReceivableCommission']['findMany']>
+    > = [];
+    let actualRows: Awaited<ReturnType<PrismaService['settlementActualCommission']['findMany']>> =
+      [];
+
+    if (!overrides?.receivableHalves || !overrides?.actualHalves) {
+      const scopeKeys = buildScopeKeysForCommissionLoad(reportScopeKey, ownerIds);
+      const loads = await Promise.all([
+        overrides?.receivableHalves
+          ? Promise.resolve([])
+          : this.prisma.settlementReceivableCommission.findMany({
+              where: { month, scopeKey: { in: scopeKeys } },
+            }),
+        overrides?.actualHalves
+          ? Promise.resolve([])
+          : this.prisma.settlementActualCommission.findMany({
+              where: { month, scopeKey: { in: scopeKeys } },
+            }),
+      ]);
+      receivableRows = loads[0];
+      actualRows = loads[1];
+    }
 
     const recvH1: Record<string, number> = {};
     const recvH2: Record<string, number> = {};
     for (const col of columns) {
-      const half = pickReceivableHalf(col.key);
+      const account = accountByKey.get(col.key);
+      const half = overrides?.receivableHalves
+        ? pickOverrideHalf(overrides.receivableHalves, col.key)
+        : account
+          ? pickCommissionHalfForAccount(
+              receivableRows,
+              account.id,
+              account.ownerUserId,
+              reportScopeKey,
+            )
+          : { usdH1: 0, usdH2: 0 };
       recvH1[col.key] = roundMoney(half.usdH1);
       recvH2[col.key] = roundMoney(half.usdH2);
     }
@@ -724,7 +726,17 @@ export class SettlementMonthlyReportService {
     const actualH1: Record<string, number> = {};
     const actualH2: Record<string, number> = {};
     for (const col of columns) {
-      const half = pickHalf(actualHalves, col.key);
+      const account = accountByKey.get(col.key);
+      const half = overrides?.actualHalves
+        ? pickOverrideHalf(overrides.actualHalves, col.key)
+        : account
+          ? pickCommissionHalfForAccount(
+              actualRows,
+              account.id,
+              account.ownerUserId,
+              reportScopeKey,
+            )
+          : { usdH1: 0, usdH2: 0 };
       actualH1[col.key] = roundMoney(half.usdH1);
       actualH2[col.key] = roundMoney(half.usdH2);
     }

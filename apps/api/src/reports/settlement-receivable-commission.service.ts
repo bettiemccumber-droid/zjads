@@ -1,4 +1,5 @@
 import { BadRequestException, ForbiddenException, Injectable } from '@nestjs/common';
+import { UserRole } from '@prisma/client';
 import { AuthUser } from '../common/ownership.util';
 import { PrismaService } from '../prisma/prisma.service';
 import { roundMoney } from './settlement-monthly.util';
@@ -63,8 +64,24 @@ export class SettlementReceivableCommissionService {
       throw new ForbiddenException('无权保存该范围的应收佣金');
     }
     const scopeKey = resolveSettlementReportScopeKey(user, queryUserId);
-    const normalized: Record<string, SettlementReceivableCommissionHalf> = {};
+    return this.saveHalvesWithScopeKey(user, month, scopeKey, values);
+  }
 
+  /**
+   * 写入指定 scope（打款同步固定用 user:{渠道账号所属员工}）
+   */
+  async saveHalvesWithScopeKey(
+    user: AuthUser,
+    month: string,
+    scopeKey: string,
+    values: Record<string, SettlementReceivableCommissionHalf>,
+  ): Promise<Record<string, SettlementReceivableCommissionHalf>> {
+    if (!/^\d{4}-\d{2}$/.test(month)) {
+      throw new BadRequestException('month 须为 YYYY-MM');
+    }
+    this.assertScopeWrite(user, scopeKey);
+
+    const normalized: Record<string, SettlementReceivableCommissionHalf> = {};
     for (const [key, raw] of Object.entries(values)) {
       const affiliateKey = key.trim().toLowerCase();
       if (!affiliateKey) continue;
@@ -106,5 +123,12 @@ export class SettlementReceivableCommissionService {
     });
 
     return this.loadHalvesForMonth(scopeKey, month);
+  }
+
+  private assertScopeWrite(user: AuthUser, scopeKey: string): void {
+    if (user.role === UserRole.ADMIN) return;
+    const m = /^user:(\d+)$/.exec(scopeKey);
+    if (m && Number(m[1]) === user.id) return;
+    throw new ForbiddenException('无权写入该 scope 的应收佣金');
   }
 }

@@ -30,6 +30,7 @@ import { SettlementPartnermaticPaymentsSyncService } from './settlement-partnerm
 import { SettlementUltrainfluencePaymentsSyncService } from './settlement-ultrainfluence-payments-sync.service';
 import { SettlementFamestaPaymentsSyncService } from './settlement-famesta-payments-sync.service';
 import { SettlementCollabglowPaymentsSyncService } from './settlement-collabglow-payments-sync.service';
+import { SettlementAllPaymentsSyncService } from './settlement-all-payments-sync.service';
 import { SettlementRewardooPaymentsSyncService } from './settlement-rewardoo-payments-sync.service';
 
 class DateRangeQuery {
@@ -61,6 +62,10 @@ class CampaignSummaryQuery extends DateRangeQuery {
 }
 
 class SettlementMonthlyQuery {
+  @IsOptional()
+  @IsIn(['1', 'true', '0', 'false'])
+  syncPayments?: string;
+
   @IsOptional()
   month?: string;
 
@@ -174,6 +179,7 @@ export class ReportsController {
     private readonly settlementUltrainfluencePaymentsSync: SettlementUltrainfluencePaymentsSyncService,
     private readonly settlementFamestaPaymentsSync: SettlementFamestaPaymentsSyncService,
     private readonly settlementCollabglowPaymentsSync: SettlementCollabglowPaymentsSyncService,
+    private readonly settlementAllPaymentsSync: SettlementAllPaymentsSyncService,
   ) {}
 
   @Get('merchant-summary')
@@ -241,14 +247,35 @@ export class ReportsController {
     const month =
       q.month?.trim() ||
       new Date().toISOString().slice(0, 7);
+    const queryUserId = q.userId ? parseInt(q.userId, 10) : undefined;
+    const wantSync =
+      q.syncPayments === '1' || q.syncPayments === 'true';
+    if (wantSync) {
+      await this.settlementAllPaymentsSync.syncForMonth(user, month, queryUserId);
+    }
     return ok(
       await this.settlementMonthlyReport.build(
         user,
         month,
-        q.userId ? parseInt(q.userId, 10) : undefined,
+        queryUserId,
         parseRefreshFx(q.refreshFx),
       ),
     );
+  }
+
+  /** 一次同步全部平台打款数据 */
+  @Post('settlement-monthly/sync-all-payments')
+  async syncSettlementAllPayments(
+    @CurrentUser() user: AuthUser,
+    @Body() body: SaveSettlementActualCommissionDto,
+  ) {
+    const queryUserId = body.userId ? parseInt(body.userId, 10) : undefined;
+    const result = await this.settlementAllPaymentsSync.syncForMonth(
+      user,
+      body.month,
+      queryUserId,
+    );
+    return ok(result, '全部平台打款已同步');
   }
 
   /** 从 LinkBux Payment Details API 同步 LB 列应收/实收 */

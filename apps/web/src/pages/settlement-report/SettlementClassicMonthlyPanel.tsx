@@ -143,7 +143,7 @@ export default function SettlementClassicMonthlyPanel({
 
   const monthStr = month.format('YYYY-MM');
 
-  const loadReport = useCallback(async (refreshFx = false) => {
+  const loadReport = useCallback(async (refreshFx = false, syncPayments = false) => {
     setLoading(true);
     try {
       const params: Record<string, string> = { month: monthStr };
@@ -152,6 +152,9 @@ export default function SettlementClassicMonthlyPanel({
       }
       if (refreshFx) {
         params.refreshFx = '1';
+      }
+      if (syncPayments) {
+        params.syncPayments = '1';
       }
       const { data } = await api.get<ApiResult<SettlementMonthlyReport>>(
         '/reports/settlement-monthly',
@@ -703,8 +706,12 @@ export default function SettlementClassicMonthlyPanel({
               ]}
             />
           )}
-          <Button icon={<ReloadOutlined />} onClick={() => void loadReport(true)} loading={loading}>
-            刷新
+          <Button
+            icon={<ReloadOutlined />}
+            onClick={() => void loadReport(true, canEdit)}
+            loading={loading}
+          >
+            刷新并同步打款
           </Button>
           <Button type="primary" icon={<DownloadOutlined />} onClick={handleExport} disabled={!report}>
             导出 Excel

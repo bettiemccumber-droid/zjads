@@ -87,6 +87,25 @@
   font-weight: 600;
 }
 
+/** 对标站：同步打款数据 — 蓝字蓝框 */
+.settlement-report-classic .sr-section-head .sr-btn-sync-data {
+  color: #1677ff;
+  border-color: #1677ff;
+  background: #fff;
+}
+
+.settlement-report-classic .sr-section-head .sr-btn-sync-data:hover {
+  color: #4096ff !important;
+  border-color: #4096ff !important;
+  background: #e6f4ff !important;
+}
+
+.settlement-report-classic .sr-section-head .ant-btn-default:not(.sr-btn-sync-data) {
+  color: rgba(0, 0, 0, 0.88);
+  border-color: #d9d9d9;
+  background: #fff;
+}
+
 .settlement-report-classic .sr-table-wrap {
   overflow-x: auto;
 }

@@ -1115,24 +1115,16 @@ export default function SettlementClassicMonthlyPanel({
                       ] as MenuProps['items'],
                     }}
                   >
-                    <Button size="small" loading={syncingAll || syncingRw || syncingLb || syncingLh || syncingPm || syncingUi || syncingFs || syncingCg}>
+                    <Button
+                      size="small"
+                      className="sr-btn-sync-data"
+                      loading={syncingAll || syncingRw || syncingLb || syncingLh || syncingPm || syncingUi || syncingFs || syncingCg}
+                    >
                       同步打款数据
                     </Button>
                   </Dropdown>
-                  <Button
-                    size="small"
-                    type={manualAdjustMode ? 'primary' : 'default'}
-                    onClick={() => toggleManualAdjust()}
-                  >
+                  <Button size="small" onClick={() => toggleManualAdjust()}>
                     {manualAdjustMode ? '完成手工调整' : '手工调整'}
-                  </Button>
-                  <Button
-                    size="small"
-                    icon={<SaveOutlined />}
-                    loading={savingReceivable || savingActual}
-                    onClick={() => void saveCommissionDrafts()}
-                  >
-                    保存应收/实收
                   </Button>
                 </>
               )}
@@ -1286,7 +1278,7 @@ export default function SettlementClassicMonthlyPanel({
           </Spin>
           <p className="sr-tip">
             账期/失效来自订单同步。应收/实收：鼠标悬停 USD 单元格出现铅笔与恢复图标，点击改数（蓝底为已手填）。
-            改完点「保存应收/实收」。实收列 USD/CNY；账期/应收仅美金。CNY 按页头汇率。收款人见{' '}
+            改完点「完成手工调整」写入应收/实收。实收列 USD/CNY；账期/应收仅美金。CNY 按页头汇率。收款人见{' '}
             <Link to="/channel-accounts">平台账号</Link>。
           </p>
         </div>

@@ -86,11 +86,24 @@ export class SettlementFamestaPaymentsSyncService {
           summaryError = err instanceof Error ? err.message : String(err);
         }
 
-        const { paidRows, validationRows } = await fetchFamestaPaymentDetailsForSettlement(
-          token,
-          startDate,
-          endDate,
-        );
+        let paidRows: Awaited<
+          ReturnType<typeof fetchFamestaPaymentDetailsForSettlement>
+        >['paidRows'] = [];
+        let validationRows: Awaited<
+          ReturnType<typeof fetchFamestaPaymentDetailsForSettlement>
+        >['validationRows'] = [];
+        let detailError: string | undefined;
+        try {
+          const detail = await fetchFamestaPaymentDetailsForSettlement(
+            token,
+            startDate,
+            endDate,
+          );
+          paidRows = detail.paidRows;
+          validationRows = detail.validationRows;
+        } catch (err) {
+          detailError = err instanceof Error ? err.message : String(err);
+        }
         const fromDetail = aggregateFamestaPaymentDetailsForSettlement(paidRows, validationRows, month);
         const { receivable, actual, hasSummary } = resolveV2SummaryOrDetailSettlement(
           summaryRows,
@@ -100,6 +113,12 @@ export class SettlementFamestaPaymentsSyncService {
 
         receivableBatch[key] = receivable;
         actualBatch[key] = actual;
+        const lineError =
+          summaryError && !hasSummary
+            ? summaryError
+            : detailError && !hasSummary && receivable.usdH1 + receivable.usdH2 + actual.usdH1 + actual.usdH2 <= 0
+              ? detailError
+              : undefined;
         synced.push({
           channelAccountId: account.id,
           displayName: account.displayName,
@@ -107,7 +126,7 @@ export class SettlementFamestaPaymentsSyncService {
           receivable,
           actual,
           detailRowCount: summaryRows.length + paidRows.length + validationRows.length,
-          error: summaryError && !hasSummary ? summaryError : undefined,
+          error: lineError,
         });
       } catch (err) {
         synced.push({

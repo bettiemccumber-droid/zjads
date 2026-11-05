@@ -15,6 +15,27 @@ async function throttleV2PaymentRequest(hostKey: string) {
   throttleByHost.set(hostKey, Date.now());
 }
 
+/**
+ * V2 Payment Detail 文档字段为 snake_case（paid_date_begin 等）
+ */
+export function toV2PaymentDetailRequestBody(
+  body: Record<string, string | number>,
+): Record<string, string | number> {
+  const keyMap: Record<string, string> = {
+    paidDateBegin: 'paid_date_begin',
+    paidDateEnd: 'paid_date_end',
+    validationDateBegin: 'validation_date_begin',
+    validationDateEnd: 'validation_date_end',
+    requestDateBegin: 'request_date_begin',
+    requestDateEnd: 'request_date_end',
+  };
+  const out: Record<string, string | number> = {};
+  for (const [k, v] of Object.entries(body)) {
+    out[keyMap[k] ?? k] = v;
+  }
+  return out;
+}
+
 function assertV2Success(body: unknown, context: string, networkLabel: string): void {
   const root = body as Record<string, unknown>;
   const code = root.code;
@@ -54,7 +75,7 @@ export async function fetchNetworkV2PaymentDetailAll(
       token: token.trim(),
       curPage: page,
       perPage: 2000,
-      ...body,
+      ...toV2PaymentDetailRequestBody(body),
     };
 
     const { data } = await axios.post(config.detailUrl, payload, {

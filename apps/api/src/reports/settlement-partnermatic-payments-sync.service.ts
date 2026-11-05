@@ -86,11 +86,25 @@ export class SettlementPartnermaticPaymentsSyncService {
           summaryError = err instanceof Error ? err.message : String(err);
         }
 
-        const { paidRows, validationRows } = await fetchPartnermaticPaymentDetailsForSettlement(
-          token,
-          startDate,
-          endDate,
-        );
+        let paidRows: Awaited<
+          ReturnType<typeof fetchPartnermaticPaymentDetailsForSettlement>
+        >['paidRows'] = [];
+        let validationRows: Awaited<
+          ReturnType<typeof fetchPartnermaticPaymentDetailsForSettlement>
+        >['validationRows'] = [];
+        let detailError: string | undefined;
+        try {
+          const detail = await fetchPartnermaticPaymentDetailsForSettlement(
+            token,
+            startDate,
+            endDate,
+          );
+          paidRows = detail.paidRows;
+          validationRows = detail.validationRows;
+        } catch (err) {
+          detailError = err instanceof Error ? err.message : String(err);
+        }
+
         const fromDetail = aggregatePartnermaticPaymentDetailsForSettlement(
           paidRows,
           validationRows,
@@ -104,6 +118,12 @@ export class SettlementPartnermaticPaymentsSyncService {
 
         receivableBatch[key] = receivable;
         actualBatch[key] = actual;
+        const lineError =
+          summaryError && !hasSummary
+            ? summaryError
+            : detailError && !hasSummary && receivable.usdH1 + receivable.usdH2 + actual.usdH1 + actual.usdH2 <= 0
+              ? detailError
+              : undefined;
         synced.push({
           channelAccountId: account.id,
           displayName: account.displayName,
@@ -111,7 +131,7 @@ export class SettlementPartnermaticPaymentsSyncService {
           receivable,
           actual,
           detailRowCount: summaryRows.length + paidRows.length + validationRows.length,
-          error: summaryError && !hasSummary ? summaryError : undefined,
+          error: lineError,
         });
       } catch (err) {
         synced.push({

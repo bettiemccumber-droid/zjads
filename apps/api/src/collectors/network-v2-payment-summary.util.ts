@@ -1,4 +1,5 @@
 import axios from 'axios';
+import { toV2PaymentDetailRequestBody } from './network-v2-payment-api.client';
 import type { NetworkV2PaymentHalfTotals } from './network-v2-payment-details.util';
 
 /** V2 Payment Summary 单行（与 PM/UI 后台 Payments Summary 一致） */
@@ -97,7 +98,7 @@ async function fetchSummaryPage(
       token: token.trim(),
       curPage: page,
       perPage: 2000,
-      ...body,
+      ...toV2PaymentDetailRequestBody(body),
     };
 
     const { data } = await axios.post(config.summaryUrl, payload, {

@@ -247,6 +247,19 @@ export function aggregateRewardooPaymentsForSettlement(
       const day = Number(dateStr.slice(8, 10));
       if (day <= 15) out.actualH1 += amount;
       else out.actualH2 += amount;
+      continue;
+    }
+
+    /** 无 paid_date、状态非 withdrawn → 对齐顶栏 Payment in Progress */
+    const paidYmd = parseRewardooPaidDate(row);
+    if (!paidYmd) {
+      let dateStr = parseRewardooRequestDate(row);
+      if (!dateStr) dateStr = parseYmdFlexible(row.update_time);
+      if (dateStr?.startsWith(`${month}-`)) {
+        const day = Number(dateStr.slice(8, 10));
+        if (day <= 15) out.receivableH1 += amount;
+        else out.receivableH2 += amount;
+      }
     }
   }
 

@@ -86,11 +86,24 @@ export class SettlementCollabglowPaymentsSyncService {
           summaryError = err instanceof Error ? err.message : String(err);
         }
 
-        const { paidRows, validationRows } = await fetchCollabglowPaymentDetailsForSettlement(
-          token,
-          startDate,
-          endDate,
-        );
+        let paidRows: Awaited<
+          ReturnType<typeof fetchCollabglowPaymentDetailsForSettlement>
+        >['paidRows'] = [];
+        let validationRows: Awaited<
+          ReturnType<typeof fetchCollabglowPaymentDetailsForSettlement>
+        >['validationRows'] = [];
+        let detailError: string | undefined;
+        try {
+          const detail = await fetchCollabglowPaymentDetailsForSettlement(
+            token,
+            startDate,
+            endDate,
+          );
+          paidRows = detail.paidRows;
+          validationRows = detail.validationRows;
+        } catch (err) {
+          detailError = err instanceof Error ? err.message : String(err);
+        }
         const fromDetail = aggregateCollabglowPaymentDetailsForSettlement(
           paidRows,
           validationRows,
@@ -104,6 +117,12 @@ export class SettlementCollabglowPaymentsSyncService {
 
         receivableBatch[key] = receivable;
         actualBatch[key] = actual;
+        const lineError =
+          summaryError && !hasSummary
+            ? summaryError
+            : detailError && !hasSummary && receivable.usdH1 + receivable.usdH2 + actual.usdH1 + actual.usdH2 <= 0
+              ? detailError
+              : undefined;
         synced.push({
           channelAccountId: account.id,
           displayName: account.displayName,
@@ -111,7 +130,7 @@ export class SettlementCollabglowPaymentsSyncService {
           receivable,
           actual,
           detailRowCount: summaryRows.length + paidRows.length + validationRows.length,
-          error: summaryError && !hasSummary ? summaryError : undefined,
+          error: lineError,
         });
       } catch (err) {
         synced.push({

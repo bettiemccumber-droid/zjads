@@ -56,11 +56,25 @@ function parseYmdFlexible(raw: string | null | undefined): string | null {
   return null;
 }
 
-function assertLbSuccess(body: unknown): void {
+function lbResponseCode(body: unknown): number | string | undefined {
   const root = body as Record<string, unknown>;
   const status = root.status as { code?: number | string; msg?: string } | undefined;
   const code = status?.code ?? root.code;
+  if (typeof code === 'number' || typeof code === 'string') return code;
+  return undefined;
+}
+
+/** 1003 多为缺参/错误 op，探测下一组参数即可 */
+function isLbSkippableProbeError(body: unknown): boolean {
+  const code = lbResponseCode(body);
+  return code === 1003 || code === '1003';
+}
+
+function assertLbSuccess(body: unknown): void {
+  const code = lbResponseCode(body);
   if (code !== 0 && code !== '0' && code !== 200 && code !== '200') {
+    const root = body as Record<string, unknown>;
+    const status = root.status as { msg?: string } | undefined;
     const msg = String(status?.msg ?? root.msg ?? 'LinkBux API 错误');
     throw new Error(`${msg} (code=${String(code)})`);
   }
@@ -160,6 +174,7 @@ export async function fetchLinkbuxPayments(
         timeout: 120000,
         validateStatus: () => true,
       });
+      if (isLbSkippableProbeError(data)) continue;
       assertLbSuccess(data);
       const list = extractPaymentList(data);
       for (const row of list) {

@@ -1,14 +1,13 @@
 import type { CommissionHalf } from './settlement-commission-persist.util';
 
 /**
- * 判断打款同步是否应写入库（全 0 且无 API 行时跳过，避免覆盖手工录入）
+ * 判断打款同步是否应写入库（汇总为 0 时不写入，避免历史 API 行把手工数覆盖成 0）
  */
 export function shouldPersistPaymentSyncLine(
   receivable: CommissionHalf,
   actual: CommissionHalf,
-  apiRowCount: number,
+  _apiRowCount: number,
 ): boolean {
-  if (apiRowCount > 0) return true;
   const sum =
     receivable.usdH1 +
     receivable.usdH2 +
@@ -30,9 +29,16 @@ export function zeroAggregateHint(month: string, apiRowCount: number): string | 
 /**
  * LinkBux Payment Details 专用提示（无 Request Date 字段）
  */
-export function linkbuxZeroAggregateHint(month: string, apiRowCount: number): string {
-  if (apiRowCount <= 0) {
-    return `${month} Payment Details 无返回行（validation 与 paid_date 各查一次）`;
+export function linkbuxZeroAggregateHint(
+  month: string,
+  fetchedRowCount: number,
+  commissionRowCount: number,
+): string {
+  if (fetchedRowCount <= 0) {
+    return `${month} LinkBux 打款 API 无返回行（可用手工调整或核对 Token）`;
   }
-  return `${apiRowCount} 条 API 数据未计入 ${month}（明细 settlement/paid 不在该月；或仅为文档式历史行。应收应对齐付款历史 Pending 整笔，实收看 paid_date）`;
+  if (commissionRowCount > 0) {
+    return `${month} 实收/应收为 0：明细 ${commissionRowCount} 行 settlement/paid 不在该月；若后台有 Pending，请核对付款历史接口是否返回当月 payment_id`;
+  }
+  return `${month} 实收/应收为 0（拉取 ${fetchedRowCount} 条多为历史付款记录，未匹配当月 Pending 或 paid_date）`;
 }

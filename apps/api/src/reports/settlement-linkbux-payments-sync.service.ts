@@ -3,6 +3,7 @@ import { UserRole } from '@prisma/client';
 import {
   aggregateLinkbuxActualCommissionsForSettlement,
   aggregateLinkbuxReceivableCommissionsForSettlement,
+  aggregateLinkbuxReceivableUnpaidByPaymentId,
   collectLinkbuxPaymentIdsFromCommissions,
   dedupeLinkbuxMerchantCommissionRows,
   fetchLinkbuxMerchantCommissions,
@@ -14,7 +15,7 @@ import {
 import {
   aggregateLinkbuxPaymentsForSettlement,
   fetchLinkbuxPayments,
-  parseLinkbuxPaymentDate,
+  listLinkbuxPendingPaymentIdsForMonth,
   type LinkbuxPaymentRow,
 } from '../collectors/linkbux-payments.util';
 import { AuthUser, isCompanyWideScope, resolveOwnerUserId } from '../common/ownership.util';
@@ -123,7 +124,7 @@ export class SettlementLinkbuxPaymentsSyncService {
         }
 
         try {
-          paymentHistoryRows = await fetchLinkbuxPayments(token, startDate, endDate);
+          paymentHistoryRows = await fetchLinkbuxPayments(token, validationBegin, endDate);
         } catch {
           paymentHistoryRows = [];
         }
@@ -134,17 +135,8 @@ export class SettlementLinkbuxPaymentsSyncService {
         ]);
 
         const paymentIds = new Set<string>(collectLinkbuxPaymentIdsFromCommissions(mergedRows));
-        for (const pay of paymentHistoryRows) {
-          const pid = pay.payment_id;
-          if (pid == null || String(pid).trim() === '') continue;
-          const status = String(pay.status ?? '').toLowerCase();
-          const isPending =
-            status.includes('pending') ||
-            status.includes('progress') ||
-            status.includes('processing');
-          if (!isPending) continue;
-          const req = parseLinkbuxPaymentDate(pay, false);
-          if (req?.startsWith(`${month}-`)) paymentIds.add(String(pid).trim());
+        for (const pid of listLinkbuxPendingPaymentIdsForMonth(paymentHistoryRows, month)) {
+          paymentIds.add(pid);
         }
 
         const paymentIdRows: Awaited<ReturnType<typeof fetchLinkbuxMerchantCommissionsByPaymentId>> =
@@ -167,7 +159,19 @@ export class SettlementLinkbuxPaymentsSyncService {
           month,
         );
         const paymentHistAgg = aggregateLinkbuxPaymentsForSettlement(paymentHistoryRows, month);
-        const receivablePick = pickLinkbuxReceivableHalves(receivableAgg, paymentHistAgg);
+        const batchReceivableRows = dedupeLinkbuxMerchantCommissionRows([
+          ...receivableSourceRows,
+          ...paymentIdRows,
+        ]);
+        const paymentIdBatchAgg = aggregateLinkbuxReceivableUnpaidByPaymentId(
+          batchReceivableRows,
+          month,
+        );
+        const receivablePick = pickLinkbuxReceivableHalves(
+          receivableAgg,
+          paymentHistAgg,
+          paymentIdBatchAgg,
+        );
         const actualAgg = aggregateLinkbuxActualCommissionsForSettlement(paidRows, month);
         const actualFromHistory = {
           actualH1: paymentHistAgg.actualH1,
@@ -180,24 +184,28 @@ export class SettlementLinkbuxPaymentsSyncService {
 
         const receivable = { usdH1: receivablePick.receivableH1, usdH2: receivablePick.receivableH2 };
         const actual = { usdH1: actualPick.actualH1, usdH2: actualPick.actualH2 };
-        const apiRowCount =
-          mergedRows.length + paymentIdRows.length + paymentHistoryRows.length;
+        const commissionRowCount = dedupeLinkbuxMerchantCommissionRows([
+          ...mergedRows,
+          ...paymentIdRows,
+        ]).length;
+        const fetchedRowCount =
+          commissionRowCount + paymentHistoryRows.length;
         const aggSum =
           receivable.usdH1 + receivable.usdH2 + actual.usdH1 + actual.usdH2;
 
         let lineError = fetchError;
         if (!lineError && aggSum <= 0) {
-          lineError = linkbuxZeroAggregateHint(month, apiRowCount);
+          lineError = linkbuxZeroAggregateHint(month, fetchedRowCount, commissionRowCount);
         }
 
-        if (shouldPersistPaymentSyncLine(receivable, actual, apiRowCount)) {
+        if (shouldPersistPaymentSyncLine(receivable, actual, fetchedRowCount)) {
           receivableBatch[key] = receivable;
           actualBatch[key] = actual;
           if (lineError && aggSum > 0) {
             lineError = undefined;
           }
         } else if (!lineError) {
-          lineError = linkbuxZeroAggregateHint(month, apiRowCount);
+          lineError = linkbuxZeroAggregateHint(month, fetchedRowCount, commissionRowCount);
         }
 
         synced.push({
@@ -206,7 +214,7 @@ export class SettlementLinkbuxPaymentsSyncService {
           affiliateAlias: account.affiliateAlias,
           receivable,
           actual,
-          commissionRowCount: apiRowCount,
+          commissionRowCount: fetchedRowCount,
           error: lineError,
         });
       } catch (err) {

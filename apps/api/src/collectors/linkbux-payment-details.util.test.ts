@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import {
   aggregateLinkbuxActualCommissionsForSettlement,
   aggregateLinkbuxReceivableCommissionsForSettlement,
+  aggregateLinkbuxReceivableUnpaidByPaymentId,
   type LinkbuxMerchantCommissionRow,
 } from './linkbux-payment-details.util';
 
@@ -48,6 +49,15 @@ function runTests() {
   ];
   const pendingRecv = aggregateLinkbuxReceivableCommissionsForSettlement(pendingBatch, month);
   assert.equal(pendingRecv.receivableH1, 1155.6);
+
+  const batch = aggregateLinkbuxReceivableUnpaidByPaymentId(
+    [
+      { sale_comm: '100', payment_id: 18540, paid_date: null },
+      { sale_comm: '1055.60', payment_id: 18540, paid_date: null },
+    ],
+    month,
+  );
+  assert.equal(batch.receivableH1, 1155.6);
 
   console.log('linkbux-payment-details.util.test.ts: ok');
 }

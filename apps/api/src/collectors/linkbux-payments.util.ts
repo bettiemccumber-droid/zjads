@@ -37,9 +37,30 @@ function parseMoney(v: unknown): number {
  * 解析 LinkBux 界面日期（支持 YYYY-MM-DD 与 MM-DD-YYYY）
  */
 export function parseLinkbuxPaymentDate(row: LinkbuxPaymentRow, preferPaid = false): string | null {
+  const extra = row as LinkbuxPaymentRow & {
+    request_time?: string;
+    payment_time?: string;
+    created_at?: string;
+  };
   const candidates = preferPaid
-    ? [row.paid_date, row.payment_date, row.date, row.request_date, row.create_date]
-    : [row.date, row.request_date, row.create_date, row.paid_date, row.payment_date];
+    ? [
+        row.paid_date,
+        row.payment_date,
+        row.date,
+        row.request_date,
+        row.create_date,
+        extra.request_time,
+        extra.payment_time,
+      ]
+    : [
+        row.date,
+        row.request_date,
+        row.create_date,
+        extra.request_time,
+        extra.payment_time,
+        row.paid_date,
+        row.payment_date,
+      ];
   for (const raw of candidates) {
     const ymd = parseYmdFlexible(raw);
     if (ymd) return ymd;
@@ -205,7 +226,8 @@ async function fetchLinkbuxPaymentsFromPublisherApi2(
   return [...merged.values()];
 }
 
-function isLinkbuxPendingStatus(status: string): boolean {
+/** 是否 Pending / Payment in Progress 状态 */
+export function linkbuxIsPendingPaymentStatus(status: string): boolean {
   const s = status.toLowerCase();
   return (
     s.includes('pending') ||
@@ -344,7 +366,7 @@ export function aggregateLinkbuxPaymentsForSettlement(
       parseMoney(row.amount) || parseMoney(row.payment_amount) || parseMoney(row.total);
     if (amount <= 0) continue;
 
-    if (isLinkbuxPendingStatus(status)) {
+    if (linkbuxIsPendingPaymentStatus(status)) {
       const dateStr = parseLinkbuxPaymentDate(row, false);
       if (!dateStr || !dateStr.startsWith(`${month}-`)) continue;
       const day = Number(dateStr.slice(8, 10));
@@ -368,4 +390,24 @@ export function aggregateLinkbuxPaymentsForSettlement(
   out.actualH1 = round(out.actualH1);
   out.actualH2 = round(out.actualH2);
   return out;
+}
+
+/**
+ * 当月 Pending 付款单 payment_id（用于 merchant_commission?payment_id= 拉全批次）
+ */
+export function listLinkbuxPendingPaymentIdsForMonth(
+  rows: LinkbuxPaymentRow[],
+  month: string,
+): string[] {
+  const ids = new Set<string>();
+  for (const row of rows) {
+    const status = String(row.status ?? '').trim();
+    if (!linkbuxIsPendingPaymentStatus(status)) continue;
+    const dateStr = parseLinkbuxPaymentDate(row, false);
+    if (dateStr && !dateStr.startsWith(`${month}-`)) continue;
+    const pid = row.payment_id;
+    if (pid == null || String(pid).trim() === '') continue;
+    ids.add(String(pid).trim());
+  }
+  return [...ids];
 }

@@ -67,7 +67,7 @@ function parseMoney(v: unknown): number {
  */
 function parseYmd(raw: string | null | undefined): string | null {
   const s = String(raw ?? '').trim();
-  if (!s) return null;
+  if (!s || s.toLowerCase() === 'null' || s === '-' || s === '0000-00-00') return null;
   if (/^\d{4}-\d{2}-\d{2}/.test(s)) return s.slice(0, 10);
   const m = s.match(/^(\d{2})-(\d{2})-(\d{4})/);
   if (m) return `${m[3]}-${m[1]}-${m[2]}`;
@@ -330,9 +330,43 @@ export function aggregateLinkbuxCommissionsForSettlement(
 export function pickLinkbuxReceivableHalves(
   commission: Pick<LinkbuxPaymentHalfTotals, 'receivableH1' | 'receivableH2'>,
   paymentHistory: Pick<LinkbuxPaymentHalfTotals, 'receivableH1' | 'receivableH2'>,
+  paymentIdBatch?: Pick<LinkbuxPaymentHalfTotals, 'receivableH1' | 'receivableH2'>,
 ): Pick<LinkbuxPaymentHalfTotals, 'receivableH1' | 'receivableH2'> {
-  const sumA = commission.receivableH1 + commission.receivableH2;
-  const sumB = paymentHistory.receivableH1 + paymentHistory.receivableH2;
-  if (sumB > sumA) return { ...paymentHistory };
-  return { ...commission };
+  const candidates = [commission, paymentHistory, paymentIdBatch ?? { receivableH1: 0, receivableH2: 0 }];
+  let best = candidates[0];
+  let bestSum = best.receivableH1 + best.receivableH2;
+  for (let i = 1; i < candidates.length; i += 1) {
+    const c = candidates[i];
+    const sum = c.receivableH1 + c.receivableH2;
+    if (sum > bestSum) {
+      best = c;
+      bestSum = sum;
+    }
+  }
+  return { receivableH1: best.receivableH1, receivableH2: best.receivableH2 };
+}
+
+/**
+ * 按 payment_id 汇总未付明细（整笔 Pending 批次金额，与后台 Payment 列表对齐）
+ */
+export function aggregateLinkbuxReceivableUnpaidByPaymentId(
+  rows: LinkbuxMerchantCommissionRow[],
+  month: string,
+): Pick<LinkbuxPaymentHalfTotals, 'receivableH1' | 'receivableH2'> {
+  const byPayment = new Map<string, number>();
+  for (const row of rows) {
+    if (!hasPendingPaymentId(row) || isPaid(row)) continue;
+    const comm = parseMoney(row.sale_comm);
+    if (comm <= 0) continue;
+    const pid = String(row.payment_id).trim();
+    byPayment.set(pid, (byPayment.get(pid) ?? 0) + comm);
+  }
+  const out = { receivableH1: 0, receivableH2: 0 };
+  for (const total of byPayment.values()) {
+    out.receivableH1 += total;
+  }
+  const round = (n: number) => Math.round(n * 100) / 100;
+  out.receivableH1 = round(out.receivableH1);
+  out.receivableH2 = round(out.receivableH2);
+  return out;
 }

@@ -3,6 +3,9 @@ import axios from 'axios';
 /** LinkBux 媒体 API（订单 transaction_v2、点击 user_click 共用） */
 export const LB_API = 'https://www.linkbux.com/api.php';
 
+/** 后台 Payment Summary 页使用的接口（Network: api2.php?mod=payment&op=get_payment） */
+export const LB_API2 = 'https://www.linkbux.com/api2.php';
+
 /** Click API：1006 需等待 1 分钟；保守节流 */
 const MIN_REQUEST_INTERVAL_MS = 2500;
 

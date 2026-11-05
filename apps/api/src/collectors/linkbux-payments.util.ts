@@ -1,5 +1,5 @@
 import axios from 'axios';
-import { LB_API } from './linkbux-api.util';
+import { LB_API, LB_API2 } from './linkbux-api.util';
 import type { LinkbuxPaymentHalfTotals } from './linkbux-payment-details.util';
 
 /** LinkBux 付款历史 / Payment Summary 单行（与后台 Payment ID 列表一致） */
@@ -82,13 +82,113 @@ function assertLbSuccess(body: unknown): void {
 
 function extractPaymentList(body: unknown): LinkbuxPaymentRow[] {
   const root = body as Record<string, unknown>;
-  if (Array.isArray(root.data)) return root.data as LinkbuxPaymentRow[];
-  const payload = root.payload ?? root.payliad;
-  if (Array.isArray(payload)) return payload as LinkbuxPaymentRow[];
-  if (Array.isArray(root.list)) return root.list as LinkbuxPaymentRow[];
+  const rows: LinkbuxPaymentRow[] = [];
+
+  const pushArr = (arr: unknown) => {
+    if (Array.isArray(arr)) rows.push(...(arr as LinkbuxPaymentRow[]));
+  };
+
+  pushArr(root.data);
+  pushArr(root.list);
+  pushArr(root.payload);
+  pushArr(root.payliad);
+
   const data = root.data as Record<string, unknown> | undefined;
-  if (data && Array.isArray(data.list)) return data.list as LinkbuxPaymentRow[];
-  return [];
+  if (data && typeof data === 'object' && !Array.isArray(data)) {
+    for (const key of [
+      'list',
+      'payments',
+      'payment_list',
+      'payment_history',
+      'history',
+      'records',
+    ] as const) {
+      pushArr(data[key]);
+    }
+    const pip =
+      parseMoney(data.payment_in_progress) ||
+      parseMoney(data.paymentInProgress) ||
+      parseMoney(data.payment_processing);
+    if (pip > 0) {
+      rows.push({
+        status: 'Pending',
+        amount: pip,
+        date: String(
+          data.last_update ?? data.last_updated ?? data.update_time ?? data.updated_at ?? '',
+        ),
+      });
+    }
+  }
+
+  const result = root.result as Record<string, unknown> | undefined;
+  if (result) {
+    pushArr(result.list);
+    pushArr(result.payments);
+  }
+
+  return rows;
+}
+
+function mergePaymentRows(
+  merged: Map<string, LinkbuxPaymentRow>,
+  list: LinkbuxPaymentRow[],
+): void {
+  for (const row of list) {
+    const id =
+      row.payment_id != null && String(row.payment_id).trim()
+        ? String(row.payment_id)
+        : `${parseLinkbuxPaymentDate(row, false) ?? ''}|${parseMoney(row.amount)}|${row.status ?? ''}`;
+    merged.set(id, row);
+  }
+}
+
+/**
+ * 后台 Payment Summary 同源：api2.php mod=payment op=get_payment（优先于旧 api.php settlement）
+ */
+async function fetchLinkbuxPaymentsFromPublisherApi2(
+  token: string,
+  beginDate: string,
+  endDate: string,
+): Promise<LinkbuxPaymentRow[]> {
+  const bases = [LB_API2, LB_API];
+  const paramSets: Record<string, string>[] = [
+    {},
+    { begin_date: beginDate, end_date: endDate },
+    { request_begin: beginDate, request_end: endDate },
+    { payment_begin: beginDate, payment_end: endDate },
+  ];
+
+  const merged = new Map<string, LinkbuxPaymentRow>();
+
+  for (const base of bases) {
+    for (const extra of paramSets) {
+      await throttleLbRequest();
+      try {
+        const { data } = await axios.get(base, {
+          params: {
+            mod: 'payment',
+            op: 'get_payment',
+            token: token.trim(),
+            type: 'json',
+            ...extra,
+          },
+          timeout: 120000,
+          validateStatus: () => true,
+        });
+        if (isLbSkippableProbeError(data)) continue;
+        const code = lbResponseCode(data);
+        if (code != null && code !== 0 && code !== '0' && code !== 200 && code !== '200') {
+          continue;
+        }
+        const list = extractPaymentList(data);
+        if (list.length) mergePaymentRows(merged, list);
+      } catch {
+        /* 尝试下一组参数 */
+      }
+    }
+  }
+
+  return [...merged.values()];
 }
 
 function isLinkbuxPendingStatus(status: string): boolean {
@@ -115,7 +215,19 @@ export async function fetchLinkbuxPayments(
   beginDate: string,
   endDate: string,
 ): Promise<LinkbuxPaymentRow[]> {
+  const merged = new Map<string, LinkbuxPaymentRow>();
+  let lastError: Error | null = null;
+
+  try {
+    const api2Rows = await fetchLinkbuxPaymentsFromPublisherApi2(token, beginDate, endDate);
+    mergePaymentRows(merged, api2Rows);
+  } catch (err) {
+    lastError = err instanceof Error ? err : new Error(String(err));
+  }
+
   const attempts: Array<{ mod: string; op: string; extra: Record<string, string> }> = [
+    { mod: 'payment', op: 'get_payment', extra: {} },
+    { mod: 'payment', op: 'get_payment', extra: { begin_date: beginDate, end_date: endDate } },
     {
       mod: 'settlement',
       op: 'payments',
@@ -157,9 +269,6 @@ export async function fetchLinkbuxPayments(
     { mod: 'linkpayment', op: 'payment2', extra: {} },
   ];
 
-  const merged = new Map<string, LinkbuxPaymentRow>();
-  let lastError: Error | null = null;
-
   for (const attempt of attempts) {
     try {
       await throttleLbRequest();
@@ -176,14 +285,7 @@ export async function fetchLinkbuxPayments(
       });
       if (isLbSkippableProbeError(data)) continue;
       assertLbSuccess(data);
-      const list = extractPaymentList(data);
-      for (const row of list) {
-        const id =
-          row.payment_id != null && String(row.payment_id).trim()
-            ? String(row.payment_id)
-            : `${parseLinkbuxPaymentDate(row, false) ?? ''}|${parseMoney(row.amount)}|${row.status ?? ''}`;
-        merged.set(id, row);
-      }
+      mergePaymentRows(merged, extractPaymentList(data));
     } catch (err) {
       lastError = err instanceof Error ? err : new Error(String(err));
     }

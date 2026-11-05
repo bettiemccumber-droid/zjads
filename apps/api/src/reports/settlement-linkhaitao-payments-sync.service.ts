@@ -76,25 +76,44 @@ export class SettlementLinkhaitaoPaymentsSyncService {
           continue;
         }
 
-        const { paidRows, validationRows } = await fetchLinkhaitaoPaymentDetailsForSettlement(
-          token,
-          startDate,
-          endDate,
-        );
+        let paidRows: Awaited<
+          ReturnType<typeof fetchLinkhaitaoPaymentDetailsForSettlement>
+        >['paidRows'] = [];
+        let validationRows: Awaited<
+          ReturnType<typeof fetchLinkhaitaoPaymentDetailsForSettlement>
+        >['validationRows'] = [];
+        let lineError: string | undefined;
+        try {
+          const detail = await fetchLinkhaitaoPaymentDetailsForSettlement(
+            token,
+            startDate,
+            endDate,
+          );
+          paidRows = detail.paidRows;
+          validationRows = detail.validationRows;
+        } catch (err) {
+          lineError = err instanceof Error ? err.message : String(err);
+        }
         const agg = aggregateLinkhaitaoPaymentDetailsForSettlement(
           paidRows,
           validationRows,
           month,
         );
-        receivableBatch[key] = { usdH1: agg.receivableH1, usdH2: agg.receivableH2 };
-        actualBatch[key] = { usdH1: agg.actualH1, usdH2: agg.actualH2 };
+        const receivable = { usdH1: agg.receivableH1, usdH2: agg.receivableH2 };
+        const actual = { usdH1: agg.actualH1, usdH2: agg.actualH2 };
+        const sum = receivable.usdH1 + receivable.usdH2 + actual.usdH1 + actual.usdH2;
+        if (sum > 0) {
+          receivableBatch[key] = receivable;
+          actualBatch[key] = actual;
+        }
         synced.push({
           channelAccountId: account.id,
           displayName: account.displayName,
           affiliateAlias: account.affiliateAlias,
-          receivable: receivableBatch[key],
-          actual: actualBatch[key],
+          receivable,
+          actual,
           detailRowCount: paidRows.length + validationRows.length,
+          error: lineError && sum <= 0 ? lineError : undefined,
         });
       } catch (err) {
         synced.push({

@@ -19,12 +19,17 @@ import {
 import { renormalizeOrdersForAccounts } from '../common/platform-status-defaults.util';
 import { buildOrderDateRangeFilter } from '../common/order-date-range.util';
 import { AuthUser, isCompanyWideScope, resolveOwnerUserId } from '../common/ownership.util';
+import { resolveTeamOwnerUserIds } from '../common/team-scope.util';
 import { PrismaService } from '../prisma/prisma.service';
 
 export interface OrdersQuery {
   startDate?: string;
   endDate?: string;
   userId?: number;
+  /** 未指定 userId 时按团队（组长+组员）汇总 */
+  teamWide?: boolean;
+  /** 未指定 userId 时汇总本组织全部活跃员工（拒付商家等共享视图） */
+  orgWide?: boolean;
   channelAccountId?: number;
   platformCode?: string;
   normalizedStatus?: NormalizedStatus;
@@ -140,7 +145,10 @@ export class OrdersService {
    * 管理员未指定 userId 时汇总全公司员工，并返回分员工明细
    */
   async settlementMerchantSummary(user: AuthUser, q: OrdersQuery) {
-    const ownerIds = await this.resolveOwnerUserIds(user, q.userId);
+    const ownerIds = await this.resolveOwnerUserIds(user, q.userId, {
+      teamWide: q.teamWide,
+      orgWide: q.orgWide,
+    });
     const core = await this.buildSettlementForOwnerIds(ownerIds, q);
 
     let employeeSummaries: SettlementEmployeeSummary[] | undefined;
@@ -174,16 +182,31 @@ export class OrdersService {
     };
   }
 
-  /** 解析结算数据归属：管理员默认全公司员工 */
-  private async resolveOwnerUserIds(user: AuthUser, queryUserId?: number): Promise<number[]> {
-    if (isCompanyWideScope(user, queryUserId)) {
-      const employees = await this.prisma.user.findMany({
-        where: { isActive: true, role: { not: UserRole.ADMIN } },
-        select: { id: true },
-      });
-      return employees.map((e) => e.id);
+  /** 解析结算数据归属：管理员默认全组织员工；orgWide 对任意角色开放全员汇总 */
+  private async resolveOwnerUserIds(
+    user: AuthUser,
+    queryUserId?: number,
+    scope?: { teamWide?: boolean; orgWide?: boolean },
+  ): Promise<number[]> {
+    if (queryUserId == null && (isCompanyWideScope(user, queryUserId) || scope?.orgWide)) {
+      return this.listActiveEmployeeIdsInOrganization(user.organizationId);
     }
-    return [resolveOwnerUserId(user, queryUserId)];
+    if (queryUserId != null) {
+      return [resolveOwnerUserId(user, queryUserId)];
+    }
+    if (scope?.teamWide) {
+      return resolveTeamOwnerUserIds(this.prisma, user.id, user.teamMemberIds);
+    }
+    return [user.id];
+  }
+
+  /** 本组织内活跃非管理员员工（联盟/拒付数据归属） */
+  private async listActiveEmployeeIdsInOrganization(organizationId: number): Promise<number[]> {
+    const employees = await this.prisma.user.findMany({
+      where: { organizationId, isActive: true, role: { not: UserRole.ADMIN } },
+      select: { id: true },
+    });
+    return employees.map((e) => e.id);
   }
 
   private async buildSettlementForOwnerIds(ownerIds: number[], q: OrdersQuery) {

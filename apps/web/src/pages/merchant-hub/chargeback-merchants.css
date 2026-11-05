@@ -1,0 +1,212 @@
+/**
+ * 拒付商家 · 对齐竞品表格与筛选区视觉
+ */
+.chargeback-merchants {
+  --cb-border: #e8e8e8;
+  --cb-head-bg: #fafafa;
+  --cb-danger: #ff4d4f;
+  --cb-muted: rgba(0, 0, 0, 0.35);
+}
+
+.chargeback-merchants__tip {
+  margin-bottom: 12px;
+  font-size: 13px;
+  line-height: 1.6;
+  color: rgba(0, 0, 0, 0.45);
+}
+
+.chargeback-merchants__toolbar {
+  background: #fff;
+  border: 1px solid var(--cb-border);
+  border-radius: 8px;
+  padding: 14px 16px 12px;
+  margin-bottom: 12px;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
+}
+
+.chargeback-merchants__toolbar-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px 12px;
+}
+
+.chargeback-merchants__threshold {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 280px;
+}
+
+.chargeback-merchants__threshold-label {
+  font-size: 13px;
+  color: rgba(0, 0, 0, 0.55);
+  white-space: nowrap;
+}
+
+.chargeback-merchants__threshold-value {
+  font-size: 13px;
+  font-weight: 600;
+  color: #389e0d;
+  white-space: nowrap;
+}
+
+.chargeback-merchants__summary {
+  margin-top: 10px;
+  margin-bottom: 0;
+  font-size: 12px;
+  color: rgba(0, 0, 0, 0.45);
+}
+
+.chargeback-merchants__panel {
+  background: #fff;
+  border: 1px solid var(--cb-border);
+  border-radius: 8px;
+  overflow: hidden;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.05);
+}
+
+.chargeback-merchants__panel .cb-table.ant-table-wrapper .ant-table {
+  font-size: 13px;
+}
+
+.chargeback-merchants__panel .cb-table .ant-table-thead > tr > th {
+  background: var(--cb-head-bg) !important;
+  font-weight: 600;
+  color: rgba(0, 0, 0, 0.88);
+  padding: 10px 12px !important;
+  border-bottom: 1px solid var(--cb-border) !important;
+}
+
+.chargeback-merchants__panel .cb-table .ant-table-tbody > tr > td {
+  padding: 9px 12px !important;
+  vertical-align: middle;
+}
+
+.chargeback-merchants__panel .cb-table .ant-table-tbody > tr:hover > td {
+  background: #f5faff !important;
+}
+
+.chargeback-merchants__panel .cb-table .ant-table-cell-row-hover {
+  background: #f5faff !important;
+}
+
+/* 平台徽章（与 SyncAccountPicker 配色一致） */
+.cb-platform-badge {
+  display: inline-block;
+  min-width: 36px;
+  padding: 2px 8px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-align: center;
+  border-radius: 4px;
+  line-height: 18px;
+}
+
+.cb-platform-badge.partnermatic {
+  color: #1d4ed8;
+  background: #dbeafe;
+}
+
+.cb-platform-badge.linkhaitao {
+  color: #6d28d9;
+  background: #ede9fe;
+}
+
+.cb-platform-badge.linkbux {
+  color: #0f766e;
+  background: #ccfbf1;
+}
+
+.cb-platform-badge.rewardoo {
+  color: #c2410c;
+  background: #ffedd5;
+}
+
+.cb-platform-badge.ultrainfluence {
+  color: #7c3aed;
+  background: #ede9fe;
+}
+
+.cb-platform-badge.collabglow {
+  color: #047857;
+  background: #d1fae5;
+}
+
+.cb-platform-badge.famesta {
+  color: #be123c;
+  background: #ffe4e6;
+}
+
+.cb-platform-badge.default {
+  color: rgba(0, 0, 0, 0.65);
+  background: #f5f5f5;
+}
+
+.cb-money {
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: 'tnum';
+}
+
+.cb-money--muted {
+  color: var(--cb-muted);
+}
+
+.cb-money--danger {
+  color: var(--cb-danger);
+  font-weight: 600;
+}
+
+.cb-merchant-name {
+  color: rgba(0, 0, 0, 0.88);
+  font-weight: 500;
+}
+
+.cb-mid {
+  font-variant-numeric: tabular-nums;
+  color: rgba(0, 0, 0, 0.65);
+}
+
+/* 拒付率 + 环形进度 */
+.cb-rate-cell {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  width: 100%;
+}
+
+.cb-rate-ring {
+  flex-shrink: 0;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: conic-gradient(var(--cb-danger) var(--cb-rate-deg, 0deg), #f0f0f0 0);
+  position: relative;
+}
+
+.cb-rate-ring::after {
+  content: '';
+  position: absolute;
+  inset: 4px;
+  border-radius: 50%;
+  background: #fff;
+}
+
+.cb-rate-text {
+  color: var(--cb-danger);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  min-width: 56px;
+  text-align: right;
+}
+
+.cb-rate-text.is-over {
+  color: #cf1322;
+}
+
+.cb-action-link {
+  font-size: 13px;
+  white-space: nowrap;
+}

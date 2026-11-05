@@ -222,6 +222,18 @@
   font-size: 12px;
 }
 
+.campaign-report-table .cell-money-zero {
+  color: #bfbfbf;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+  font-size: 12px;
+}
+
+.campaign-report-table--compact .ant-table-column-sorters {
+  padding: 0 2px;
+  justify-content: center;
+}
+
 .campaign-report-table .ant-table-thead > tr > th.col-kpi {
   background: #eef2f7 !important;
   color: #1e293b !important;

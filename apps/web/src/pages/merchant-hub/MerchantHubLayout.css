@@ -10,3 +10,18 @@
 .merchant-hub-module__tabs .ant-tabs-nav {
   margin-bottom: 0;
 }
+
+.merchant-hub-module__tabs .ant-tabs-tab {
+  padding: 10px 4px;
+  font-size: 14px;
+}
+
+.merchant-hub-module__tabs .ant-tabs-tab-active .ant-tabs-tab-btn {
+  font-weight: 600;
+  color: #1677ff;
+}
+
+.merchant-hub-module__tabs .ant-tabs-ink-bar {
+  height: 3px;
+  border-radius: 3px 3px 0 0;
+}

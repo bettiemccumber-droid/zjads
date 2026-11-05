@@ -1,15 +1,12 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState, type CSSProperties } from 'react';
 import {
   Button,
-  Card,
   DatePicker,
   Empty,
   Input,
   Select,
   Slider,
-  Space,
   Table,
-  Tag,
   Typography,
   message,
 } from 'antd';
@@ -24,6 +21,7 @@ import {
   employeeDefaultDateRange,
   lastNDaysToYesterday,
 } from '../../utils/date-range.util';
+import './chargeback-merchants.css';
 
 const { RangePicker } = DatePicker;
 
@@ -52,14 +50,6 @@ const DATE_PRESETS: { label: string; days: number }[] = [
   { label: '近90天', days: 90 },
 ];
 
-function money(v: number) {
-  return `$${Number(v).toFixed(2)}`;
-}
-
-function pct(v: number) {
-  return `${Number(v).toFixed(2)}%`;
-}
-
 const PLATFORM_SHORT: Record<string, string> = {
   partnermatic: 'PM',
   linkhaitao: 'LH',
@@ -69,6 +59,40 @@ const PLATFORM_SHORT: Record<string, string> = {
   ultrainfluence: 'UI',
   famesta: 'FS',
 };
+
+const KNOWN_PLATFORM_CODES = new Set(Object.keys(PLATFORM_SHORT));
+
+function money(v: number) {
+  return `$${Number(v).toFixed(2)}`;
+}
+
+function pct(v: number) {
+  return `${Number(v).toFixed(2)}%`;
+}
+
+/** 平台列彩色徽章 */
+function PlatformBadge({ platformCode }: { platformCode: string }) {
+  const cls = KNOWN_PLATFORM_CODES.has(platformCode) ? platformCode : 'default';
+  const label =
+    PLATFORM_SHORT[platformCode] ?? platformCode.toUpperCase().slice(0, 4);
+  return <span className={`cb-platform-badge ${cls}`}>{label}</span>;
+}
+
+/** 拒付率环形指示（竞品同款小圆环 + 红色百分比） */
+function RejectionRateCell({ rate }: { rate: number }) {
+  const visual = Math.min(Math.max(rate, 0), 100);
+  const deg = `${(visual / 100) * 360}deg`;
+  return (
+    <span className="cb-rate-cell">
+      <span
+        className="cb-rate-ring"
+        style={{ '--cb-rate-deg': deg } as CSSProperties}
+        aria-hidden
+      />
+      <span className={`cb-rate-text${rate > 100 ? ' is-over' : ''}`}>{pct(rate)}</span>
+    </span>
+  );
+}
 
 /** 拒付分析 · 拒付商家 Tab */
 export default function ChargebackMerchantsPage() {
@@ -120,7 +144,9 @@ export default function ChargebackMerchantsPage() {
           startDate: range[0].format('YYYY-MM-DD'),
           endDate: range[1].format('YYYY-MM-DD'),
           ...(platformFilter !== 'all' ? { platformCode: platformFilter } : {}),
-          ...(effectiveScopeUserId != null ? { userId: effectiveScopeUserId } : {}),
+          ...(effectiveScopeUserId != null
+            ? { userId: effectiveScopeUserId }
+            : { orgWide: 'true' }),
         },
       });
       if (data.success) {
@@ -189,73 +215,97 @@ export default function ChargebackMerchantsPage() {
       title: '平台',
       width: 72,
       align: 'center',
-      render: (_, r) => (
-        <Tag>{PLATFORM_SHORT[r.platformCode] ?? r.platformCode.toUpperCase().slice(0, 4)}</Tag>
-      ),
+      render: (_, r) => <PlatformBadge platformCode={r.platformCode} />,
     },
-    { title: 'MID', dataIndex: 'merchantId', width: 96 },
+    {
+      title: 'MID',
+      dataIndex: 'merchantId',
+      width: 88,
+      render: (id: string) => <span className="cb-mid">{id}</span>,
+    },
     {
       title: '商家名称',
       dataIndex: 'merchantName',
       ellipsis: true,
-      render: (name: string, r) => name || r.merchantId || '—',
+      render: (name: string, r) => (
+        <span className="cb-merchant-name">{name || r.merchantId || '—'}</span>
+      ),
     },
-    { title: '订单数', dataIndex: 'orderCount', width: 80, align: 'right' },
     {
-      title: '总佣金（含待结算）',
-      dataIndex: 'totalCommission',
-      width: 140,
+      title: '订单数',
+      dataIndex: 'orderCount',
+      width: 88,
       align: 'right',
-      render: (v: number) => money(v),
+      sorter: (a, b) => a.orderCount - b.orderCount,
+      render: (v: number) => <span className="cb-money">{v.toLocaleString()}</span>,
+    },
+    {
+      title: '总佣金 (含待结算)',
+      dataIndex: 'totalCommission',
+      width: 148,
+      align: 'right',
+      sorter: (a, b) => a.totalCommission - b.totalCommission,
+      render: (v: number) => <span className="cb-money">{money(v)}</span>,
     },
     {
       title: '已结算佣金',
       dataIndex: 'confirmedCommission',
-      width: 112,
+      width: 120,
       align: 'right',
-      render: (v: number) =>
-        v > 0 ? <Typography.Text type="success">{money(v)}</Typography.Text> : '—',
+      sorter: (a, b) => a.confirmedCommission - b.confirmedCommission,
+      render: (v: number) => {
+        if (v === 0) {
+          return <span className="cb-money cb-money--muted">{money(0)}</span>;
+        }
+        if (v < 0) {
+          return <span className="cb-money cb-money--muted">{money(v)}</span>;
+        }
+        return <span className="cb-money">{money(v)}</span>;
+      },
     },
     {
       title: '拒付金额',
       dataIndex: 'rejectedCommission',
       width: 112,
       align: 'right',
-      render: (v: number) => (
-        <Typography.Text type="danger" strong>
-          {money(v)}
-        </Typography.Text>
-      ),
+      defaultSortOrder: 'descend',
+      sorter: (a, b) => a.rejectedCommission - b.rejectedCommission,
+      render: (v: number) => <span className="cb-money cb-money--danger">{money(v)}</span>,
     },
     {
       title: '拒付率',
       dataIndex: 'rejectionRate',
-      width: 100,
+      width: 128,
       align: 'right',
-      render: (v: number) => (
-        <Typography.Text type="danger">{pct(v)}</Typography.Text>
-      ),
+      sorter: (a, b) => a.rejectionRate - b.rejectionRate,
+      render: (v: number) => <RejectionRateCell rate={v} />,
     },
     {
       title: '操作',
-      width: 100,
-      render: () => <Link to="/settlement">结算查询</Link>,
+      width: 96,
+      align: 'center',
+      fixed: 'right',
+      render: () => (
+        <Link className="cb-action-link" to="/settlement">
+          结算查询
+        </Link>
+      ),
     },
   ];
 
   return (
-    <div>
-      <Typography.Paragraph type="secondary" style={{ marginBottom: 16 }}>
-        按联盟订单 orderDate 汇总，仅展示有拒付金额的商家。数据以最后一次采集为准，状态变更请先在
+    <div className="chargeback-merchants">
+      <Typography.Paragraph className="chargeback-merchants__tip">
+        按联盟订单 orderDate 汇总本公司所有员工的拒付（全员共享），仅展示有拒付金额的商家。数据以最后一次采集为准，状态变更请先在
         <Link to="/settlement"> 结算查询 </Link>
         重新采集。
       </Typography.Paragraph>
 
-      <Card size="small" style={{ marginBottom: 16 }}>
-        <Space wrap align="center" size="middle">
+      <div className="chargeback-merchants__toolbar">
+        <div className="chargeback-merchants__toolbar-row">
           {isAdmin && (
             <Select
-              style={{ width: 180 }}
+              style={{ width: 160 }}
               value={scopeUserId ?? 'all'}
               options={[
                 { value: 'all', label: '全公司' },
@@ -269,16 +319,12 @@ export default function ChargebackMerchantsPage() {
             onChange={(v) => v && setDraftRange(v as [Dayjs, Dayjs])}
           />
           {DATE_PRESETS.map((p) => (
-            <Button
-              key={p.days}
-              size="small"
-              onClick={() => setDraftRange(lastNDaysToYesterday(p.days))}
-            >
+            <Button key={p.days} size="small" onClick={() => setDraftRange(lastNDaysToYesterday(p.days))}>
               {p.label}
             </Button>
           ))}
           <Select
-            style={{ width: 140 }}
+            style={{ width: 132 }}
             value={platformFilter}
             options={platformOptions}
             onChange={setPlatformFilter}
@@ -291,20 +337,18 @@ export default function ChargebackMerchantsPage() {
             onChange={(e) => setDraftSearch(e.target.value)}
             onSearch={applyQuery}
           />
-          <Space align="center">
-            <Typography.Text type="secondary">拒付率阈值</Typography.Text>
+          <div className="chargeback-merchants__threshold">
+            <span className="chargeback-merchants__threshold-label">拒付率阈值</span>
             <Slider
-              style={{ width: 160, margin: '0 8px' }}
+              style={{ flex: 1, minWidth: 120, maxWidth: 160, margin: 0 }}
               min={0}
               max={100}
               value={draftThreshold}
               onChange={setDraftThreshold}
               tooltip={{ formatter: (v) => `≥ ${v}%` }}
             />
-            <Typography.Text type="success" strong>
-              ≥ {draftThreshold}%
-            </Typography.Text>
-          </Space>
+            <span className="chargeback-merchants__threshold-value">≥ {draftThreshold}%</span>
+          </div>
           <Button type="primary" onClick={applyQuery}>
             查询
           </Button>
@@ -312,27 +356,36 @@ export default function ChargebackMerchantsPage() {
           <Button loading={loading} onClick={() => void loadData()}>
             刷新
           </Button>
-        </Space>
-        <Typography.Paragraph type="secondary" style={{ marginTop: 12, marginBottom: 0 }}>
+        </div>
+        <Typography.Paragraph className="chargeback-merchants__summary">
           当前生效：{range[0].format('YYYY-MM-DD')} ~ {range[1].format('YYYY-MM-DD')}，拒付率 ≥
           {rejectionThreshold}%（共 {filteredRows.length} 个商家）
         </Typography.Paragraph>
-      </Card>
+      </div>
 
-      <Card>
+      <div className="chargeback-merchants__panel">
         <Table
+          className="cb-table"
           rowKey={(r) => `${r.merchantId}|${r.platformCode}|${r.affiliateAlias}`}
           loading={loading}
           columns={columns}
           dataSource={filteredRows}
-          pagination={{ pageSize: 20, showSizeChanger: true, showTotal: (t) => `共 ${t} 条` }}
+          size="middle"
+          bordered
+          scroll={{ x: 1100 }}
+          pagination={{
+            pageSize: 20,
+            showSizeChanger: true,
+            showTotal: (t) => `共 ${t} 条`,
+            size: 'default',
+          }}
           locale={{
             emptyText: (
               <Empty description="该条件下暂无拒付商家，可调低阈值或扩大日期后查询" />
             ),
           }}
         />
-      </Card>
+      </div>
     </div>
   );
 }

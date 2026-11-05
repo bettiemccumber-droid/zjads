@@ -38,6 +38,8 @@ export class OrdersController {
         startDate: query.startDate,
         endDate: query.endDate,
         userId: query.userId ? parseInt(query.userId, 10) : undefined,
+        teamWide: query.teamWide === 'true' || query.teamWide === '1',
+        orgWide: query.orgWide === 'true' || query.orgWide === '1',
         channelAccountId: query.channelAccountId
           ? parseInt(query.channelAccountId, 10)
           : undefined,

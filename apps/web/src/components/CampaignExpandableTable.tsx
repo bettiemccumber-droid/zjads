@@ -108,6 +108,42 @@ function calcCr(orderCount: number, clicks: number) {
   return clicks > 0 ? (orderCount / clicks) * 100 : 0;
 }
 
+function netProfitValue(r: CampaignSummaryRow) {
+  return r.netProfit ?? r.commission - (r.rejectedCommission ?? 0) - r.cost;
+}
+
+/** 数值列排序（升/降序） */
+function sortByNum(pick: (r: CampaignSummaryRow) => number) {
+  return (a: CampaignSummaryRow, b: CampaignSummaryRow) => pick(a) - pick(b);
+}
+
+const SORT_DIRS: ('descend' | 'ascend')[] = ['descend', 'ascend'];
+
+/** 拒付佣金：无数据时显示灰色 $0.00（对齐竞品） */
+function RejectedCommissionCell({ value }: { value: number | undefined }) {
+  const n = Number(value ?? 0);
+  if (n > 0) {
+    return <MoneyCell value={n} variant="cost" />;
+  }
+  return <span className="cell-money-zero">$0.00</span>;
+}
+
+/** 净利润：为 0 时灰色 $0.00；正绿负红 */
+function NetProfitCell({ value }: { value: number }) {
+  const n = Math.round(Number(value) * 100) / 100;
+  if (Math.abs(n) < 0.005) {
+    return <span className="cell-money-zero">$0.00</span>;
+  }
+  return (
+    <span
+      className="cell-money"
+      style={{ color: n > 0 ? '#16a34a' : '#dc2626', fontWeight: 600 }}
+    >
+      ${n.toFixed(2)}
+    </span>
+  );
+}
+
 function formatDayLabel(dateStr: string) {
   const parts = dateStr.split('-');
   if (parts.length >= 3) return `${parts[1]}-${parts[2]}`;
@@ -610,6 +646,8 @@ export default function CampaignExpandableTable({
         width: 40,
         fixed: 'left',
         align: 'center',
+        sorter: sortByNum((r) => r.rank),
+        sortDirections: SORT_DIRS,
         render: (v: number) => <span className="cell-rank">{v}</span>,
       },
       {
@@ -618,6 +656,8 @@ export default function CampaignExpandableTable({
         width: 200,
         fixed: 'left',
         ellipsis: true,
+        sorter: (a, b) => a.campaignName.localeCompare(b.campaignName),
+        sortDirections: SORT_DIRS,
         render: (name: string, r) => {
           const linked = r.linkedCustomerIds?.filter(Boolean) ?? [];
           const multiAccount = linked.length > 1;
@@ -649,6 +689,8 @@ export default function CampaignExpandableTable({
         dataIndex: 'merchantId',
         width: 72,
         align: 'center',
+        sorter: (a, b) => (a.merchantId || '').localeCompare(b.merchantId || ''),
+        sortDirections: SORT_DIRS,
         render: (v: string) => <span className="cell-merchant-id">{v || '—'}</span>,
       },
       {
@@ -656,6 +698,8 @@ export default function CampaignExpandableTable({
         dataIndex: 'dailyBudget',
         width: 64,
         align: 'center',
+        sorter: sortByNum((r) => r.dailyBudget),
+        sortDirections: SORT_DIRS,
         render: (v: number) => <MoneyCell value={v} />,
       },
     ];
@@ -666,6 +710,8 @@ export default function CampaignExpandableTable({
         dataIndex: 'impressions',
         width: 62,
         align: 'center',
+        sorter: sortByNum((r) => r.impressions),
+        sortDirections: SORT_DIRS,
         render: (v: number) => <NumCell value={v} />,
       });
     }
@@ -676,6 +722,8 @@ export default function CampaignExpandableTable({
         dataIndex: 'clicks',
         width: 68,
         align: 'center',
+        sorter: sortByNum((r) => r.clicks),
+        sortDirections: SORT_DIRS,
         render: (v: number) => <NumCell value={v} />,
       },
     );
@@ -686,6 +734,8 @@ export default function CampaignExpandableTable({
         dataIndex: 'affiliateClicks',
         width: 68,
         align: 'center',
+        sorter: sortByNum((r) => r.affiliateClicks ?? 0),
+        sortDirections: SORT_DIRS,
         render: (v: number) => <NumCell value={v ?? 0} tone="affiliate" />,
       });
     }
@@ -697,6 +747,8 @@ export default function CampaignExpandableTable({
         width: 76,
         align: 'center',
         ...kpiColumn('cost'),
+        sorter: sortByNum((r) => r.cost),
+        sortDirections: SORT_DIRS,
         render: (v: number) => <MoneyCell value={v} variant="cost" kpi />,
       },
       {
@@ -704,6 +756,8 @@ export default function CampaignExpandableTable({
         dataIndex: 'orderCount',
         width: 52,
         align: 'center',
+        sorter: sortByNum((r) => r.orderCount),
+        sortDirections: SORT_DIRS,
         render: (v: number) => <NumCell value={v} />,
       },
       {
@@ -712,36 +766,27 @@ export default function CampaignExpandableTable({
         width: 76,
         align: 'center',
         ...kpiColumn('commission'),
+        sorter: sortByNum((r) => r.commission),
+        sortDirections: SORT_DIRS,
         render: (v: number) => <MoneyCell value={v} variant="commission" kpi />,
       },
       {
-        title: '拒付',
+        title: '拒付佣金',
         dataIndex: 'rejectedCommission',
-        width: 68,
+        width: 72,
         align: 'center',
-        render: (v: number | undefined) =>
-          (v ?? 0) > 0 ? (
-            <MoneyCell value={v ?? 0} variant="cost" />
-          ) : (
-            <span className="cell-metric-muted">—</span>
-          ),
+        sorter: sortByNum((r) => r.rejectedCommission ?? 0),
+        sortDirections: SORT_DIRS,
+        render: (v: number | undefined) => <RejectedCommissionCell value={v} />,
       },
       {
         title: '净利润',
         dataIndex: 'netProfit',
         width: 72,
         align: 'center',
-        render: (v: number | undefined, r) => {
-          const n = v ?? r.commission - (r.rejectedCommission ?? 0) - r.cost;
-          return (
-            <span
-              className="cell-money"
-              style={{ color: n >= 0 ? '#16a34a' : '#dc2626', fontWeight: 600 }}
-            >
-              ${n.toFixed(2)}
-            </span>
-          );
-        },
+        sorter: sortByNum(netProfitValue),
+        sortDirections: SORT_DIRS,
+        render: (_v: number | undefined, r) => <NetProfitCell value={netProfitValue(r)} />,
       },
     );
 
@@ -750,6 +795,8 @@ export default function CampaignExpandableTable({
         title: 'CR',
         width: 56,
         align: 'center',
+        sorter: sortByNum((r) => calcCr(r.orderCount, r.clicks)),
+        sortDirections: SORT_DIRS,
         render: (_, r) => {
           const cr = calcCr(r.orderCount, r.clicks);
           return r.clicks > 0 ? (
@@ -767,6 +814,8 @@ export default function CampaignExpandableTable({
         dataIndex: 'epc',
         width: 56,
         align: 'center',
+        sorter: sortByNum((r) => r.epc),
+        sortDirections: SORT_DIRS,
         render: (v: number) => (
           <span className="cell-metric-muted">${Number(v).toFixed(2)}</span>
         ),
@@ -779,6 +828,8 @@ export default function CampaignExpandableTable({
         dataIndex: 'avgCpc',
         width: 56,
         align: 'center',
+        sorter: sortByNum((r) => r.avgCpc),
+        sortDirections: SORT_DIRS,
         render: (v: number) => (
           <span className="cell-metric-muted">${Number(v).toFixed(2)}</span>
         ),
@@ -792,7 +843,8 @@ export default function CampaignExpandableTable({
       align: 'center',
       ...kpiColumn('roi'),
       defaultSortOrder: 'descend',
-      sorter: (a, b) => a.roi - b.roi,
+      sorter: sortByNum((r) => r.roi),
+      sortDirections: SORT_DIRS,
       render: (v: number) => <RoiCell value={v} size="daily" />,
     });
 
@@ -858,6 +910,7 @@ export default function CampaignExpandableTable({
         scroll={mergedScroll}
         pagination={pagination}
         tableLayout="fixed"
+        showSorterTooltip={{ title: '点击排序' }}
         rowClassName={(r) => {
           const key = campaignKey(r);
           const expanded = expandedKeys.includes(key);

@@ -58,16 +58,30 @@ function parseYmdFlexible(raw: string | null | undefined): string | null {
 
 function lbResponseCode(body: unknown): number | string | undefined {
   const root = body as Record<string, unknown>;
-  const status = root.status as { code?: number | string; msg?: string } | undefined;
+  const statusRaw = root.status;
+  if (typeof statusRaw === 'number' || typeof statusRaw === 'string') return statusRaw;
+  const status = statusRaw as { code?: number | string; msg?: string } | undefined;
   const code = status?.code ?? root.code;
   if (typeof code === 'number' || typeof code === 'string') return code;
   return undefined;
 }
 
-/** 1003 多为缺参/错误 op，探测下一组参数即可 */
+function lbResponseMsg(body: unknown): string {
+  const root = body as Record<string, unknown>;
+  const statusRaw = root.status;
+  if (statusRaw && typeof statusRaw === 'object') {
+    return String((statusRaw as { msg?: string }).msg ?? '');
+  }
+  return String(root.msg ?? root.info ?? '');
+}
+
+/** 1003 缺参；api2 的 1001 missing auth_token 仅支持登录 Cookie，可跳过 */
 function isLbSkippableProbeError(body: unknown): boolean {
   const code = lbResponseCode(body);
-  return code === 1003 || code === '1003';
+  const msg = lbResponseMsg(body).toLowerCase();
+  if (code === 1003 || code === '1003') return true;
+  if ((code === 1001 || code === '1001') && msg.includes('auth_token')) return true;
+  return false;
 }
 
 function assertLbSuccess(body: unknown): void {
@@ -218,25 +232,20 @@ export async function fetchLinkbuxPayments(
   const merged = new Map<string, LinkbuxPaymentRow>();
   let lastError: Error | null = null;
 
-  try {
-    const api2Rows = await fetchLinkbuxPaymentsFromPublisherApi2(token, beginDate, endDate);
-    mergePaymentRows(merged, api2Rows);
-  } catch (err) {
-    lastError = err instanceof Error ? err : new Error(String(err));
-  }
-
+  /**
+   * 媒体 Token 走 api.php（settlement / linkpayment）。
+   * 后台 Network 的 api2.php?get_payment 需登录 Cookie auth_token，服务端无法用渠道 Token 复现。
+   */
   const attempts: Array<{ mod: string; op: string; extra: Record<string, string> }> = [
-    { mod: 'payment', op: 'get_payment', extra: {} },
-    { mod: 'payment', op: 'get_payment', extra: { begin_date: beginDate, end_date: endDate } },
-    {
-      mod: 'settlement',
-      op: 'payments',
-      extra: { request_begin: beginDate, request_end: endDate },
-    },
     {
       mod: 'settlement',
       op: 'payments',
       extra: { begin_date: beginDate, end_date: endDate },
+    },
+    {
+      mod: 'settlement',
+      op: 'payments',
+      extra: { request_begin: beginDate, request_end: endDate },
     },
     {
       mod: 'settlement',
@@ -247,11 +256,6 @@ export async function fetchLinkbuxPayments(
       mod: 'settlement',
       op: 'payments',
       extra: { payment_begin: beginDate, payment_end: endDate },
-    },
-    {
-      mod: 'settlement',
-      op: 'payment',
-      extra: { begin_date: beginDate, end_date: endDate },
     },
     {
       mod: 'settlement',
@@ -263,10 +267,16 @@ export async function fetchLinkbuxPayments(
       op: 'payment2',
       extra: { payment_begin: beginDate, payment_end: endDate },
     },
-    { mod: 'settlement', op: 'payment_list', extra: {} },
-    { mod: 'settlement', op: 'payments', extra: {} },
-    { mod: 'settlement', op: 'payment_history', extra: {} },
-    { mod: 'linkpayment', op: 'payment2', extra: {} },
+    {
+      mod: 'linkpayment',
+      op: 'payment',
+      extra: { begin_date: beginDate, end_date: endDate },
+    },
+    {
+      mod: 'linkpayment',
+      op: 'payment2',
+      extra: { begin_date: beginDate, end_date: endDate },
+    },
   ];
 
   for (const attempt of attempts) {
@@ -291,7 +301,23 @@ export async function fetchLinkbuxPayments(
     }
   }
 
+  if (merged.size === 0) {
+    try {
+      mergePaymentRows(
+        merged,
+        await fetchLinkbuxPaymentsFromPublisherApi2(token, beginDate, endDate),
+      );
+    } catch (err) {
+      if (!lastError) lastError = err instanceof Error ? err : new Error(String(err));
+    }
+  }
+
   if (merged.size === 0 && lastError) throw lastError;
+  if (merged.size === 0) {
+    throw new Error(
+      'LinkBux 付款历史为空：请确认渠道 Token 有效（Tools API Token，非后台 JWT）。后台 get_payment 仅浏览器登录可用。',
+    );
+  }
   return [...merged.values()];
 }
 

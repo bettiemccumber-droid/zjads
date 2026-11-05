@@ -21,7 +21,7 @@ import {
   ReloadOutlined,
   SaveOutlined,
   EditOutlined,
-  UndoOutlined,
+  SyncOutlined,
 } from '@ant-design/icons';
 import { Link } from 'react-router-dom';
 import { api, type ApiResult } from '../../api/client';
@@ -679,12 +679,12 @@ export default function SettlementClassicMonthlyPanel({
     const draft = draftFor(kind);
     const setDraft = setDraftFor(kind);
     const usd = cellUsd(rowKey, cKey, kind);
-    const canClickEdit =
-      canEdit && manualAdjustMode && field !== undefined;
+    const canClickEdit = canEdit;
     const focusKey = commissionCellKey(kind, cKey, field);
     const isActive = activeCommissionCell === focusKey;
-    const manual = canClickEdit && isHalfManual(cKey, field, kind);
     const isTotalRow = rowKey === 'recv_total' || rowKey === 'actual_total';
+    const manual = canClickEdit && isHalfManual(cKey, field, kind);
+    const showReset = canClickEdit && !isTotalRow;
     const displayUsd = canClickEdit && !isTotalRow ? (draft[cKey]?.[field] ?? 0) : usd;
     const cellClass = [
       layout === 'singleUsd' ? 'sr-cell-single-usd' : undefined,
@@ -733,11 +733,13 @@ export default function SettlementClassicMonthlyPanel({
         }}
       >
         <span className="sr-money-usd">{fmtUsd(displayUsd)}</span>
-        {canClickEdit && <EditOutlined className="sr-cell-pencil" aria-hidden />}
-        {manual && (
+        {canClickEdit && !isTotalRow && (
+          <EditOutlined className="sr-cell-action sr-cell-pencil" aria-hidden />
+        )}
+        {showReset && (
           <Tooltip title="清除手填，恢复系统计算值">
-            <UndoOutlined
-              className="sr-cell-reset"
+            <SyncOutlined
+              className={`sr-cell-action sr-cell-reset${manual ? ' sr-cell-reset-active' : ''}`}
               onClick={(e) => {
                 e.stopPropagation();
                 resetCommissionHalf(cKey, field, kind);
@@ -817,15 +819,17 @@ export default function SettlementClassicMonthlyPanel({
     );
   };
 
-  const toggleManualAdjust = async () => {
+  const saveCommissionDrafts = async () => {
+    setActiveCommissionCell(null);
+    await saveReceivable();
+    await saveActual();
+    message.success('应收/实收已保存');
+  };
+
+  const toggleManualAdjust = () => {
+    setManualAdjustMode((v) => !v);
     if (manualAdjustMode) {
-      setActiveCommissionCell(null);
-      await saveReceivable();
-      await saveActual();
-      setManualAdjustMode(false);
-      message.success('应收/实收已保存');
-    } else {
-      setManualAdjustMode(true);
+      void saveCommissionDrafts();
     }
   };
 
@@ -1099,10 +1103,17 @@ export default function SettlementClassicMonthlyPanel({
                   <Button
                     size="small"
                     type={manualAdjustMode ? 'primary' : 'default'}
-                    loading={savingReceivable || savingActual}
-                    onClick={() => void toggleManualAdjust()}
+                    onClick={() => toggleManualAdjust()}
                   >
                     {manualAdjustMode ? '完成手工调整' : '手工调整'}
+                  </Button>
+                  <Button
+                    size="small"
+                    icon={<SaveOutlined />}
+                    loading={savingReceivable || savingActual}
+                    onClick={() => void saveCommissionDrafts()}
+                  >
+                    保存应收/实收
                   </Button>
                 </>
               )}
@@ -1252,8 +1263,8 @@ export default function SettlementClassicMonthlyPanel({
             )}
           </Spin>
           <p className="sr-tip">
-            账期/失效来自订单同步。应收/实收默认只读；点「手工调整」后点击单元格可改数（蓝底为已手填，↺
-            恢复系统值）。实收列展示 USD/CNY；账期/应收仅美金。CNY 按页头汇率。收款人见{' '}
+            账期/失效来自订单同步。应收/实收：鼠标悬停 USD 单元格出现铅笔与恢复图标，点击改数（蓝底为已手填）。
+            改完点「保存应收/实收」。实收列 USD/CNY；账期/应收仅美金。CNY 按页头汇率。收款人见{' '}
             <Link to="/channel-accounts">平台账号</Link>。
           </p>
         </div>

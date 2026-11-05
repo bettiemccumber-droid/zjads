@@ -124,6 +124,7 @@ export default function SettlementClassicMonthlyPanel({
   const [receivableDraft, setReceivableDraft] = useState<CommissionHalfDraft>({});
   const [savingActual, setSavingActual] = useState(false);
   const [savingReceivable, setSavingReceivable] = useState(false);
+  const [syncingRw, setSyncingRw] = useState(false);
   const [adSpendDraft, setAdSpendDraft] = useState<AdSpendDraftLine[]>([]);
   const [rebateDraft, setRebateDraft] = useState(0);
   const [savingAdSpend, setSavingAdSpend] = useState(false);
@@ -302,6 +303,46 @@ export default function SettlementClassicMonthlyPanel({
       message.error('保存广告费失败');
     } finally {
       setSavingAdSpend(false);
+    }
+  };
+
+  const syncRewardooPayments = async () => {
+    if (!report?.canEditActualCommission) return;
+    setSyncingRw(true);
+    try {
+      const body: { month: string; userId?: string } = { month: monthStr };
+      if (effectiveScopeUserId != null) {
+        body.userId = String(effectiveScopeUserId);
+      }
+      const { data } = await api.post<
+        ApiResult<{
+          month: string;
+          synced: Array<{
+            channelAccountId: number;
+            displayName: string;
+            affiliateAlias: string;
+            paymentRowCount: number;
+            error?: string;
+          }>;
+        }>
+      >('/reports/settlement-monthly/sync-rewardoo-payments', body);
+      if (!data.success) {
+        message.error(data.message || '同步失败');
+        return;
+      }
+      const failed = data.data.synced.filter((s) => s.error);
+      if (failed.length) {
+        message.warning(
+          `RW 部分账号同步失败：${failed.map((f) => f.displayName).join('、')}`,
+        );
+      } else {
+        message.success(`已同步 ${data.data.synced.length} 个 Rewardoo 账号打款`);
+      }
+      await loadReport();
+    } catch {
+      message.error('同步 Rewardoo 打款失败');
+    } finally {
+      setSyncingRw(false);
     }
   };
 
@@ -734,6 +775,9 @@ export default function SettlementClassicMonthlyPanel({
             <Space size="small">
               {canEdit && (
                 <>
+                  <Button size="small" loading={syncingRw} onClick={() => void syncRewardooPayments()}>
+                    同步 RW 打款
+                  </Button>
                   <Button
                     size="small"
                     icon={<SaveOutlined />}

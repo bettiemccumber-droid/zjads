@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Put, Query, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, Post, Put, Query, UseGuards } from '@nestjs/common';
 import { AuthGuard } from '@nestjs/passport';
 import { UserRole } from '@prisma/client';
 import { Type } from 'class-transformer';
@@ -24,6 +24,7 @@ import { SettlementAdSpendService } from './settlement-ad-spend.service';
 import { SettlementMonthlyReportService } from './settlement-monthly-report.service';
 import { SettlementPayoutInfoService } from './settlement-payout-info.service';
 import { SettlementReceivableCommissionService } from './settlement-receivable-commission.service';
+import { SettlementRewardooPaymentsSyncService } from './settlement-rewardoo-payments-sync.service';
 
 class DateRangeQuery {
   @IsDateString()
@@ -160,6 +161,7 @@ export class ReportsController {
     private readonly settlementAdSpend: SettlementAdSpendService,
     private readonly settlementPayoutInfo: SettlementPayoutInfoService,
     private readonly settlementReceivableCommission: SettlementReceivableCommissionService,
+    private readonly settlementRewardooPaymentsSync: SettlementRewardooPaymentsSyncService,
   ) {}
 
   @Get('merchant-summary')
@@ -235,6 +237,21 @@ export class ReportsController {
         parseRefreshFx(q.refreshFx),
       ),
     );
+  }
+
+  /** 从 Rewardoo Payments API 同步 RW 列应收/实收 */
+  @Post('settlement-monthly/sync-rewardoo-payments')
+  async syncSettlementRewardooPayments(
+    @CurrentUser() user: AuthUser,
+    @Body() body: SaveSettlementActualCommissionDto,
+  ) {
+    const queryUserId = body.userId ? parseInt(body.userId, 10) : undefined;
+    const result = await this.settlementRewardooPaymentsSync.syncForMonth(
+      user,
+      body.month,
+      queryUserId,
+    );
+    return ok(result);
   }
 
   /** 保存月度应收佣金（各平台后台口径，按渠道账号列） */

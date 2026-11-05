@@ -6,7 +6,9 @@ import { SettlementAdSpendService } from './settlement-ad-spend.service';
 import { SettlementMonthlyReportService } from './settlement-monthly-report.service';
 import { SettlementPayoutInfoService } from './settlement-payout-info.service';
 import { SettlementReceivableCommissionService } from './settlement-receivable-commission.service';
+import { SettlementRewardooPaymentsSyncService } from './settlement-rewardoo-payments-sync.service';
 import { SettlementUsdCnyRateService } from './settlement-usd-cny-rate.service';
+import { CryptoService } from '../common/crypto.service';
 
 @Module({
   controllers: [ReportsController],
@@ -17,6 +19,8 @@ import { SettlementUsdCnyRateService } from './settlement-usd-cny-rate.service';
     SettlementUsdCnyRateService,
     SettlementPayoutInfoService,
     SettlementReceivableCommissionService,
+    SettlementRewardooPaymentsSyncService,
+    CryptoService,
     SettlementMonthlyReportService,
   ],
   exports: [

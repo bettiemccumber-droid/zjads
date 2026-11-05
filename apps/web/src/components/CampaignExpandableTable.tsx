@@ -1,15 +1,44 @@
 import { useMemo, useState } from 'react';
-import { EditOutlined, EyeOutlined } from '@ant-design/icons';
-import { Button, Input, Modal, Popover, Space, Table, Typography } from 'antd';
+import { EditOutlined, EyeOutlined, SettingOutlined } from '@ant-design/icons';
+import { Button, Checkbox, Input, Modal, Popover, Space, Table, Typography } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
 import { isEnabledCampaignStatus } from '../utils/campaign-status';
 import './CampaignExpandableTable.css';
 
-/** 主表列宽合计 + 展开列留白 */
-export const CAMPAIGN_MAIN_SCROLL_X = 1780;
+/** 主表横向滚动宽度（紧凑布局，配合固定列） */
+export const CAMPAIGN_MAIN_SCROLL_X = 1280;
 
 /** 按天子表列宽合计 */
-export const CAMPAIGN_DAILY_SCROLL_X = 1176;
+export const CAMPAIGN_DAILY_SCROLL_X = 1040;
+
+const OPTIONAL_COLUMN_STORAGE_KEY = 'zjads.campaignOptionalColumns';
+
+type OptionalColumnKey = 'impressions' | 'affiliateClicks' | 'epc' | 'cpc';
+
+const OPTIONAL_COLUMN_LABELS: Record<OptionalColumnKey, string> = {
+  impressions: '展示',
+  affiliateClicks: '联盟点击',
+  epc: 'EPC',
+  cpc: 'CPC',
+};
+
+const DEFAULT_OPTIONAL_COLUMNS: Record<OptionalColumnKey, boolean> = {
+  impressions: false,
+  affiliateClicks: true,
+  epc: false,
+  cpc: false,
+};
+
+function loadOptionalColumns(): Record<OptionalColumnKey, boolean> {
+  try {
+    const raw = localStorage.getItem(OPTIONAL_COLUMN_STORAGE_KEY);
+    if (!raw) return { ...DEFAULT_OPTIONAL_COLUMNS };
+    const parsed = JSON.parse(raw) as Partial<Record<OptionalColumnKey, boolean>>;
+    return { ...DEFAULT_OPTIONAL_COLUMNS, ...parsed };
+  } catch {
+    return { ...DEFAULT_OPTIONAL_COLUMNS };
+  }
+}
 
 export interface CampaignDailyRow {
   date: string;
@@ -183,7 +212,22 @@ function suggestionStatusClass(text: string) {
 /**
  * 操作建议列：状态文案 + 编辑 + 查看（对齐参考表）
  */
-function OperationSuggestionCell({ row }: { row: CampaignSummaryRow }) {
+/** 分析列：仅图标，详情在 Popover（节省横向空间） */
+function OperationAnalysisCell({ row }: { row: CampaignSummaryRow }) {
+  return (
+    <div className="operation-analysis-cell">
+      <OperationSuggestionCell row={row} compact />
+    </div>
+  );
+}
+
+function OperationSuggestionCell({
+  row,
+  compact = false,
+}: {
+  row: CampaignSummaryRow;
+  compact?: boolean;
+}) {
   const text = row.operationSuggestion || '';
   const [editOpen, setEditOpen] = useState(false);
   const [viewOpen, setViewOpen] = useState(false);
@@ -215,6 +259,77 @@ function OperationSuggestionCell({ row }: { row: CampaignSummaryRow }) {
     setSavedNote(userNote.trim());
     setEditOpen(false);
   };
+
+  if (compact) {
+    return (
+      <>
+        <Popover
+          open={viewOpen}
+          onOpenChange={setViewOpen}
+          trigger="click"
+          placement="leftTop"
+          content={
+            <div>
+              {detailContent}
+              <Button
+                type="link"
+                size="small"
+                icon={<EditOutlined />}
+                onClick={() => {
+                  setUserNote(savedNote);
+                  setEditOpen(true);
+                }}
+                style={{ paddingLeft: 0, marginTop: 8 }}
+              >
+                编辑备注
+              </Button>
+            </div>
+          }
+          title={text || '操作建议'}
+        >
+          <Button
+            type="text"
+            size="small"
+            className="operation-view-btn"
+            icon={<EyeOutlined />}
+            aria-label="分析"
+          />
+        </Popover>
+        <Modal
+          title="编辑操作建议"
+          open={editOpen}
+          onOk={handleSaveNote}
+          onCancel={() => setEditOpen(false)}
+          okText="保存备注"
+          cancelText="取消"
+          destroyOnClose
+          width={400}
+        >
+          <Space direction="vertical" style={{ width: '100%' }} size="middle">
+            <div>
+              <Typography.Text type="secondary">广告系列</Typography.Text>
+              <div>{row.campaignName}</div>
+            </div>
+            <div>
+              <Typography.Text type="secondary">系统建议</Typography.Text>
+              <div>
+                <Typography.Text strong>{text || '—'}</Typography.Text>
+              </div>
+            </div>
+            <div>
+              <Typography.Text type="secondary">我的备注（仅本页会话）</Typography.Text>
+              <Input.TextArea
+                rows={3}
+                placeholder="记录复核结论，如：维持预算、下调 CPC 等"
+                value={userNote}
+                onChange={(e) => setUserNote(e.target.value)}
+              />
+            </div>
+          </Space>
+        </Modal>
+      </>
+    );
+  }
 
   return (
     <>
@@ -358,6 +473,12 @@ export default function CampaignExpandableTable({
   rowClassName,
 }: CampaignExpandableTableProps) {
   const [expandedKeys, setExpandedKeys] = useState<string[]>([]);
+  const [optionalColumns, setOptionalColumns] = useState(loadOptionalColumns);
+
+  const persistOptionalColumns = (next: Record<OptionalColumnKey, boolean>) => {
+    setOptionalColumns(next);
+    localStorage.setItem(OPTIONAL_COLUMN_STORAGE_KEY, JSON.stringify(next));
+  };
 
   const dailyColumns: ColumnsType<CampaignDailyRow> = useMemo(
     () => [
@@ -478,112 +599,126 @@ export default function CampaignExpandableTable({
     [],
   );
 
-  const columns: ColumnsType<CampaignSummaryRow> = useMemo(
-    () => [
+  const { columns, scrollX } = useMemo(() => {
+    const cols: ColumnsType<CampaignSummaryRow> = [
       {
-        title: '排名',
+        title: '#',
         dataIndex: 'rank',
-        width: 52,
+        width: 40,
+        fixed: 'left',
         align: 'center',
         render: (v: number) => <span className="cell-rank">{v}</span>,
       },
       {
         title: '广告系列',
         dataIndex: 'campaignName',
-        width: 280,
+        width: 200,
+        fixed: 'left',
         ellipsis: true,
         render: (name: string, r) => {
           const linked = r.linkedCustomerIds?.filter(Boolean) ?? [];
           const multiAccount = linked.length > 1;
           return (
-          <div className="campaign-name-cell">
-            <span
-              className={`campaign-status-dot ${isEnabledCampaignStatus(r.campaignStatus ?? '') ? 'on' : 'off'}`}
-            />
-            <span className="campaign-name-text" title={name}>
-              {name}
-            </span>
-            {multiAccount ? (
+            <div className="campaign-name-cell">
               <span
-                className="campaign-account-badge"
-                title={`曾用 ${linked.length} 个 Google 子账号：${linked.join('、')}`}
-              >
-                {linked.length}账号
+                className={`campaign-status-dot ${isEnabledCampaignStatus(r.campaignStatus ?? '') ? 'on' : 'off'}`}
+              />
+              <span className="campaign-name-text" title={name}>
+                {name}
               </span>
-            ) : null}
-            {r.daily.length > 0 ? (
-              <span className="campaign-day-badge">{r.daily.length}天</span>
-            ) : null}
-          </div>
+              {multiAccount ? (
+                <span
+                  className="campaign-account-badge"
+                  title={`曾用 ${linked.length} 个 Google 子账号：${linked.join('、')}`}
+                >
+                  {linked.length}号
+                </span>
+              ) : null}
+              {r.daily.length > 0 ? (
+                <span className="campaign-day-badge">{r.daily.length}天</span>
+              ) : null}
+            </div>
           );
         },
       },
       {
         title: '商家ID',
         dataIndex: 'merchantId',
-        width: 88,
+        width: 72,
         align: 'center',
         render: (v: string) => <span className="cell-merchant-id">{v || '—'}</span>,
       },
       {
         title: '预算',
         dataIndex: 'dailyBudget',
-        width: 72,
+        width: 64,
         align: 'center',
         render: (v: number) => <MoneyCell value={v} />,
       },
-      {
+    ];
+
+    if (optionalColumns.impressions) {
+      cols.push({
         title: '展示',
         dataIndex: 'impressions',
+        width: 62,
+        align: 'center',
+        render: (v: number) => <NumCell value={v} />,
+      });
+    }
+
+    cols.push(
+      {
+        title: 'MCC点击',
+        dataIndex: 'clicks',
         width: 68,
         align: 'center',
         render: (v: number) => <NumCell value={v} />,
       },
-      {
-        title: 'MCC点击',
-        dataIndex: 'clicks',
-        width: 80,
-        align: 'center',
-        render: (v: number) => <NumCell value={v} />,
-      },
-      {
+    );
+
+    if (optionalColumns.affiliateClicks) {
+      cols.push({
         title: '联盟点击',
         dataIndex: 'affiliateClicks',
-        width: 80,
+        width: 68,
         align: 'center',
         render: (v: number) => <NumCell value={v ?? 0} tone="affiliate" />,
-      },
+      });
+    }
+
+    cols.push(
       {
         title: '广告费',
         dataIndex: 'cost',
-        width: 92,
+        width: 76,
         align: 'center',
         ...kpiColumn('cost'),
         render: (v: number) => <MoneyCell value={v} variant="cost" kpi />,
       },
       {
-        title: '订单数',
+        title: '订单',
         dataIndex: 'orderCount',
-        width: 64,
+        width: 52,
         align: 'center',
         render: (v: number) => <NumCell value={v} />,
       },
       {
         title: '总佣金',
         dataIndex: 'commission',
-        width: 96,
+        width: 76,
         align: 'center',
         ...kpiColumn('commission'),
         render: (v: number) => <MoneyCell value={v} variant="commission" kpi />,
       },
       {
-        title: '拒付佣金',
+        title: '拒付',
         dataIndex: 'rejectedCommission',
-        width: 96,
+        width: 68,
         align: 'center',
         render: (v: number | undefined) =>
           (v ?? 0) > 0 ? (
-            <MoneyCell value={v ?? 0} variant="cost" kpi />
+            <MoneyCell value={v ?? 0} variant="cost" />
           ) : (
             <span className="cell-metric-muted">—</span>
           ),
@@ -591,7 +726,7 @@ export default function CampaignExpandableTable({
       {
         title: '净利润',
         dataIndex: 'netProfit',
-        width: 96,
+        width: 72,
         align: 'center',
         render: (v: number | undefined, r) => {
           const n = v ?? r.commission - (r.rejectedCommission ?? 0) - r.cost;
@@ -607,7 +742,7 @@ export default function CampaignExpandableTable({
       },
       {
         title: 'CR',
-        width: 68,
+        width: 56,
         align: 'center',
         render: (_, r) => {
           const cr = calcCr(r.orderCount, r.clicks);
@@ -618,56 +753,103 @@ export default function CampaignExpandableTable({
           );
         },
       },
-      {
+    );
+
+    if (optionalColumns.epc) {
+      cols.push({
         title: 'EPC',
         dataIndex: 'epc',
-        width: 68,
+        width: 56,
         align: 'center',
         render: (v: number) => (
           <span className="cell-metric-muted">${Number(v).toFixed(2)}</span>
         ),
-      },
-      {
+      });
+    }
+
+    if (optionalColumns.cpc) {
+      cols.push({
         title: 'CPC',
         dataIndex: 'avgCpc',
-        width: 68,
+        width: 56,
         align: 'center',
         render: (v: number) => (
           <span className="cell-metric-muted">${Number(v).toFixed(2)}</span>
         ),
-      },
-      {
-        title: 'ROI',
-        dataIndex: 'roi',
-        width: 88,
-        align: 'center',
-        ...kpiColumn('roi'),
-        defaultSortOrder: 'descend',
-        sorter: (a, b) => a.roi - b.roi,
-        render: (v: number) => <RoiCell value={v} size="main" />,
-      },
-      {
-        title: '操作建议',
-        dataIndex: 'operationSuggestion',
-        width: 128,
-        align: 'left',
-        className: 'operation-suggestion-td',
-        onCell: () => ({ className: 'operation-suggestion-td' }),
-        render: (_, row) => <OperationSuggestionCell row={row} />,
-      },
-    ],
-    [],
+      });
+    }
+
+    cols.push({
+      title: 'ROI',
+      dataIndex: 'roi',
+      width: 64,
+      align: 'center',
+      ...kpiColumn('roi'),
+      defaultSortOrder: 'descend',
+      sorter: (a, b) => a.roi - b.roi,
+      render: (v: number) => <RoiCell value={v} size="daily" />,
+    });
+
+    cols.push({
+      title: '分析',
+      key: 'analysis',
+      width: 48,
+      fixed: 'right',
+      align: 'center',
+      render: (_, row) => <OperationAnalysisCell row={row} />,
+    });
+
+    const totalWidth =
+      cols.reduce((sum, c) => sum + (typeof c.width === 'number' ? c.width : 72), 0) + 48;
+    return { columns: cols, scrollX: Math.max(totalWidth, 960) };
+  }, [optionalColumns]);
+
+  const columnSettings = (
+    <Popover
+      trigger="click"
+      placement="bottomRight"
+      title="显示列"
+      content={
+        <Space direction="vertical">
+          {(Object.keys(OPTIONAL_COLUMN_LABELS) as OptionalColumnKey[]).map((key) => (
+            <Checkbox
+              key={key}
+              checked={optionalColumns[key]}
+              onChange={(e) =>
+                persistOptionalColumns({ ...optionalColumns, [key]: e.target.checked })
+              }
+            >
+              {OPTIONAL_COLUMN_LABELS[key]}
+            </Checkbox>
+          ))}
+          <Typography.Text type="secondary" style={{ fontSize: 11 }}>
+            核心列固定显示；左侧系列名、右侧分析固定不滚动。
+          </Typography.Text>
+        </Space>
+      }
+    >
+      <Button size="small" icon={<SettingOutlined />}>
+        列设置
+      </Button>
+    </Popover>
   );
+
+  const mergedScroll = {
+    x: scroll?.x ?? scrollX,
+    y: scroll?.y,
+  };
 
   return (
     <div className="campaign-report-wrap">
+      <div className="campaign-table-toolbar">{columnSettings}</div>
       <Table<CampaignSummaryRow>
-        className="campaign-report-table"
+        className="campaign-report-table campaign-report-table--compact"
         rowKey={(r) => campaignKey(r)}
         loading={loading}
+        size="small"
         columns={columns}
         dataSource={rows}
-        scroll={scroll ?? { x: CAMPAIGN_MAIN_SCROLL_X }}
+        scroll={mergedScroll}
         pagination={pagination}
         tableLayout="fixed"
         rowClassName={(r) => {

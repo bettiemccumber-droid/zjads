@@ -47,7 +47,6 @@ import SyncJobStatus, { type SyncJobDetail } from '../components/SyncJobStatus';
 import { SheetCollectionCell } from '../components/CollectionStatusCells';
 import CampaignExpandableTable, {
   attachDailyToCampaigns,
-  CAMPAIGN_MAIN_SCROLL_X,
   type CampaignDailyRow,
 } from '../components/CampaignExpandableTable';
 import CampaignReportToolbar, {
@@ -794,7 +793,7 @@ export default function DashboardPage() {
   });
 
   /** 表头固定，数据区内部滚动 */
-  const tableScroll = { x: CAMPAIGN_MAIN_SCROLL_X, y: REPORT_TABLE_BODY_HEIGHT };
+  const tableScroll = { y: REPORT_TABLE_BODY_HEIGHT };
 
 
 

@@ -28,6 +28,8 @@ export interface SettlementMonthlyAdSpendRow {
   spendUsd: number;
   ownerUserId: number;
   adSourceId: number;
+  /** 多 MCC 未绑子账号且本行未分到花费（需重新导入 Sheet） */
+  splitBindingPending?: boolean;
 }
 
 export interface SettlementMonthlyColumn {
@@ -73,6 +75,8 @@ export interface SettlementMonthlyReport {
   canEditActualCommission: boolean;
   canEditAdSpend: boolean;
   canEditPayoutInfo: boolean;
+  /** 存在多 MCC 未绑 Google 子账号，广告费临时合并到首个 MCC */
+  adSpendSplitPending: boolean;
   notes: string[];
 }
 
@@ -137,6 +141,7 @@ export class SettlementMonthlyReportService {
     const adSpendMeta = await this.adSpend.loadMeta(scopeKey, month);
     let adSpendRows = await this.buildAdSpendRows(ownerIds, startDate, endDate);
     adSpendRows = this.mergeAdSpendSaved(adSpendRows, adSpendSaved);
+    const adSpendSplitPending = adSpendRows.some((r) => r.splitBindingPending);
     const adSpendTotalUsd = roundMoney(adSpendRows.reduce((s, r) => s + r.spendUsd, 0));
     const activeCampaignCount = await this.countActiveCampaigns(ownerIds, startDate, endDate);
 
@@ -161,7 +166,13 @@ export class SettlementMonthlyReportService {
       '补充金额与「广告费可改」可保存；未保存时广告费等于库内汇总。',
       'CNY 折算按页头实时 USD/CNY；点击「刷新」可强制更新汇率（默认缓存 5 分钟）。',
       '收款人/卡号按各渠道账号维护，可在「平台账号」或本页保存。',
+      `本报表统计区间：${startDate} ~ ${endDate}（自然月）。与广告系列分析对比时请选相同日期与员工范围。`,
     ];
+    if (adSpendSplitPending) {
+      notes.unshift(
+        '多个 MCC 尚未绑定 Google 子账号：库内广告费已临时汇总到该员工第一个 MCC 行；请对各 MCC 重新导入 Sheet 后刷新，以按 MCC 正确拆分。',
+      );
+    }
 
     const canEditAdSpend = canEditSettlementActualCommission(user, queryUserId);
 
@@ -186,6 +197,7 @@ export class SettlementMonthlyReportService {
       canEditActualCommission: canEditAdSpend,
       canEditAdSpend,
       canEditPayoutInfo: canEditAdSpend,
+      adSpendSplitPending,
       notes,
     };
   }
@@ -281,27 +293,56 @@ export class SettlementMonthlyReportService {
 
     const dateFilter = buildOrderDateRangeFilter(startDate, endDate);
     const rows: SettlementMonthlyAdSpendRow[] = [];
-    const countByOwner = new Map<number, number>();
+    const sourcesByOwner = new Map<number, typeof sources>();
     for (const src of sources) {
-      countByOwner.set(src.ownerUserId, (countByOwner.get(src.ownerUserId) ?? 0) + 1);
+      const list = sourcesByOwner.get(src.ownerUserId) ?? [];
+      list.push(src);
+      sourcesByOwner.set(src.ownerUserId, list);
     }
 
     for (const src of sources) {
+      const ownerSources = sourcesByOwner.get(src.ownerUserId) ?? [src];
+      const ownerSourceCount = ownerSources.length;
       let customerIds = parseLinkedCustomerIds(src.linkedCustomerIds);
-      const ownerSourceCount = countByOwner.get(src.ownerUserId) ?? 1;
-      if (!customerIds.length && ownerSourceCount === 1) {
-        customerIds = [];
-      } else if (!customerIds.length) {
-        rows.push({
-          mccLabel: src.name.trim() || `Sheet#${src.id}`,
-          currency: 'USD',
-          librarySpendUsd: 0,
-          adjustmentUsd: 0,
-          spendUsd: 0,
-          ownerUserId: src.ownerUserId,
-          adSourceId: src.id,
-        });
-        continue;
+      let splitBindingPending = false;
+
+      if (!customerIds.length) {
+        if (ownerSourceCount === 1) {
+          customerIds = [];
+        } else {
+          const allUnlinked = ownerSources.every(
+            (s) => !parseLinkedCustomerIds(s.linkedCustomerIds).length,
+          );
+          const assignedElsewhere = this.collectAssignedCustomerIds(ownerSources, src.id);
+          if (allUnlinked) {
+            const firstId = ownerSources[0]?.id;
+            if (firstId !== src.id) {
+              rows.push(this.emptyAdSpendRow(src, true));
+              continue;
+            }
+            customerIds = [];
+          } else {
+            customerIds = await this.listUnassignedCustomerIds(
+              src.ownerUserId,
+              assignedElsewhere,
+              startDate,
+              endDate,
+            );
+            if (!customerIds.length) {
+              rows.push(this.emptyAdSpendRow(src, true));
+              continue;
+            }
+          }
+        }
+      }
+
+      if (
+        ownerSourceCount > 1 &&
+        !parseLinkedCustomerIds(src.linkedCustomerIds).length &&
+        ownerSources.every((s) => !parseLinkedCustomerIds(s.linkedCustomerIds).length) &&
+        ownerSources[0]?.id === src.id
+      ) {
+        splitBindingPending = true;
       }
 
       const where = {
@@ -329,10 +370,65 @@ export class SettlementMonthlyReportService {
         spendUsd,
         ownerUserId: src.ownerUserId,
         adSourceId: src.id,
+        splitBindingPending,
       });
     }
 
     return rows;
+  }
+
+  private emptyAdSpendRow(
+    src: { id: number; name: string; ownerUserId: number },
+    splitBindingPending: boolean,
+  ): SettlementMonthlyAdSpendRow {
+    return {
+      mccLabel: src.name.trim() || `Sheet#${src.id}`,
+      currency: 'USD',
+      librarySpendUsd: 0,
+      adjustmentUsd: 0,
+      spendUsd: 0,
+      ownerUserId: src.ownerUserId,
+      adSourceId: src.id,
+      splitBindingPending,
+    };
+  }
+
+  private collectAssignedCustomerIds(
+    ownerSources: Array<{ id: number; linkedCustomerIds: unknown }>,
+    excludeSourceId: number,
+  ): Set<string> {
+    const out = new Set<string>();
+    for (const s of ownerSources) {
+      if (s.id === excludeSourceId) continue;
+      for (const id of parseLinkedCustomerIds(s.linkedCustomerIds)) {
+        out.add(id);
+      }
+    }
+    return out;
+  }
+
+  /**
+   * 某员工在区间内仍有花费、且未被其它 MCC 绑定的 Google customerId
+   */
+  private async listUnassignedCustomerIds(
+    ownerUserId: number,
+    assigned: Set<string>,
+    startDate: string,
+    endDate: string,
+  ): Promise<string[]> {
+    const dateFilter = buildOrderDateRangeFilter(startDate, endDate);
+    const rows = await this.prisma.adCampaignDaily.findMany({
+      where: {
+        ownerUserId,
+        ...(dateFilter ? { date: dateFilter } : {}),
+        cost: { gt: 0 },
+      },
+      select: { customerId: true },
+      distinct: ['customerId'],
+    });
+    return rows
+      .map((r) => r.customerId?.trim())
+      .filter((id): id is string => !!id && !assigned.has(id));
   }
 
   /**

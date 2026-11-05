@@ -140,6 +140,25 @@
   width: 108px;
 }
 
+.settlement-report-classic .sr-mcc-tag {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 0 6px;
+  font-size: 11px;
+  line-height: 18px;
+  border-radius: 4px;
+  background: #fff7e6;
+  color: #ad6800;
+  border: 1px solid #ffd591;
+  vertical-align: middle;
+}
+
+.settlement-report-classic .sr-mcc-tag-muted {
+  background: #fafafa;
+  color: rgba(0, 0, 0, 0.45);
+  border-color: #d9d9d9;
+}
+
 .settlement-report-classic table.sr-table .sr-group {
   background: #f0f9f0;
   font-weight: 600;

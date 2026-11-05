@@ -1,5 +1,6 @@
 import { Fragment, useCallback, useEffect, useMemo, useState } from 'react';
 import {
+  Alert,
   Button,
   DatePicker,
   Empty,
@@ -25,6 +26,7 @@ export interface SettlementMonthlyAdSpendRow {
   adjustmentUsd: number;
   spendUsd: number;
   adSourceId: number;
+  splitBindingPending?: boolean;
 }
 
 export interface SettlementMonthlyColumn {
@@ -60,6 +62,9 @@ export interface SettlementMonthlyReport {
   canEditActualCommission: boolean;
   canEditAdSpend: boolean;
   canEditPayoutInfo?: boolean;
+  adSpendSplitPending?: boolean;
+  startDate?: string;
+  endDate?: string;
 }
 
 export interface EmployeeOption {
@@ -525,6 +530,15 @@ export default function SettlementClassicMonthlyPanel({
         </div>
         <div className="sr-section-body">
           <Spin spinning={loading}>
+            {report?.adSpendSplitPending && (
+              <Alert
+                type="warning"
+                showIcon
+                style={{ margin: '0 0 12px' }}
+                message="MCC 子账号未绑定"
+                description="库内广告费已临时汇总到第一个 MCC 行。请对每个 MCC 重新导入 Sheet 后点刷新，才能与广告系列分析按 MCC 一一对应。"
+              />
+            )}
             <div className="sr-table-wrap">
               <table className="sr-table">
                 <thead>
@@ -545,7 +559,18 @@ export default function SettlementClassicMonthlyPanel({
                     const spend = draft?.spendUsd ?? r.spendUsd;
                     return (
                       <tr key={`${r.adSourceId}|${r.mccLabel}`}>
-                        <td className="sr-mcc-name">{r.mccLabel}</td>
+                        <td className="sr-mcc-name">
+                          {r.mccLabel}
+                          {report?.adSpendSplitPending &&
+                            (draft?.librarySpendUsd ?? r.librarySpendUsd) > 0 && (
+                              <span className="sr-mcc-tag">临时汇总</span>
+                            )}
+                          {report?.adSpendSplitPending &&
+                            (draft?.librarySpendUsd ?? r.librarySpendUsd) === 0 &&
+                            r.splitBindingPending && (
+                              <span className="sr-mcc-tag sr-mcc-tag-muted">待导入拆分</span>
+                            )}
+                        </td>
                         <td>{r.currency === 'USD' ? '美金' : r.currency}</td>
                         <td align="right">
                           <span className="sr-money-usd">{fmtUsd(library)}</span>

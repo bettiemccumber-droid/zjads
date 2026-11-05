@@ -52,6 +52,7 @@ interface SettlementYearlyReport {
   year: string;
   usdCnyRate: number;
   rateNote: string;
+  usdCnyRateLive?: boolean;
   notes: string[];
   monthlyRows: SettlementYearlyMonthRow[];
   yearTotal: SettlementYearlyMonthRow;
@@ -105,12 +106,15 @@ export default function SettlementReportYearlyPanel({
 
   const yearStr = year.format('YYYY');
 
-  const loadReport = useCallback(async () => {
+  const loadReport = useCallback(async (refreshFx = false) => {
     setLoading(true);
     try {
       const params: Record<string, string> = { year: yearStr };
       if (effectiveScopeUserId != null) {
         params.userId = String(effectiveScopeUserId);
+      }
+      if (refreshFx) {
+        params.refreshFx = '1';
       }
       const { data } = await api.get<ApiResult<SettlementYearlyReport>>('/reports/settlement-yearly', {
         params,
@@ -264,7 +268,7 @@ export default function SettlementReportYearlyPanel({
             ]}
           />
         )}
-        <Button icon={<ReloadOutlined />} onClick={() => void loadReport()} loading={loading}>
+        <Button icon={<ReloadOutlined />} onClick={() => void loadReport(true)} loading={loading}>
           刷新
         </Button>
         <Button type="primary" icon={<DownloadOutlined />} onClick={handleExport} disabled={!report}>
@@ -273,7 +277,12 @@ export default function SettlementReportYearlyPanel({
       </Space>
 
       {report && (
-        <Alert type="info" showIcon message={report.rateNote} description={report.notes.join(' ')} />
+        <Alert
+          type={report.usdCnyRateLive === false ? 'warning' : 'info'}
+          showIcon
+          message={report.rateNote}
+          description={report.notes.join(' ')}
+        />
       )}
 
       <Card title="月度趋势" size="small">

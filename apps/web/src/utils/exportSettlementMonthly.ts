@@ -4,10 +4,23 @@ export interface SettlementMonthlyExportPayload {
   month: string;
   usdCnyRate: number;
   rateNote: string;
-  adSpendRows: Array<{ mccLabel: string; currency: string; spendUsd: number }>;
+  adSpendRows: Array<{
+    mccLabel: string;
+    currency: string;
+    librarySpendUsd?: number;
+    adjustmentUsd?: number;
+    spendUsd: number;
+  }>;
   adSpendTotalUsd: number;
   columns: Array<{ key: string; label: string; platformName: string }>;
-  matrixRows: Array<{ rowKey: string; label: string; values: Record<string, number>; totalUsd: number }>;
+  matrixRows: Array<{
+    rowKey: string;
+    label: string;
+    rowType?: 'money' | 'text';
+    values: Record<string, number>;
+    textValues?: Record<string, string>;
+    totalUsd: number;
+  }>;
   distributableProfitBookUsd: number;
   distributableProfitBookCny: number;
 }
@@ -19,19 +32,27 @@ export function exportSettlementMonthlyExcel(data: SettlementMonthlyExportPayloa
   const adRows = data.adSpendRows.map((r) => ({
     MCC: r.mccLabel,
     币种: r.currency,
-    '广告费(USD)': r.spendUsd,
+    '库内广告费': r.librarySpendUsd ?? r.spendUsd,
+    '补充金额($)': r.adjustmentUsd ?? 0,
+    '广告费(可改)': r.spendUsd,
+    '折美金($)': r.spendUsd,
   }));
   adRows.push({
     MCC: '合计',
     币种: '',
-    '广告费(USD)': data.adSpendTotalUsd,
+    '库内广告费': 0,
+    '补充金额($)': 0,
+    '广告费(可改)': data.adSpendTotalUsd,
+    '折美金($)': data.adSpendTotalUsd,
   });
 
   const matrixHeader = ['行', ...data.columns.map((c) => c.label), '合计(USD)'];
   const matrixBody = data.matrixRows.map((row) => [
     row.label,
-    ...data.columns.map((c) => row.values[c.key] ?? 0),
-    row.totalUsd,
+    ...data.columns.map((c) =>
+      row.rowType === 'text' ? (row.textValues?.[c.key] ?? '') : (row.values[c.key] ?? 0),
+    ),
+    row.rowType === 'text' ? '' : row.totalUsd,
   ]);
   matrixBody.push([
     '可分配利润(账面佣金-广告费)',

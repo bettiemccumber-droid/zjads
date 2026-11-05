@@ -5,7 +5,13 @@ import { buildOrderDateRangeFilter } from '../common/order-date-range.util';
 import { AuthUser, isCompanyWideScope, resolveOwnerUserId } from '../common/ownership.util';
 import { PrismaService } from '../prisma/prisma.service';
 import { SettlementActualCommissionService } from './settlement-actual-commission.service';
-import { sortSettlementColumns } from './settlement-column-order.util';
+import { SettlementAdSpendService } from './settlement-ad-spend.service';
+import { SettlementUsdCnyRateService } from './settlement-usd-cny-rate.service';
+import { parseLinkedCustomerIds } from '../ad-sources/linked-customer-ids.util';
+import {
+  settlementColumnDisplayLabel,
+  sortSettlementColumns,
+} from './settlement-column-order.util';
 import { monthToDateRange, roundMoney, utcMonthKey, yearToDateRange } from './settlement-monthly.util';
 import {
   canEditSettlementActualCommission,
@@ -49,10 +55,14 @@ export interface SettlementMonthlyReport {
   endDate: string;
   usdCnyRate: number;
   rateNote: string;
+  /** 是否为外部实时汇率（false 表示环境变量兜底） */
+  usdCnyRateLive: boolean;
   scope: 'company' | 'user';
   selectedUserId: number | null;
   adSpendRows: SettlementMonthlyAdSpendRow[];
   adSpendTotalUsd: number;
+  /** 应返广告费 (USD) */
+  rebateAdSpendUsd: number;
   /** 当月有花费的去重 campaign 数 */
   activeCampaignCount: number;
   columns: SettlementMonthlyColumn[];
@@ -61,6 +71,8 @@ export interface SettlementMonthlyReport {
   distributableProfitBookCny: number;
   actualCommissionTotalUsd: number;
   canEditActualCommission: boolean;
+  canEditAdSpend: boolean;
+  canEditPayoutInfo: boolean;
   notes: string[];
 }
 
@@ -79,6 +91,7 @@ export interface SettlementYearlyReport {
   endDate: string;
   usdCnyRate: number;
   rateNote: string;
+  usdCnyRateLive: boolean;
   scope: 'company' | 'user';
   selectedUserId: number | null;
   monthlyRows: SettlementYearlyMonthRow[];
@@ -99,20 +112,31 @@ export class SettlementMonthlyReportService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly actualCommission: SettlementActualCommissionService,
+    private readonly adSpend: SettlementAdSpendService,
+    private readonly usdCnyRateService: SettlementUsdCnyRateService,
   ) {}
 
-  async build(user: AuthUser, month: string, queryUserId?: number): Promise<SettlementMonthlyReport> {
+  async build(
+    user: AuthUser,
+    month: string,
+    queryUserId?: number,
+    refreshFx = false,
+  ): Promise<SettlementMonthlyReport> {
     if (!/^\d{4}-\d{2}$/.test(month)) {
       throw new BadRequestException('month 须为 YYYY-MM');
     }
     const { startDate, endDate } = monthToDateRange(month);
     const ownerIds = await this.resolveOwnerUserIds(user, queryUserId);
-    const rate = this.resolveUsdCnyRate();
+    const fx = await this.usdCnyRateService.getQuote(refreshFx);
+    const rate = fx.rate;
 
     const scopeKey = resolveSettlementReportScopeKey(user, queryUserId);
     const actualHalves = await this.actualCommission.loadHalvesForMonth(scopeKey, month);
 
-    const adSpendRows = await this.buildAdSpendRows(ownerIds, startDate, endDate);
+    const adSpendSaved = await this.adSpend.loadLinesForMonth(scopeKey, month);
+    const adSpendMeta = await this.adSpend.loadMeta(scopeKey, month);
+    let adSpendRows = await this.buildAdSpendRows(ownerIds, startDate, endDate);
+    adSpendRows = this.mergeAdSpendSaved(adSpendRows, adSpendSaved);
     const adSpendTotalUsd = roundMoney(adSpendRows.reduce((s, r) => s + r.spendUsd, 0));
     const activeCampaignCount = await this.countActiveCampaigns(ownerIds, startDate, endDate);
 
@@ -132,37 +156,53 @@ export class SettlementMonthlyReportService {
       '账面/失效佣金按联盟订单 orderDate 汇总；拒付拆分与结算查询一致。',
       '应收按订单 confirmDate（无则 orderDate）落入上半月(1–15日)/下半月(16–月末)。',
       '实收佣金可手工录入并保存；与当前报表范围（全公司/员工）绑定。',
-      '广告费按各员工「广告数据源」名称（MCC）汇总 Sheet 导入的 campaign 日花费。',
+      '广告费按各 MCC 关联的 Google 子账号汇总；多 MCC 时请重新导入 Sheet 以刷新子账号绑定。',
+      '佣金列按平台渠道账号拆分（同 alias 多账号显示 RW1/RW2 等）。',
+      '补充金额与「广告费可改」可保存；未保存时广告费等于库内汇总。',
+      'CNY 折算按页头实时 USD/CNY；点击「刷新」可强制更新汇率（默认缓存 5 分钟）。',
+      '收款人/卡号按各渠道账号维护，可在「平台账号」或本页保存。',
     ];
+
+    const canEditAdSpend = canEditSettlementActualCommission(user, queryUserId);
 
     return {
       month,
       startDate,
       endDate,
       usdCnyRate: rate,
-      rateNote: `1 USD = ${rate} CNY（${month}，SETTLEMENT_USD_CNY_RATE）`,
+      rateNote: fx.rateNote,
+      usdCnyRateLive: fx.isLive,
       scope: isCompanyWideScope(user, queryUserId) ? 'company' : 'user',
       selectedUserId: queryUserId ?? null,
       adSpendRows,
       adSpendTotalUsd,
+      rebateAdSpendUsd: adSpendMeta.rebateAdSpendUsd,
       activeCampaignCount,
       columns,
       matrixRows,
       distributableProfitBookUsd: roundMoney(bookTotal - adSpendTotalUsd),
       distributableProfitBookCny: roundMoney((bookTotal - adSpendTotalUsd) * rate),
       actualCommissionTotalUsd: actualTotal,
-      canEditActualCommission: canEditSettlementActualCommission(user, queryUserId),
+      canEditActualCommission: canEditAdSpend,
+      canEditAdSpend,
+      canEditPayoutInfo: canEditAdSpend,
       notes,
     };
   }
 
-  async buildYearly(user: AuthUser, year: string, queryUserId?: number): Promise<SettlementYearlyReport> {
+  async buildYearly(
+    user: AuthUser,
+    year: string,
+    queryUserId?: number,
+    refreshFx = false,
+  ): Promise<SettlementYearlyReport> {
     if (!/^\d{4}$/.test(year)) {
       throw new BadRequestException('year 须为 YYYY');
     }
     const { startDate, endDate } = yearToDateRange(year);
     const ownerIds = await this.resolveOwnerUserIds(user, queryUserId);
-    const rate = this.resolveUsdCnyRate();
+    const fx = await this.usdCnyRateService.getQuote(refreshFx);
+    const rate = fx.rate;
 
     const scopeKey = resolveSettlementReportScopeKey(user, queryUserId);
     const actualYearByKey = await this.actualCommission.loadYearSum(scopeKey, year);
@@ -198,7 +238,8 @@ export class SettlementMonthlyReportService {
       startDate,
       endDate,
       usdCnyRate: rate,
-      rateNote: `1 USD = ${rate} CNY（环境变量 SETTLEMENT_USD_CNY_RATE，非实时）`,
+      rateNote: fx.rateNote,
+      usdCnyRateLive: fx.isLive,
       scope: isCompanyWideScope(user, queryUserId) ? 'company' : 'user',
       selectedUserId: queryUserId ?? null,
       monthlyRows,
@@ -213,12 +254,6 @@ export class SettlementMonthlyReportService {
       canEditActualCommission: false,
       notes,
     };
-  }
-
-  private resolveUsdCnyRate(): number {
-    const raw = process.env.SETTLEMENT_USD_CNY_RATE;
-    const n = raw ? Number(raw) : 7.25;
-    return Number.isFinite(n) && n > 0 ? n : 7.25;
   }
 
   private async resolveOwnerUserIds(user: AuthUser, queryUserId?: number): Promise<number[]> {
@@ -246,19 +281,49 @@ export class SettlementMonthlyReportService {
 
     const dateFilter = buildOrderDateRangeFilter(startDate, endDate);
     const rows: SettlementMonthlyAdSpendRow[] = [];
+    const countByOwner = new Map<number, number>();
+    for (const src of sources) {
+      countByOwner.set(src.ownerUserId, (countByOwner.get(src.ownerUserId) ?? 0) + 1);
+    }
 
     for (const src of sources) {
-      const agg = await this.prisma.adCampaignDaily.aggregate({
-        where: {
+      let customerIds = parseLinkedCustomerIds(src.linkedCustomerIds);
+      const ownerSourceCount = countByOwner.get(src.ownerUserId) ?? 1;
+      if (!customerIds.length && ownerSourceCount === 1) {
+        customerIds = [];
+      } else if (!customerIds.length) {
+        rows.push({
+          mccLabel: src.name.trim() || `Sheet#${src.id}`,
+          currency: 'USD',
+          librarySpendUsd: 0,
+          adjustmentUsd: 0,
+          spendUsd: 0,
           ownerUserId: src.ownerUserId,
-          ...(dateFilter ? { date: dateFilter } : {}),
-        },
+          adSourceId: src.id,
+        });
+        continue;
+      }
+
+      const where = {
+        ownerUserId: src.ownerUserId,
+        ...(dateFilter ? { date: dateFilter } : {}),
+        ...(customerIds.length ? { customerId: { in: customerIds } } : {}),
+      };
+
+      const agg = await this.prisma.adCampaignDaily.aggregate({
+        where,
         _sum: { cost: true },
       });
+      const sample = await this.prisma.adCampaignDaily.findFirst({
+        where,
+        select: { currency: true },
+        orderBy: { date: 'desc' },
+      });
       const spendUsd = roundMoney(Number(agg._sum.cost ?? 0));
+      const currency = (sample?.currency || 'USD').toUpperCase();
       rows.push({
         mccLabel: src.name.trim() || `Sheet#${src.id}`,
-        currency: 'USD',
+        currency,
         librarySpendUsd: spendUsd,
         adjustmentUsd: 0,
         spendUsd,
@@ -268,6 +333,30 @@ export class SettlementMonthlyReportService {
     }
 
     return rows;
+  }
+
+  /**
+   * 合并已保存的补充/可改广告费
+   */
+  private mergeAdSpendSaved(
+    rows: SettlementMonthlyAdSpendRow[],
+    saved: Record<number, { adjustmentUsd: number; spendUsd: number }>,
+  ): SettlementMonthlyAdSpendRow[] {
+    return rows.map((r) => {
+      const hit = saved[r.adSourceId];
+      if (!hit) {
+        return {
+          ...r,
+          adjustmentUsd: 0,
+          spendUsd: r.librarySpendUsd,
+        };
+      }
+      return {
+        ...r,
+        adjustmentUsd: hit.adjustmentUsd,
+        spendUsd: hit.spendUsd,
+      };
+    });
   }
 
   private async buildYearlyMonthlyRows(
@@ -404,46 +493,30 @@ export class SettlementMonthlyReportService {
     });
     if (!accounts.length) return empty;
 
-    const aliasMeta = new Map<
-      string,
-      {
-        affiliateAlias: string;
-        platformCode: string;
-        platformName: string;
-        accountIds: number[];
-        accountNames: string[];
-      }
-    >();
-
+    const aliasCounts = new Map<string, number>();
     for (const a of accounts) {
       const alias = (a.affiliateAlias || 'default').toLowerCase();
-      const key = alias;
-      if (!aliasMeta.has(key)) {
-        aliasMeta.set(key, {
+      aliasCounts.set(`${a.platform.code}|${alias}`, (aliasCounts.get(`${a.platform.code}|${alias}`) ?? 0) + 1);
+    }
+    const aliasSeen = new Map<string, number>();
+
+    const columns: SettlementMonthlyColumn[] = sortSettlementColumns(
+      accounts.map((a) => {
+        const alias = (a.affiliateAlias || 'default').toLowerCase();
+        const groupKey = `${a.platform.code}|${alias}`;
+        const dupIndex = aliasSeen.get(groupKey) ?? 0;
+        aliasSeen.set(groupKey, dupIndex + 1);
+        const dupCount = aliasCounts.get(groupKey) ?? 1;
+        const name = a.displayName?.trim() || a.externalChannelId || `#${a.id}`;
+        return {
+          key: String(a.id),
+          label: settlementColumnDisplayLabel(alias, a.platform.code, dupIndex, dupCount),
           affiliateAlias: alias,
           platformCode: a.platform.code,
           platformName: a.platform.name,
-          accountIds: [],
-          accountNames: [],
-        });
-      }
-      const meta = aliasMeta.get(key)!;
-      meta.accountIds.push(a.id);
-      const name = a.displayName?.trim() || a.externalChannelId || `#${a.id}`;
-      if (!meta.accountNames.includes(name)) {
-        meta.accountNames.push(name);
-      }
-    }
-
-    const columns: SettlementMonthlyColumn[] = sortSettlementColumns(
-      [...aliasMeta.entries()].map(([key, meta]) => ({
-        key,
-        label: meta.affiliateAlias.toUpperCase() || meta.platformCode.toUpperCase(),
-        affiliateAlias: meta.affiliateAlias,
-        platformCode: meta.platformCode,
-        platformName: meta.platformName,
-        accountHint: meta.accountNames.join(' / '),
-      })),
+          accountHint: name,
+        };
+      }),
     );
 
     const accountIds = accounts.map((a) => a.id);
@@ -456,25 +529,23 @@ export class SettlementMonthlyReportService {
       include: { channelAccount: { include: { platform: true } } },
     });
 
-    const accountToAlias = new Map(accounts.map((a) => [a.id, (a.affiliateAlias || 'default').toLowerCase()]));
-
     type Bucket = {
       book: number;
       rejected: number;
       recvH1: number;
       recvH2: number;
     };
-    const byAlias = new Map<string, Bucket>();
-    const ensure = (alias: string) => {
-      if (!byAlias.has(alias)) {
-        byAlias.set(alias, { book: 0, rejected: 0, recvH1: 0, recvH2: 0 });
+    const byAccount = new Map<string, Bucket>();
+    const ensure = (accountKey: string) => {
+      if (!byAccount.has(accountKey)) {
+        byAccount.set(accountKey, { book: 0, rejected: 0, recvH1: 0, recvH2: 0 });
       }
-      return byAlias.get(alias)!;
+      return byAccount.get(accountKey)!;
     };
 
     for (const o of orders) {
-      const alias = accountToAlias.get(o.channelAccountId) ?? 'default';
-      const b = ensure(alias);
+      const accountKey = String(o.channelAccountId);
+      const b = ensure(accountKey);
       const comm = Number(o.commission);
       const buckets = resolveOrderCommissionBuckets(o);
       b.book += comm;
@@ -490,7 +561,7 @@ export class SettlementMonthlyReportService {
     const valuesFor = (pick: (b: Bucket) => number): Record<string, number> => {
       const out: Record<string, number> = {};
       for (const col of columns) {
-        out[col.key] = roundMoney(pick(byAlias.get(col.key) ?? { book: 0, rejected: 0, recvH1: 0, recvH2: 0 }));
+        out[col.key] = roundMoney(pick(byAccount.get(col.key) ?? { book: 0, rejected: 0, recvH1: 0, recvH2: 0 }));
       }
       return out;
     };
@@ -517,7 +588,13 @@ export class SettlementMonthlyReportService {
       actualTotalVals[col.key] = roundMoney((actualH1[col.key] ?? 0) + (actualH2[col.key] ?? 0));
     }
 
-    const emptyText = Object.fromEntries(columns.map((c) => [c.key, '']));
+    const payeeText: Record<string, string> = {};
+    const bankText: Record<string, string> = {};
+    for (const a of accounts) {
+      const key = String(a.id);
+      payeeText[key] = (a.settlementPayeeName ?? '').trim();
+      bankText[key] = (a.settlementBankAccount ?? '').trim();
+    }
 
     const matrixRows: SettlementMonthlyMatrixRow[] = [
       {
@@ -581,7 +658,7 @@ export class SettlementMonthlyReportService {
         label: '收款人',
         rowType: 'text',
         values: {},
-        textValues: emptyText,
+        textValues: payeeText,
         totalUsd: 0,
       },
       {
@@ -589,7 +666,7 @@ export class SettlementMonthlyReportService {
         label: '收款卡号',
         rowType: 'text',
         values: {},
-        textValues: emptyText,
+        textValues: bankText,
         totalUsd: 0,
       },
     ];

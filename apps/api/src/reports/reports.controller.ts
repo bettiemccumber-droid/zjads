@@ -1,7 +1,18 @@
 import { Body, Controller, Get, Put, Query, UseGuards } from '@nestjs/common';
 import { AuthGuard } from '@nestjs/passport';
 import { UserRole } from '@prisma/client';
-import { IsDateString, IsIn, IsObject, IsOptional, IsString, Matches } from 'class-validator';
+import { Type } from 'class-transformer';
+import {
+  IsArray,
+  IsDateString,
+  IsIn,
+  IsNumber,
+  IsObject,
+  IsOptional,
+  IsString,
+  Matches,
+  ValidateNested,
+} from 'class-validator';
 import { ok } from '../common/api-response';
 import { CurrentUser } from '../auth/current-user.decorator';
 import { AuthUser } from '../common/ownership.util';
@@ -9,7 +20,9 @@ import { Roles } from '../auth/roles.decorator';
 import { RolesGuard } from '../auth/roles.guard';
 import { ReportsService } from './reports.service';
 import { SettlementActualCommissionService } from './settlement-actual-commission.service';
+import { SettlementAdSpendService } from './settlement-ad-spend.service';
 import { SettlementMonthlyReportService } from './settlement-monthly-report.service';
+import { SettlementPayoutInfoService } from './settlement-payout-info.service';
 
 class DateRangeQuery {
   @IsDateString()
@@ -45,6 +58,11 @@ class SettlementMonthlyQuery {
 
   @IsOptional()
   userId?: string;
+
+  /** 为 1/true 时强制刷新 USD/CNY 实时汇率 */
+  @IsOptional()
+  @IsIn(['true', 'false', '1', '0'])
+  refreshFx?: string;
 }
 
 class SettlementYearlyQuery {
@@ -53,6 +71,14 @@ class SettlementYearlyQuery {
 
   @IsOptional()
   userId?: string;
+
+  @IsOptional()
+  @IsIn(['true', 'false', '1', '0'])
+  refreshFx?: string;
+}
+
+function parseRefreshFx(raw?: string): boolean {
+  return raw === 'true' || raw === '1';
 }
 
 class SaveSettlementActualCommissionDto {
@@ -73,6 +99,56 @@ class SaveSettlementActualCommissionDto {
   halfValues?: Record<string, { usdH1: number; usdH2: number }>;
 }
 
+class SettlementAdSpendLineDto {
+  @IsNumber()
+  adSourceId!: number;
+
+  @IsNumber()
+  adjustmentUsd!: number;
+
+  @IsNumber()
+  spendUsd!: number;
+}
+
+class SaveSettlementAdSpendDto {
+  @Matches(/^\d{4}-\d{2}$/)
+  month!: string;
+
+  @IsOptional()
+  @IsString()
+  userId?: string;
+
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => SettlementAdSpendLineDto)
+  lines!: SettlementAdSpendLineDto[];
+
+  @IsNumber()
+  rebateAdSpendUsd!: number;
+}
+
+class SettlementPayoutLineDto {
+  @IsNumber()
+  channelAccountId!: number;
+
+  @IsString()
+  payeeName!: string;
+
+  @IsString()
+  bankAccount!: string;
+}
+
+class SaveSettlementPayoutInfoDto {
+  @IsOptional()
+  @IsString()
+  userId?: string;
+
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => SettlementPayoutLineDto)
+  lines!: SettlementPayoutLineDto[];
+}
+
 @Controller('reports')
 @UseGuards(AuthGuard('jwt'))
 export class ReportsController {
@@ -80,6 +156,8 @@ export class ReportsController {
     private readonly reports: ReportsService,
     private readonly settlementMonthlyReport: SettlementMonthlyReportService,
     private readonly settlementActualCommission: SettlementActualCommissionService,
+    private readonly settlementAdSpend: SettlementAdSpendService,
+    private readonly settlementPayoutInfo: SettlementPayoutInfoService,
   ) {}
 
   @Get('merchant-summary')
@@ -152,6 +230,7 @@ export class ReportsController {
         user,
         month,
         q.userId ? parseInt(q.userId, 10) : undefined,
+        parseRefreshFx(q.refreshFx),
       ),
     );
   }
@@ -181,6 +260,31 @@ export class ReportsController {
     return ok({ values });
   }
 
+  /** 保存月度广告费（补充 / 可改 / 应返） */
+  @Put('settlement-monthly/ad-spend')
+  async saveSettlementAdSpend(@CurrentUser() user: AuthUser, @Body() body: SaveSettlementAdSpendDto) {
+    const queryUserId = body.userId ? parseInt(body.userId, 10) : undefined;
+    const saved = await this.settlementAdSpend.save(
+      user,
+      body.month,
+      body.lines,
+      body.rebateAdSpendUsd,
+      queryUserId,
+    );
+    return ok(saved);
+  }
+
+  /** 保存结算收款人 / 卡号（写入各渠道账号） */
+  @Put('settlement-monthly/payout-info')
+  async saveSettlementPayoutInfo(
+    @CurrentUser() user: AuthUser,
+    @Body() body: SaveSettlementPayoutInfoDto,
+  ) {
+    const queryUserId = body.userId ? parseInt(body.userId, 10) : undefined;
+    await this.settlementPayoutInfo.saveLines(user, body.lines, queryUserId);
+    return ok({ saved: true });
+  }
+
   /** 年度结算报表（12 个月趋势 + 整年 MCC / 佣金矩阵） */
   @Get('settlement-yearly')
   async settlementYearly(@CurrentUser() user: AuthUser, @Query() q: SettlementYearlyQuery) {
@@ -192,6 +296,7 @@ export class ReportsController {
         user,
         year,
         q.userId ? parseInt(q.userId, 10) : undefined,
+        parseRefreshFx(q.refreshFx),
       ),
     );
   }

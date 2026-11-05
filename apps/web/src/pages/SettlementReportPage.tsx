@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Empty, Tabs, Typography } from 'antd';
+import { Tabs, Typography } from 'antd';
 import type { Dayjs } from 'dayjs';
 import dayjs from 'dayjs';
 import { useSearchParams } from 'react-router-dom';
@@ -84,11 +84,6 @@ export default function SettlementReportPage() {
                 onScopeChange={setScopeUserId}
               />
             ),
-          },
-          {
-            key: 'bank',
-            label: '银行流水',
-            children: <Empty description="银行流水 Tab 开发中" />,
           },
         ]}
       />

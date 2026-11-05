@@ -88,6 +88,14 @@ class UpdateChannelAccountBody {
   @IsOptional()
   @IsBoolean()
   isActive?: boolean;
+
+  @IsOptional()
+  @IsString()
+  settlementPayeeName?: string;
+
+  @IsOptional()
+  @IsString()
+  settlementBankAccount?: string;
 }
 
 @Controller('channel-accounts')

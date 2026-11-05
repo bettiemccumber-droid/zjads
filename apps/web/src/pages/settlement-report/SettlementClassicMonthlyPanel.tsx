@@ -3,6 +3,7 @@ import {
   Button,
   DatePicker,
   Empty,
+  Input,
   InputNumber,
   Select,
   Space,
@@ -12,6 +13,7 @@ import {
 import type { Dayjs } from 'dayjs';
 import dayjs from 'dayjs';
 import { DownloadOutlined, ReloadOutlined, SaveOutlined } from '@ant-design/icons';
+import { Link } from 'react-router-dom';
 import { api, type ApiResult } from '../../api/client';
 import { exportSettlementMonthlyExcel } from '../../utils/exportSettlementMonthly';
 import './settlement-report.css';
@@ -22,6 +24,7 @@ export interface SettlementMonthlyAdSpendRow {
   librarySpendUsd: number;
   adjustmentUsd: number;
   spendUsd: number;
+  adSourceId: number;
 }
 
 export interface SettlementMonthlyColumn {
@@ -44,8 +47,10 @@ export interface SettlementMonthlyReport {
   month: string;
   usdCnyRate: number;
   rateNote: string;
+  usdCnyRateLive?: boolean;
   adSpendRows: SettlementMonthlyAdSpendRow[];
   adSpendTotalUsd: number;
+  rebateAdSpendUsd: number;
   activeCampaignCount: number;
   columns: SettlementMonthlyColumn[];
   matrixRows: SettlementMonthlyMatrixRow[];
@@ -53,6 +58,8 @@ export interface SettlementMonthlyReport {
   distributableProfitBookCny: number;
   actualCommissionTotalUsd: number;
   canEditActualCommission: boolean;
+  canEditAdSpend: boolean;
+  canEditPayoutInfo?: boolean;
 }
 
 export interface EmployeeOption {
@@ -69,6 +76,15 @@ export interface SettlementClassicMonthlyPanelProps {
 }
 
 type ActualHalfDraft = Record<string, { usdH1: number; usdH2: number }>;
+
+type AdSpendDraftLine = {
+  adSourceId: number;
+  librarySpendUsd: number;
+  adjustmentUsd: number;
+  spendUsd: number;
+};
+
+type PayoutDraft = Record<string, { payeeName: string; bankAccount: string }>;
 
 function fmtUsd(v: number) {
   return `$${Number(v).toFixed(2)}`;
@@ -99,15 +115,23 @@ export default function SettlementClassicMonthlyPanel({
   const [report, setReport] = useState<SettlementMonthlyReport | null>(null);
   const [actualDraft, setActualDraft] = useState<ActualHalfDraft>({});
   const [savingActual, setSavingActual] = useState(false);
+  const [adSpendDraft, setAdSpendDraft] = useState<AdSpendDraftLine[]>([]);
+  const [rebateDraft, setRebateDraft] = useState(0);
+  const [savingAdSpend, setSavingAdSpend] = useState(false);
+  const [payoutDraft, setPayoutDraft] = useState<PayoutDraft>({});
+  const [savingPayout, setSavingPayout] = useState(false);
 
   const monthStr = month.format('YYYY-MM');
 
-  const loadReport = useCallback(async () => {
+  const loadReport = useCallback(async (refreshFx = false) => {
     setLoading(true);
     try {
       const params: Record<string, string> = { month: monthStr };
       if (effectiveScopeUserId != null) {
         params.userId = String(effectiveScopeUserId);
+      }
+      if (refreshFx) {
+        params.refreshFx = '1';
       }
       const { data } = await api.get<ApiResult<SettlementMonthlyReport>>(
         '/reports/settlement-monthly',
@@ -138,10 +162,31 @@ export default function SettlementClassicMonthlyPanel({
       draft[c.key] = { usdH1: h1[c.key] ?? 0, usdH2: h2[c.key] ?? 0 };
     }
     setActualDraft(draft);
+    setAdSpendDraft(
+      report.adSpendRows.map((r) => ({
+        adSourceId: r.adSourceId,
+        librarySpendUsd: r.librarySpendUsd,
+        adjustmentUsd: r.adjustmentUsd,
+        spendUsd: r.spendUsd,
+      })),
+    );
+    setRebateDraft(report.rebateAdSpendUsd ?? 0);
+    const payeeRow = report.matrixRows.find((r) => r.rowKey === 'payee');
+    const bankRow = report.matrixRows.find((r) => r.rowKey === 'bank');
+    const payout: PayoutDraft = {};
+    for (const c of report.columns) {
+      payout[c.key] = {
+        payeeName: payeeRow?.textValues?.[c.key]?.trim() ?? '',
+        bankAccount: bankRow?.textValues?.[c.key]?.trim() ?? '',
+      };
+    }
+    setPayoutDraft(payout);
   }, [report]);
 
   const rate = report?.usdCnyRate ?? 7.25;
   const canEdit = report?.canEditActualCommission ?? false;
+  const canEditAdSpend = report?.canEditAdSpend ?? false;
+  const canEditPayout = report?.canEditPayoutInfo ?? canEdit;
   const cols = report?.columns ?? [];
 
   const rowMap = useMemo(() => {
@@ -158,8 +203,87 @@ export default function SettlementClassicMonthlyPanel({
     [actualDraft],
   );
 
-  const distributableActualUsd = (report?.adSpendTotalUsd ?? 0) * -1 + actualTotalUsd;
+  const adSpendTotalDraft = useMemo(
+    () => adSpendDraft.reduce((s, r) => s + (r.spendUsd || 0), 0),
+    [adSpendDraft],
+  );
+
+  const bookCommissionTotal = rowMap.get('book')?.totalUsd ?? 0;
+  const distributableBookUsd = bookCommissionTotal - adSpendTotalDraft;
+
+  const distributableActualUsd = adSpendTotalDraft * -1 + actualTotalUsd;
   const distributableActualCny = distributableActualUsd * rate;
+
+  const patchAdSpendLine = (adSourceId: number, patch: Partial<AdSpendDraftLine>) => {
+    setAdSpendDraft((prev) =>
+      prev.map((row) => (row.adSourceId === adSourceId ? { ...row, ...patch } : row)),
+    );
+  };
+
+  const savePayoutInfo = async () => {
+    if (!canEditPayout || !report) return;
+    setSavingPayout(true);
+    try {
+      const lines = report.columns.map((c) => ({
+        channelAccountId: Number(c.key),
+        payeeName: payoutDraft[c.key]?.payeeName ?? '',
+        bankAccount: payoutDraft[c.key]?.bankAccount ?? '',
+      }));
+      const body: { lines: typeof lines; userId?: string } = { lines };
+      if (effectiveScopeUserId != null) {
+        body.userId = String(effectiveScopeUserId);
+      }
+      const { data } = await api.put<ApiResult<{ saved: boolean }>>(
+        '/reports/settlement-monthly/payout-info',
+        body,
+      );
+      if (!data.success) {
+        message.error(data.message || '保存失败');
+        return;
+      }
+      message.success('收款信息已保存');
+      await loadReport();
+    } catch {
+      message.error('保存收款信息失败');
+    } finally {
+      setSavingPayout(false);
+    }
+  };
+
+  const saveAdSpend = async () => {
+    if (!canEditAdSpend) return;
+    setSavingAdSpend(true);
+    try {
+      const body: {
+        month: string;
+        lines: Array<{ adSourceId: number; adjustmentUsd: number; spendUsd: number }>;
+        rebateAdSpendUsd: number;
+        userId?: string;
+      } = {
+        month: monthStr,
+        lines: adSpendDraft.map(({ adSourceId, adjustmentUsd, spendUsd }) => ({
+          adSourceId,
+          adjustmentUsd,
+          spendUsd,
+        })),
+        rebateAdSpendUsd: rebateDraft,
+      };
+      if (effectiveScopeUserId != null) {
+        body.userId = String(effectiveScopeUserId);
+      }
+      const { data } = await api.put<ApiResult<unknown>>('/reports/settlement-monthly/ad-spend', body);
+      if (!data.success) {
+        message.error(data.message || '保存失败');
+        return;
+      }
+      message.success('广告费已保存');
+      await loadReport();
+    } catch {
+      message.error('保存广告费失败');
+    } finally {
+      setSavingAdSpend(false);
+    }
+  };
 
   const saveActual = async () => {
     if (!report?.canEditActualCommission) return;
@@ -199,16 +323,41 @@ export default function SettlementClassicMonthlyPanel({
       month: report.month,
       usdCnyRate: report.usdCnyRate,
       rateNote: report.rateNote,
-      adSpendRows: report.adSpendRows.map((r) => ({
-        mccLabel: r.mccLabel,
-        currency: r.currency,
-        spendUsd: r.spendUsd,
-      })),
-      adSpendTotalUsd: report.adSpendTotalUsd,
+      adSpendRows: adSpendDraft.map((r, i) => {
+        const meta = report.adSpendRows[i];
+        return {
+          mccLabel: meta?.mccLabel ?? '',
+          currency: meta?.currency ?? 'USD',
+          librarySpendUsd: r.librarySpendUsd,
+          adjustmentUsd: r.adjustmentUsd,
+          spendUsd: r.spendUsd,
+        };
+      }),
+      adSpendTotalUsd: adSpendTotalDraft,
       columns: report.columns,
-      matrixRows: report.matrixRows.filter((r) => r.rowType === 'money'),
-      distributableProfitBookUsd: report.distributableProfitBookUsd,
-      distributableProfitBookCny: report.distributableProfitBookCny,
+      matrixRows: report.matrixRows
+        .filter((r) => r.rowType === 'money' || r.rowType === 'text')
+        .map((r) => {
+          if (r.rowKey === 'payee') {
+            return {
+              ...r,
+              textValues: Object.fromEntries(
+                report.columns.map((c) => [c.key, payoutDraft[c.key]?.payeeName ?? '']),
+              ),
+            };
+          }
+          if (r.rowKey === 'bank') {
+            return {
+              ...r,
+              textValues: Object.fromEntries(
+                report.columns.map((c) => [c.key, payoutDraft[c.key]?.bankAccount ?? '']),
+              ),
+            };
+          }
+          return r;
+        }),
+      distributableProfitBookUsd: distributableBookUsd,
+      distributableProfitBookCny: distributableBookUsd * rate,
     });
   };
 
@@ -288,13 +437,35 @@ export default function SettlementClassicMonthlyPanel({
     );
   };
 
-  const renderTextCells = (rowKey: string) => (
+  const renderTextCells = (field: 'payeeName' | 'bankAccount') => (
     <>
-      {cols.map((c) => (
-        <td key={c.key} colSpan={2}>
-          {rowMap.get(rowKey)?.textValues?.[c.key] || '—'}
-        </td>
-      ))}
+      {cols.map((c) => {
+        const val = payoutDraft[c.key]?.[field]?.trim() ?? '';
+        return (
+          <td key={c.key} colSpan={2} className={canEditPayout ? 'sr-cell-editable' : undefined}>
+            {canEditPayout ? (
+              <Input
+                size="small"
+                value={payoutDraft[c.key]?.[field] ?? ''}
+                maxLength={field === 'payeeName' ? 120 : 80}
+                placeholder={field === 'payeeName' ? '收款人' : '卡号'}
+                onChange={(e) =>
+                  setPayoutDraft((prev) => ({
+                    ...prev,
+                    [c.key]: {
+                      payeeName: prev[c.key]?.payeeName ?? '',
+                      bankAccount: prev[c.key]?.bankAccount ?? '',
+                      [field]: e.target.value,
+                    },
+                  }))
+                }
+              />
+            ) : (
+              val || '—'
+            )}
+          </td>
+        );
+      })}
       <td colSpan={2} className="sr-total-col" />
     </>
   );
@@ -320,7 +491,7 @@ export default function SettlementClassicMonthlyPanel({
               ]}
             />
           )}
-          <Button icon={<ReloadOutlined />} onClick={() => void loadReport()} loading={loading}>
+          <Button icon={<ReloadOutlined />} onClick={() => void loadReport(true)} loading={loading}>
             刷新
           </Button>
           <Button type="primary" icon={<DownloadOutlined />} onClick={handleExport} disabled={!report}>
@@ -329,11 +500,28 @@ export default function SettlementClassicMonthlyPanel({
         </Space>
       </div>
 
-      {report && <div className="sr-rate-bar">{report.rateNote}</div>}
+      {report && (
+        <div
+          className={`sr-rate-bar ${report.usdCnyRateLive === false ? 'sr-rate-bar-fallback' : 'sr-rate-bar-live'}`}
+        >
+          {report.rateNote}
+        </div>
+      )}
 
       <div className="sr-section">
         <div className="sr-section-head">
           <h3>广告费</h3>
+          {canEditAdSpend && (
+            <Button
+              type="primary"
+              size="small"
+              icon={<SaveOutlined />}
+              loading={savingAdSpend}
+              onClick={() => void saveAdSpend()}
+            >
+              保存广告费
+            </Button>
+          )}
         </div>
         <div className="sr-section-body">
           <Spin spinning={loading}>
@@ -350,24 +538,63 @@ export default function SettlementClassicMonthlyPanel({
                   </tr>
                 </thead>
                 <tbody>
-                  {(report?.adSpendRows ?? []).map((r) => (
-                    <tr key={r.mccLabel}>
-                      <td className="sr-mcc-name">{r.mccLabel}</td>
-                      <td>{r.currency === 'USD' ? '美金' : r.currency}</td>
-                      <td align="right">
-                        <span className="sr-money-usd">{fmtUsd(r.librarySpendUsd)}</span>
-                      </td>
-                      <td align="right">
-                        <span className="sr-money-usd">{fmtUsd(r.adjustmentUsd)}</span>
-                      </td>
-                      <td align="right">
-                        <span className="sr-money-usd">{fmtUsd(r.spendUsd)}</span>
-                      </td>
-                      <td align="right">
-                        <span className="sr-money-usd">{fmtUsd(r.spendUsd)}</span>
-                      </td>
-                    </tr>
-                  ))}
+                  {(report?.adSpendRows ?? []).map((r, i) => {
+                    const draft = adSpendDraft[i];
+                    const library = draft?.librarySpendUsd ?? r.librarySpendUsd;
+                    const adjustment = draft?.adjustmentUsd ?? r.adjustmentUsd;
+                    const spend = draft?.spendUsd ?? r.spendUsd;
+                    return (
+                      <tr key={`${r.adSourceId}|${r.mccLabel}`}>
+                        <td className="sr-mcc-name">{r.mccLabel}</td>
+                        <td>{r.currency === 'USD' ? '美金' : r.currency}</td>
+                        <td align="right">
+                          <span className="sr-money-usd">{fmtUsd(library)}</span>
+                        </td>
+                        <td align="right">
+                          {canEditAdSpend ? (
+                            <InputNumber
+                              size="small"
+                              className="sr-input-money"
+                              value={adjustment}
+                              step={0.01}
+                              onChange={(v) => {
+                                const adj = Number(v ?? 0);
+                                patchAdSpendLine(r.adSourceId, {
+                                  adjustmentUsd: adj,
+                                  spendUsd: Math.round((library + adj) * 100) / 100,
+                                });
+                              }}
+                            />
+                          ) : (
+                            <span className="sr-money-usd">{fmtUsd(adjustment)}</span>
+                          )}
+                        </td>
+                        <td align="right">
+                          {canEditAdSpend ? (
+                            <InputNumber
+                              size="small"
+                              className="sr-input-money"
+                              value={spend}
+                              min={0}
+                              step={0.01}
+                              onChange={(v) => {
+                                const sp = Number(v ?? 0);
+                                patchAdSpendLine(r.adSourceId, {
+                                  spendUsd: sp,
+                                  adjustmentUsd: Math.round((sp - library) * 100) / 100,
+                                });
+                              }}
+                            />
+                          ) : (
+                            <span className="sr-money-usd">{fmtUsd(spend)}</span>
+                          )}
+                        </td>
+                        <td align="right">
+                          <span className="sr-money-usd">{fmtUsd(spend)}</span>
+                        </td>
+                      </tr>
+                    );
+                  })}
                   {!report?.adSpendRows.length && (
                     <tr>
                       <td colSpan={6}>
@@ -380,9 +607,22 @@ export default function SettlementClassicMonthlyPanel({
                   <tfoot>
                     <tr>
                       <td colSpan={2}>总广告费（$）</td>
-                      <td align="right">{fmtUsd(report.adSpendTotalUsd)}</td>
+                      <td align="right">{fmtUsd(adSpendTotalDraft)}</td>
                       <td>应返广告费($)</td>
-                      <td align="right">{fmtUsd(0)}</td>
+                      <td align="right">
+                        {canEditAdSpend ? (
+                          <InputNumber
+                            size="small"
+                            className="sr-input-money"
+                            value={rebateDraft}
+                            min={0}
+                            step={0.01}
+                            onChange={(v) => setRebateDraft(Number(v ?? 0))}
+                          />
+                        ) : (
+                          fmtUsd(rebateDraft)
+                        )}
+                      </td>
                       <td align="center">在跑广告数：{report.activeCampaignCount}</td>
                     </tr>
                   </tfoot>
@@ -396,16 +636,30 @@ export default function SettlementClassicMonthlyPanel({
       <div className="sr-section">
         <div className="sr-section-head">
           <h3>佣金明细</h3>
-          {canEdit && (
-            <Button
-              type="primary"
-              size="small"
-              icon={<SaveOutlined />}
-              loading={savingActual}
-              onClick={() => void saveActual()}
-            >
-              保存实收佣金
-            </Button>
+          {(canEdit || canEditPayout) && (
+            <Space size="small">
+              {canEdit && (
+                <Button
+                  type="primary"
+                  size="small"
+                  icon={<SaveOutlined />}
+                  loading={savingActual}
+                  onClick={() => void saveActual()}
+                >
+                  保存实收佣金
+                </Button>
+              )}
+              {canEditPayout && (
+                <Button
+                  size="small"
+                  icon={<SaveOutlined />}
+                  loading={savingPayout}
+                  onClick={() => void savePayoutInfo()}
+                >
+                  保存收款信息
+                </Button>
+              )}
+            </Space>
           )}
         </div>
         <div className="sr-section-body">
@@ -496,13 +750,13 @@ export default function SettlementClassicMonthlyPanel({
                       <td colSpan={2} className="sr-label">
                         收款人
                       </td>
-                      {renderTextCells('payee')}
+                      {renderTextCells('payeeName')}
                     </tr>
                     <tr>
                       <td colSpan={2} className="sr-label">
                         收款卡号
                       </td>
-                      {renderTextCells('bank')}
+                      {renderTextCells('bankAccount')}
                     </tr>
                   </tbody>
                 </table>
@@ -510,7 +764,8 @@ export default function SettlementClassicMonthlyPanel({
             )}
           </Spin>
           <p className="sr-tip" style={{ padding: '8px 16px 12px' }}>
-            实收佣金为手工录入，保存后刷新仍保留；CNY 按页头汇率自动折算。收款人/卡号后续可在员工资料中维护。
+            实收佣金为手工录入，保存后刷新仍保留；CNY 按页头实时汇率折算。收款人/卡号绑定各渠道账号，也可在{' '}
+            <Link to="/channel-accounts">平台账号</Link> 中编辑。
           </p>
         </div>
       </div>
@@ -537,8 +792,8 @@ export default function SettlementClassicMonthlyPanel({
           </div>
           <div className="sr-profit-item">
             <div className="sr-profit-label">参考 · 账面 − 广告费 (USD)</div>
-            <div className={`sr-profit-value ${profitClass(report.distributableProfitBookUsd)}`}>
-              {fmtUsd(report.distributableProfitBookUsd)}
+            <div className={`sr-profit-value ${profitClass(distributableBookUsd)}`}>
+              {fmtUsd(distributableBookUsd)}
             </div>
           </div>
         </div>

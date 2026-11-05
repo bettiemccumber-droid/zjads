@@ -408,7 +408,10 @@ export class AdSourcesService {
 
     await this.prisma.adDataSource.update({
       where: { id: source.id },
-      data: { updatedAt: new Date() },
+      data: {
+        linkedCustomerIds: customerIdsInBatch,
+        updatedAt: new Date(),
+      },
     });
 
     const dates = rows.map((r) => r.date).sort();

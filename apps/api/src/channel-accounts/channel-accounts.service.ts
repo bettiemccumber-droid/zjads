@@ -22,6 +22,8 @@ export interface UpdateChannelAccountDto {
   displayName?: string;
   externalChannelId?: string;
   affiliateAlias?: string;
+  settlementPayeeName?: string;
+  settlementBankAccount?: string;
   /** 留空则不修改 Token */
   apiToken?: string;
   isActive?: boolean;
@@ -40,6 +42,8 @@ export class ChannelAccountsService {
     externalChannelId: string;
     displayName: string;
     affiliateAlias: string;
+    settlementPayeeName: string;
+    settlementBankAccount: string;
     isActive: boolean;
     createdAt: Date;
     credentialsEnc: string;
@@ -60,6 +64,8 @@ export class ChannelAccountsService {
       externalChannelId: account.externalChannelId || null,
       displayName: account.displayName,
       affiliateAlias: account.affiliateAlias,
+      settlementPayeeName: account.settlementPayeeName ?? '',
+      settlementBankAccount: account.settlementBankAccount ?? '',
       isActive: account.isActive,
       tokenPreview,
       createdAt: account.createdAt,
@@ -151,6 +157,12 @@ export class ChannelAccountsService {
     }
     if (dto.isActive !== undefined) {
       data.isActive = dto.isActive;
+    }
+    if (dto.settlementPayeeName !== undefined) {
+      data.settlementPayeeName = dto.settlementPayeeName.trim().slice(0, 120);
+    }
+    if (dto.settlementBankAccount !== undefined) {
+      data.settlementBankAccount = dto.settlementBankAccount.trim().slice(0, 80);
     }
     if (dto.apiToken !== undefined && dto.apiToken.trim()) {
       data.credentialsEnc = this.crypto.encrypt({ apiToken: dto.apiToken.trim() });

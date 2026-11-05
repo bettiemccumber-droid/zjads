@@ -21,6 +21,8 @@ interface ChannelAccount {
   externalChannelId: string | null;
   displayName: string;
   affiliateAlias: string;
+  settlementPayeeName?: string;
+  settlementBankAccount?: string;
   tokenPreview: string;
   isActive?: boolean;
 }
@@ -94,6 +96,8 @@ export default function ChannelAccountsPage() {
       displayName: account.displayName,
       externalChannelId: account.externalChannelId ?? '',
       affiliateAlias: account.affiliateAlias,
+      settlementPayeeName: account.settlementPayeeName ?? '',
+      settlementBankAccount: account.settlementBankAccount ?? '',
       isActive: account.isActive ?? true,
     });
     setModalOpen(true);
@@ -107,6 +111,8 @@ export default function ChannelAccountsPage() {
         displayName: values.displayName,
         externalChannelId: values.externalChannelId ?? '',
         affiliateAlias: values.affiliateAlias ?? '',
+        settlementPayeeName: values.settlementPayeeName ?? '',
+        settlementBankAccount: values.settlementBankAccount ?? '',
         isActive: values.isActive,
       };
       if (values.apiToken?.trim()) {
@@ -203,6 +209,21 @@ export default function ChannelAccountsPage() {
               { title: '显示名称', dataIndex: 'displayName' },
               { title: 'Channel ID', dataIndex: 'externalChannelId' },
               { title: '联盟序号', dataIndex: 'affiliateAlias' },
+              {
+                title: '结算收款人',
+                dataIndex: 'settlementPayeeName',
+                render: (v: string | undefined) => v?.trim() || '—',
+              },
+              {
+                title: '收款卡号',
+                dataIndex: 'settlementBankAccount',
+                render: (v: string | undefined) => {
+                  const s = v?.trim();
+                  if (!s) return '—';
+                  if (s.length <= 8) return s;
+                  return `${s.slice(0, 4)}****${s.slice(-4)}`;
+                },
+              },
               { title: 'Token', dataIndex: 'tokenPreview' },
               {
                 title: '状态',
@@ -304,6 +325,16 @@ export default function ChannelAccountsPage() {
             extra="须与 Google Ads 广告系列名中的序号一致，如 pm1、lh2、ui1"
           >
             <Input placeholder="如 lh2" />
+          </Form.Item>
+          <Form.Item
+            name="settlementPayeeName"
+            label="结算收款人"
+            extra="月度结算报表「收款人」列；按本渠道账号展示"
+          >
+            <Input placeholder="真实姓名" maxLength={120} />
+          </Form.Item>
+          <Form.Item name="settlementBankAccount" label="收款卡号" extra="月度结算报表「收款卡号」列">
+            <Input placeholder="银行卡号" maxLength={80} />
           </Form.Item>
           <Form.Item
             name="apiToken"

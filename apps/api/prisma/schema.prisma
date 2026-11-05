@@ -123,6 +123,10 @@ model ChannelAccount {
   externalChannelId  String   @default("") @map("external_channel_id") @db.VarChar(100)
   displayName        String   @map("display_name") @db.VarChar(255)
   affiliateAlias     String   @default("") @map("affiliate_alias") @db.VarChar(50)
+  /** 结算报表 · 收款人（按渠道账号列展示） */
+  settlementPayeeName    String @default("") @map("settlement_payee_name") @db.VarChar(120)
+  /** 结算报表 · 收款卡号 */
+  settlementBankAccount  String @default("") @map("settlement_bank_account") @db.VarChar(80)
   credentialsEnc     String   @map("credentials_enc") @db.Text
   isActive           Boolean  @default(true) @map("is_active")
   createdAt          DateTime @default(now()) @map("created_at")
@@ -243,6 +247,8 @@ model AdDataSource {
   sheetId     String   @map("sheet_id") @db.VarChar(100)
   mainTab     String   @default("raw_daily_report") @map("main_tab") @db.VarChar(100)
   description String?  @db.Text
+  /** 最近一次 Sheet 导入涉及的 Google customerId，用于结算报表按 MCC 汇总广告费 */
+  linkedCustomerIds Json @default("[]") @map("linked_customer_ids")
   isActive    Boolean  @default(true) @map("is_active")
   createdAt   DateTime @default(now()) @map("created_at")
   updatedAt   DateTime @updatedAt @map("updated_at")
@@ -316,6 +322,38 @@ model SettlementActualCommission {
   @@unique([scopeKey, month, affiliateKey])
   @@index([scopeKey, month])
   @@map("settlement_actual_commissions")
+}
+
+/** 结算报表 · 广告费手工调整（按 scope + 月 + 广告数据源） */
+model SettlementAdSpendLine {
+  id            Int      @id @default(autoincrement())
+  scopeKey      String   @map("scope_key") @db.VarChar(32)
+  month         String   @db.VarChar(7)
+  adSourceId    Int      @map("ad_source_id")
+  adjustmentUsd Decimal  @default(0) @map("adjustment_usd") @db.Decimal(14, 2)
+  /** 结算采用的广告费（原币口径，与库内汇总同单位） */
+  spendUsd      Decimal  @default(0) @map("spend_usd") @db.Decimal(14, 2)
+  updatedById   Int?     @map("updated_by_id")
+  createdAt     DateTime @default(now()) @map("created_at")
+  updatedAt     DateTime @updatedAt @map("updated_at")
+
+  @@unique([scopeKey, month, adSourceId])
+  @@index([scopeKey, month])
+  @@map("settlement_ad_spend_lines")
+}
+
+/** 结算报表 · 月度杂项（应返广告费等） */
+model SettlementMonthlyMeta {
+  id               Int      @id @default(autoincrement())
+  scopeKey         String   @map("scope_key") @db.VarChar(32)
+  month            String   @db.VarChar(7)
+  rebateAdSpendUsd Decimal  @default(0) @map("rebate_ad_spend_usd") @db.Decimal(14, 2)
+  updatedById      Int?     @map("updated_by_id")
+  createdAt        DateTime @default(now()) @map("created_at")
+  updatedAt        DateTime @updatedAt @map("updated_at")
+
+  @@unique([scopeKey, month])
+  @@map("settlement_monthly_meta")
 }
 
 model CommissionAlertRule {

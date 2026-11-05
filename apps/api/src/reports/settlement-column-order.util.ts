@@ -31,3 +31,25 @@ export function sortSettlementColumns<T extends { key: string; affiliateAlias: s
     return a.key.localeCompare(b.key);
   });
 }
+
+/**
+ * 结算矩阵列头展示（同 alias 多账号时 RW1/RW2 或 alias2）
+ */
+export function settlementColumnDisplayLabel(
+  affiliateAlias: string,
+  platformCode: string,
+  duplicateIndex: number,
+  duplicateCount: number,
+): string {
+  const alias = (affiliateAlias || 'default').toLowerCase();
+  if (duplicateCount <= 1) {
+    const order = resolveSettlementAliasOrder();
+    const hit = order.find((o) => o === alias);
+    if (hit) return hit.toUpperCase();
+    return alias.toUpperCase().slice(0, 4);
+  }
+  if (platformCode === 'rewardoo') {
+    return `RW${duplicateIndex + 1}`;
+  }
+  return `${alias.toUpperCase()}${duplicateIndex + 1}`;
+}

@@ -36,6 +36,9 @@ export interface SettlementMonthlyColumn {
   accountHint: string;
 }
 
+type CommissionHalfDraft = Record<string, { usdH1: number; usdH2: number }>;
+type HalfDraftKind = 'actual' | 'receivable';
+
 export interface SettlementMonthlyMatrixRow {
   rowKey: string;
   label: string;
@@ -80,7 +83,6 @@ export interface SettlementClassicMonthlyPanelProps {
   onScopeChange: (userId: number | null) => void;
 }
 
-type ActualHalfDraft = Record<string, { usdH1: number; usdH2: number }>;
 
 type AdSpendDraftLine = {
   adSourceId: number;
@@ -118,8 +120,10 @@ export default function SettlementClassicMonthlyPanel({
   const [month, setMonth] = useState<Dayjs>(() => dayjs().startOf('month'));
   const [loading, setLoading] = useState(false);
   const [report, setReport] = useState<SettlementMonthlyReport | null>(null);
-  const [actualDraft, setActualDraft] = useState<ActualHalfDraft>({});
+  const [actualDraft, setActualDraft] = useState<CommissionHalfDraft>({});
+  const [receivableDraft, setReceivableDraft] = useState<CommissionHalfDraft>({});
   const [savingActual, setSavingActual] = useState(false);
+  const [savingReceivable, setSavingReceivable] = useState(false);
   const [adSpendDraft, setAdSpendDraft] = useState<AdSpendDraftLine[]>([]);
   const [rebateDraft, setRebateDraft] = useState(0);
   const [savingAdSpend, setSavingAdSpend] = useState(false);
@@ -160,13 +164,18 @@ export default function SettlementClassicMonthlyPanel({
 
   useEffect(() => {
     if (!report) return;
-    const h1 = report.matrixRows.find((r) => r.rowKey === 'actual_h1')?.values ?? {};
-    const h2 = report.matrixRows.find((r) => r.rowKey === 'actual_h2')?.values ?? {};
-    const draft: ActualHalfDraft = {};
+    const actualH1 = report.matrixRows.find((r) => r.rowKey === 'actual_h1')?.values ?? {};
+    const actualH2 = report.matrixRows.find((r) => r.rowKey === 'actual_h2')?.values ?? {};
+    const recvH1 = report.matrixRows.find((r) => r.rowKey === 'recv_h1')?.values ?? {};
+    const recvH2 = report.matrixRows.find((r) => r.rowKey === 'recv_h2')?.values ?? {};
+    const actual: CommissionHalfDraft = {};
+    const receivable: CommissionHalfDraft = {};
     for (const c of report.columns) {
-      draft[c.key] = { usdH1: h1[c.key] ?? 0, usdH2: h2[c.key] ?? 0 };
+      actual[c.key] = { usdH1: actualH1[c.key] ?? 0, usdH2: actualH2[c.key] ?? 0 };
+      receivable[c.key] = { usdH1: recvH1[c.key] ?? 0, usdH2: recvH2[c.key] ?? 0 };
     }
-    setActualDraft(draft);
+    setActualDraft(actual);
+    setReceivableDraft(receivable);
     setAdSpendDraft(
       report.adSpendRows.map((r) => ({
         adSourceId: r.adSourceId,
@@ -206,6 +215,12 @@ export default function SettlementClassicMonthlyPanel({
     () =>
       Object.values(actualDraft).reduce((s, h) => s + (h.usdH1 || 0) + (h.usdH2 || 0), 0),
     [actualDraft],
+  );
+
+  const receivableTotalUsd = useMemo(
+    () =>
+      Object.values(receivableDraft).reduce((s, h) => s + (h.usdH1 || 0) + (h.usdH2 || 0), 0),
+    [receivableDraft],
   );
 
   const adSpendTotalDraft = useMemo(
@@ -290,22 +305,54 @@ export default function SettlementClassicMonthlyPanel({
     }
   };
 
-  const saveActual = async () => {
+  const saveReceivable = async () => {
     if (!report?.canEditActualCommission) return;
-    setSavingActual(true);
+    setSavingReceivable(true);
     try {
-      const halfValues: ActualHalfDraft = {};
+      const halfValues: CommissionHalfDraft = {};
       for (const c of report.columns) {
-        halfValues[c.key] = actualDraft[c.key] ?? { usdH1: 0, usdH2: 0 };
+        halfValues[c.key] = receivableDraft[c.key] ?? { usdH1: 0, usdH2: 0 };
       }
-      const body: { month: string; halfValues: ActualHalfDraft; userId?: string } = {
+      const body: { month: string; halfValues: CommissionHalfDraft; userId?: string } = {
         month: monthStr,
         halfValues,
       };
       if (effectiveScopeUserId != null) {
         body.userId = String(effectiveScopeUserId);
       }
-      const { data } = await api.put<ApiResult<{ halfValues: ActualHalfDraft }>>(
+      const { data } = await api.put<ApiResult<{ halfValues: CommissionHalfDraft }>>(
+        '/reports/settlement-monthly/receivable-commission',
+        body,
+      );
+      if (!data.success) {
+        message.error(data.message || '保存失败');
+        return;
+      }
+      message.success('应收佣金已保存');
+      await loadReport();
+    } catch {
+      message.error('保存应收佣金失败');
+    } finally {
+      setSavingReceivable(false);
+    }
+  };
+
+  const saveActual = async () => {
+    if (!report?.canEditActualCommission) return;
+    setSavingActual(true);
+    try {
+      const halfValues: CommissionHalfDraft = {};
+      for (const c of report.columns) {
+        halfValues[c.key] = actualDraft[c.key] ?? { usdH1: 0, usdH2: 0 };
+      }
+      const body: { month: string; halfValues: CommissionHalfDraft; userId?: string } = {
+        month: monthStr,
+        halfValues,
+      };
+      if (effectiveScopeUserId != null) {
+        body.userId = String(effectiveScopeUserId);
+      }
+      const { data } = await api.put<ApiResult<{ halfValues: CommissionHalfDraft }>>(
         '/reports/settlement-monthly/actual-commission',
         body,
       );
@@ -366,32 +413,60 @@ export default function SettlementClassicMonthlyPanel({
     });
   };
 
-  const cellUsd = (rowKey: string, colKey: string) => {
-    if (rowKey === 'actual_total' && canEdit) {
-      return (actualDraft[colKey]?.usdH1 ?? 0) + (actualDraft[colKey]?.usdH2 ?? 0);
+  const draftFor = (kind: HalfDraftKind) =>
+    kind === 'actual' ? actualDraft : receivableDraft;
+
+  const setDraftFor = (kind: HalfDraftKind) =>
+    kind === 'actual' ? setActualDraft : setReceivableDraft;
+
+  const cellUsd = (rowKey: string, colKey: string, kind: HalfDraftKind = 'actual') => {
+    const draft = draftFor(kind);
+    if (rowKey === 'actual_total' && canEdit && kind === 'actual') {
+      return (draft[colKey]?.usdH1 ?? 0) + (draft[colKey]?.usdH2 ?? 0);
+    }
+    if (rowKey === 'recv_total' && canEdit && kind === 'receivable') {
+      return (draft[colKey]?.usdH1 ?? 0) + (draft[colKey]?.usdH2 ?? 0);
     }
     return rowMap.get(rowKey)?.values[colKey] ?? 0;
   };
 
-  const rowTotal = (rowKey: string) => {
-    if (canEdit && rowKey === 'actual_h1') {
-      return Object.values(actualDraft).reduce((s, h) => s + h.usdH1, 0);
+  const rowTotal = (rowKey: string, kind: HalfDraftKind = 'actual') => {
+    const draft = draftFor(kind);
+    if (canEdit && kind === 'actual' && rowKey === 'actual_h1') {
+      return Object.values(draft).reduce((s, h) => s + h.usdH1, 0);
     }
-    if (canEdit && rowKey === 'actual_h2') {
-      return Object.values(actualDraft).reduce((s, h) => s + h.usdH2, 0);
+    if (canEdit && kind === 'actual' && rowKey === 'actual_h2') {
+      return Object.values(draft).reduce((s, h) => s + h.usdH2, 0);
     }
-    if (canEdit && rowKey === 'actual_total') {
+    if (canEdit && kind === 'actual' && rowKey === 'actual_total') {
       return actualTotalUsd;
+    }
+    if (canEdit && kind === 'receivable' && rowKey === 'recv_h1') {
+      return Object.values(draft).reduce((s, h) => s + h.usdH1, 0);
+    }
+    if (canEdit && kind === 'receivable' && rowKey === 'recv_h2') {
+      return Object.values(draft).reduce((s, h) => s + h.usdH2, 0);
+    }
+    if (canEdit && kind === 'receivable' && rowKey === 'recv_total') {
+      return receivableTotalUsd;
     }
     return rowMap.get(rowKey)?.totalUsd ?? 0;
   };
 
-  const renderMoneyCells = (rowKey: string, editableHalf?: 'h1' | 'h2') => {
+  const renderMoneyCells = (
+    rowKey: string,
+    editableHalf?: 'h1' | 'h2',
+    kind: HalfDraftKind = 'actual',
+  ) => {
+    const canEditHalf = kind === 'actual' ? canEdit : canEdit;
     return (
       <>
         {cols.map((c) => {
-          const usd = cellUsd(rowKey, c.key);
-          const isEdit = editableHalf && canEdit;
+          const usd = cellUsd(rowKey, c.key, kind);
+          const isEdit = editableHalf && canEditHalf;
+          const draft = draftFor(kind);
+          const setDraft = setDraftFor(kind);
+          const field = editableHalf === 'h1' ? 'usdH1' : 'usdH2';
           return (
             <Fragment key={c.key}>
               <td align="right" className={isEdit ? 'sr-cell-editable' : undefined}>
@@ -401,15 +476,14 @@ export default function SettlementClassicMonthlyPanel({
                     step={0.01}
                     precision={2}
                     size="small"
-                    value={actualDraft[c.key]?.[editableHalf === 'h1' ? 'usdH1' : 'usdH2'] ?? 0}
+                    value={draft[c.key]?.[field] ?? 0}
                     onChange={(v) =>
-                      setActualDraft((prev) => ({
+                      setDraft((prev) => ({
                         ...prev,
                         [c.key]: {
                           usdH1: prev[c.key]?.usdH1 ?? 0,
                           usdH2: prev[c.key]?.usdH2 ?? 0,
-                          [editableHalf === 'h1' ? 'usdH1' : 'usdH2']:
-                            typeof v === 'number' ? v : 0,
+                          [field]: typeof v === 'number' ? v : 0,
                         },
                       }))
                     }
@@ -421,22 +495,17 @@ export default function SettlementClassicMonthlyPanel({
               </td>
               <td align="right" className={isEdit ? 'sr-cell-editable' : undefined}>
                 <span className="sr-money-cny">
-                  {fmtCny(
-                    isEdit
-                      ? (actualDraft[c.key]?.[editableHalf === 'h1' ? 'usdH1' : 'usdH2'] ?? 0)
-                      : usd,
-                    rate,
-                  )}
+                  {fmtCny(isEdit ? (draft[c.key]?.[field] ?? 0) : usd, rate)}
                 </span>
               </td>
             </Fragment>
           );
         })}
         <td align="right" className="sr-total-col">
-          <span className="sr-money-usd">{fmtUsd(rowTotal(rowKey))}</span>
+          <span className="sr-money-usd">{fmtUsd(rowTotal(rowKey, kind))}</span>
         </td>
         <td align="right" className="sr-total-col">
-          <span className="sr-money-cny">{fmtCny(rowTotal(rowKey), rate)}</span>
+          <span className="sr-money-cny">{fmtCny(rowTotal(rowKey, kind), rate)}</span>
         </td>
       </>
     );
@@ -664,15 +733,25 @@ export default function SettlementClassicMonthlyPanel({
           {(canEdit || canEditPayout) && (
             <Space size="small">
               {canEdit && (
-                <Button
-                  type="primary"
-                  size="small"
-                  icon={<SaveOutlined />}
-                  loading={savingActual}
-                  onClick={() => void saveActual()}
-                >
-                  保存实收佣金
-                </Button>
+                <>
+                  <Button
+                    size="small"
+                    icon={<SaveOutlined />}
+                    loading={savingReceivable}
+                    onClick={() => void saveReceivable()}
+                  >
+                    保存应收佣金
+                  </Button>
+                  <Button
+                    type="primary"
+                    size="small"
+                    icon={<SaveOutlined />}
+                    loading={savingActual}
+                    onClick={() => void saveActual()}
+                  >
+                    保存实收佣金
+                  </Button>
+                </>
               )}
               {canEditPayout && (
                 <Button
@@ -711,7 +790,7 @@ export default function SettlementClassicMonthlyPanel({
                     <tr>
                       {cols.map((c) => (
                         <th key={`${c.key}-acc`} colSpan={2}>
-                          <div className="sr-sub">账号名称</div>
+                          <div className="sr-sub">{c.platformName || '平台'}</div>
                           <div className="sr-account-hint">{c.accountHint || '—'}</div>
                         </th>
                       ))}
@@ -746,30 +825,30 @@ export default function SettlementClassicMonthlyPanel({
                         (美金)
                       </td>
                       <td className="sr-sublabel">5日·上半月(1–15)</td>
-                      {renderMoneyCells('recv_h1')}
+                      {renderMoneyCells('recv_h1', 'h1', 'receivable')}
                     </tr>
                     <tr>
                       <td className="sr-sublabel">15日·下半月(16–末)</td>
-                      {renderMoneyCells('recv_h2')}
+                      {renderMoneyCells('recv_h2', 'h2', 'receivable')}
                     </tr>
                     <tr>
                       <td className="sr-sublabel">合计</td>
-                      {renderMoneyCells('recv_total')}
+                      {renderMoneyCells('recv_total', undefined, 'receivable')}
                     </tr>
                     <tr>
                       <td rowSpan={3} className="sr-group">
                         实收佣金
                       </td>
                       <td className="sr-sublabel">10日·上半月</td>
-                      {renderMoneyCells('actual_h1', 'h1')}
+                      {renderMoneyCells('actual_h1', 'h1', 'actual')}
                     </tr>
                     <tr>
                       <td className="sr-sublabel">20日·下半月</td>
-                      {renderMoneyCells('actual_h2', 'h2')}
+                      {renderMoneyCells('actual_h2', 'h2', 'actual')}
                     </tr>
                     <tr>
                       <td className="sr-sublabel">合计</td>
-                      {renderMoneyCells('actual_total')}
+                      {renderMoneyCells('actual_total', undefined, 'actual')}
                     </tr>
                     <tr>
                       <td colSpan={2} className="sr-label">
@@ -789,8 +868,9 @@ export default function SettlementClassicMonthlyPanel({
             )}
           </Spin>
           <p className="sr-tip" style={{ padding: '8px 16px 12px' }}>
-            实收佣金为手工录入，保存后刷新仍保留；CNY 按页头实时汇率折算。收款人/卡号绑定各渠道账号，也可在{' '}
-            <Link to="/channel-accounts">平台账号</Link> 中编辑。
+            账期/失效来自订单同步。应收/实收请按<strong>各平台后台</strong>分列填写（如 LinkBux → LB1/LB2 分别对应
+            Payments：<em>Payment in Progress</em> 记入应收、当月 <em>Paid</em> 记入实收），保存后刷新仍保留；CNY
+            按页头实时汇率折算。收款人/卡号见 <Link to="/channel-accounts">平台账号</Link>。
           </p>
         </div>
       </div>

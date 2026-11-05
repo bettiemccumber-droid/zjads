@@ -23,6 +23,7 @@ import { SettlementActualCommissionService } from './settlement-actual-commissio
 import { SettlementAdSpendService } from './settlement-ad-spend.service';
 import { SettlementMonthlyReportService } from './settlement-monthly-report.service';
 import { SettlementPayoutInfoService } from './settlement-payout-info.service';
+import { SettlementReceivableCommissionService } from './settlement-receivable-commission.service';
 
 class DateRangeQuery {
   @IsDateString()
@@ -158,6 +159,7 @@ export class ReportsController {
     private readonly settlementActualCommission: SettlementActualCommissionService,
     private readonly settlementAdSpend: SettlementAdSpendService,
     private readonly settlementPayoutInfo: SettlementPayoutInfoService,
+    private readonly settlementReceivableCommission: SettlementReceivableCommissionService,
   ) {}
 
   @Get('merchant-summary')
@@ -233,6 +235,25 @@ export class ReportsController {
         parseRefreshFx(q.refreshFx),
       ),
     );
+  }
+
+  /** 保存月度应收佣金（各平台后台口径，按渠道账号列） */
+  @Put('settlement-monthly/receivable-commission')
+  async saveSettlementReceivableCommission(
+    @CurrentUser() user: AuthUser,
+    @Body() body: SaveSettlementActualCommissionDto,
+  ) {
+    const queryUserId = body.userId ? parseInt(body.userId, 10) : undefined;
+    if (!body.halfValues || Object.keys(body.halfValues).length === 0) {
+      return ok({ halfValues: {} });
+    }
+    const halfValues = await this.settlementReceivableCommission.saveHalves(
+      user,
+      body.month,
+      body.halfValues,
+      queryUserId,
+    );
+    return ok({ halfValues });
   }
 
   /** 保存月度实收佣金（按报表 scope + 联盟序号列） */

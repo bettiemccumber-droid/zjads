@@ -5,6 +5,7 @@ import { SettlementActualCommissionService } from './settlement-actual-commissio
 import { SettlementAdSpendService } from './settlement-ad-spend.service';
 import { SettlementMonthlyReportService } from './settlement-monthly-report.service';
 import { SettlementPayoutInfoService } from './settlement-payout-info.service';
+import { SettlementReceivableCommissionService } from './settlement-receivable-commission.service';
 import { SettlementUsdCnyRateService } from './settlement-usd-cny-rate.service';
 
 @Module({
@@ -15,6 +16,7 @@ import { SettlementUsdCnyRateService } from './settlement-usd-cny-rate.service';
     SettlementAdSpendService,
     SettlementUsdCnyRateService,
     SettlementPayoutInfoService,
+    SettlementReceivableCommissionService,
     SettlementMonthlyReportService,
   ],
   exports: [
@@ -23,6 +25,7 @@ import { SettlementUsdCnyRateService } from './settlement-usd-cny-rate.service';
     SettlementAdSpendService,
     SettlementUsdCnyRateService,
     SettlementPayoutInfoService,
+    SettlementReceivableCommissionService,
     SettlementMonthlyReportService,
   ],
 })

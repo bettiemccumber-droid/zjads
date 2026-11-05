@@ -324,6 +324,24 @@ model SettlementActualCommission {
   @@map("settlement_actual_commissions")
 }
 
+/** 结算报表 · 应收佣金（各平台后台打款/在途，按 scope + 月 + 渠道账号列） */
+model SettlementReceivableCommission {
+  id           Int      @id @default(autoincrement())
+  scopeKey     String   @map("scope_key") @db.VarChar(32)
+  month        String   @db.VarChar(7)
+  affiliateKey String   @map("affiliate_key") @db.VarChar(80)
+  amountUsdH1  Decimal  @default(0) @map("amount_usd_h1") @db.Decimal(14, 2)
+  amountUsdH2  Decimal  @default(0) @map("amount_usd_h2") @db.Decimal(14, 2)
+  amountUsd    Decimal  @default(0) @map("amount_usd") @db.Decimal(14, 2)
+  updatedById  Int?     @map("updated_by_id")
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  @@unique([scopeKey, month, affiliateKey])
+  @@index([scopeKey, month])
+  @@map("settlement_receivable_commissions")
+}
+
 /** 结算报表 · 广告费手工调整（按 scope + 月 + 广告数据源） */
 model SettlementAdSpendLine {
   id            Int      @id @default(autoincrement())

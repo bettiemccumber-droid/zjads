@@ -5,6 +5,7 @@ import { buildOrderDateRangeFilter } from '../common/order-date-range.util';
 import { AuthUser, isCompanyWideScope, resolveOwnerUserId } from '../common/ownership.util';
 import { PrismaService } from '../prisma/prisma.service';
 import { SettlementActualCommissionService } from './settlement-actual-commission.service';
+import { SettlementReceivableCommissionService } from './settlement-receivable-commission.service';
 import { SettlementAdSpendService } from './settlement-ad-spend.service';
 import { SettlementUsdCnyRateService } from './settlement-usd-cny-rate.service';
 import { parseLinkedCustomerIds } from '../ad-sources/linked-customer-ids.util';
@@ -116,6 +117,7 @@ export class SettlementMonthlyReportService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly actualCommission: SettlementActualCommissionService,
+    private readonly receivableCommission: SettlementReceivableCommissionService,
     private readonly adSpend: SettlementAdSpendService,
     private readonly usdCnyRateService: SettlementUsdCnyRateService,
   ) {}
@@ -136,6 +138,7 @@ export class SettlementMonthlyReportService {
 
     const scopeKey = resolveSettlementReportScopeKey(user, queryUserId);
     const actualHalves = await this.actualCommission.loadHalvesForMonth(scopeKey, month);
+    const receivableHalves = await this.receivableCommission.loadHalvesForMonth(scopeKey, month);
 
     const adSpendSaved = await this.adSpend.loadLinesForMonth(scopeKey, month);
     const adSpendMeta = await this.adSpend.loadMeta(scopeKey, month);
@@ -150,6 +153,7 @@ export class SettlementMonthlyReportService {
       startDate,
       endDate,
       actualHalves,
+      receivableHalves,
     );
 
     const bookRow = matrixRows.find((r) => r.rowKey === 'book');
@@ -159,8 +163,8 @@ export class SettlementMonthlyReportService {
 
     const notes: string[] = [
       '账面/失效佣金按联盟订单 orderDate 汇总；拒付拆分与结算查询一致。',
-      '应收按订单 confirmDate（无则 orderDate）落入上半月(1–15日)/下半月(16–月末)。',
-      '实收佣金可手工录入并保存；与当前报表范围（全公司/员工）绑定。',
+      '应收/实收按各平台后台打款录入（非订单推算）：如 LinkBux Payments 的 Payment in Progress→应收、Paid 且日期落在当月→实收；LB1/LB2 等各填各列。',
+      '账期/失效仍来自订单同步；应收/实收保存后与报表 scope（全公司/员工）绑定。',
       '广告费按各 MCC 关联的 Google 子账号汇总；多 MCC 时请重新导入 Sheet 以刷新子账号绑定。',
       '佣金列按平台渠道账号拆分（同 alias 多账号显示 RW1/RW2 等）。',
       '补充金额与「广告费可改」可保存；未保存时广告费等于库内汇总。',
@@ -229,6 +233,7 @@ export class SettlementMonthlyReportService {
       startDate,
       endDate,
       actualHalvesYear,
+      {},
     );
 
     const monthlyRows = await this.buildYearlyMonthlyRows(ownerIds, year, startDate, endDate);
@@ -579,6 +584,7 @@ export class SettlementMonthlyReportService {
     startDate: string,
     endDate: string,
     actualHalves: Record<string, { usdH1: number; usdH2: number }> = {},
+    receivableHalves: Record<string, { usdH1: number; usdH2: number }> = {},
   ): Promise<{ columns: SettlementMonthlyColumn[]; matrixRows: SettlementMonthlyMatrixRow[] }> {
     const empty = { columns: [] as SettlementMonthlyColumn[], matrixRows: [] as SettlementMonthlyMatrixRow[] };
     if (!ownerIds.length) return empty;
@@ -628,13 +634,11 @@ export class SettlementMonthlyReportService {
     type Bucket = {
       book: number;
       rejected: number;
-      recvH1: number;
-      recvH2: number;
     };
     const byAccount = new Map<string, Bucket>();
     const ensure = (accountKey: string) => {
       if (!byAccount.has(accountKey)) {
-        byAccount.set(accountKey, { book: 0, rejected: 0, recvH1: 0, recvH2: 0 });
+        byAccount.set(accountKey, { book: 0, rejected: 0 });
       }
       return byAccount.get(accountKey)!;
     };
@@ -646,18 +650,12 @@ export class SettlementMonthlyReportService {
       const buckets = resolveOrderCommissionBuckets(o);
       b.book += comm;
       b.rejected += buckets.rejected;
-
-      const recvAmount = roundMoney(buckets.approved + buckets.pending);
-      const bucketDate = o.confirmDate ?? o.orderDate;
-      const day = bucketDate.getUTCDate();
-      if (day <= 15) b.recvH1 += recvAmount;
-      else b.recvH2 += recvAmount;
     }
 
     const valuesFor = (pick: (b: Bucket) => number): Record<string, number> => {
       const out: Record<string, number> = {};
       for (const col of columns) {
-        out[col.key] = roundMoney(pick(byAccount.get(col.key) ?? { book: 0, rejected: 0, recvH1: 0, recvH2: 0 }));
+        out[col.key] = roundMoney(pick(byAccount.get(col.key) ?? { book: 0, rejected: 0 }));
       }
       return out;
     };
@@ -665,8 +663,19 @@ export class SettlementMonthlyReportService {
     const sumVals = (vals: Record<string, number>) =>
       roundMoney(Object.values(vals).reduce((s, v) => s + v, 0));
 
-    const recvH1 = valuesFor((b) => b.recvH1);
-    const recvH2 = valuesFor((b) => b.recvH2);
+    const pickReceivableHalf = (colKey: string) => {
+      const direct = receivableHalves[colKey];
+      if (direct) return direct;
+      return receivableHalves[colKey.toLowerCase()] ?? { usdH1: 0, usdH2: 0 };
+    };
+
+    const recvH1: Record<string, number> = {};
+    const recvH2: Record<string, number> = {};
+    for (const col of columns) {
+      const half = pickReceivableHalf(col.key);
+      recvH1[col.key] = roundMoney(half.usdH1);
+      recvH2[col.key] = roundMoney(half.usdH2);
+    }
     const recvTotal: Record<string, number> = {};
     for (const col of columns) {
       recvTotal[col.key] = roundMoney((recvH1[col.key] ?? 0) + (recvH2[col.key] ?? 0));

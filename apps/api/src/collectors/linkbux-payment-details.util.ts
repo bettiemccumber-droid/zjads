@@ -102,10 +102,13 @@ export async function fetchLinkbuxMerchantCommissions(
 }
 
 /**
- * Payment Details API：按 paid_date 区间拉已付商家明细（文档 Optional paid_date_begin/end）
+ * Payment Details API：按 paid_date 区间拉已付明细。
+ * LinkBux 实测：仅 paid_date_begin/end 会 1003，须同时带 begin_date/end_date（validation 区间）。
  */
 export async function fetchLinkbuxMerchantCommissionsByPaidDate(
   token: string,
+  validationBegin: string,
+  validationEnd: string,
   paidDateBegin: string,
   paidDateEnd: string,
 ): Promise<LinkbuxMerchantCommissionRow[]> {
@@ -115,6 +118,8 @@ export async function fetchLinkbuxMerchantCommissionsByPaidDate(
       mod: 'settlement',
       op: 'merchant_commission',
       token: token.trim(),
+      begin_date: validationBegin,
+      end_date: validationEnd,
       paid_date_begin: paidDateBegin,
       paid_date_end: paidDateEnd,
       type: 'json',

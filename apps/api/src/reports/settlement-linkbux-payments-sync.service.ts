@@ -93,7 +93,13 @@ export class SettlementLinkbuxPaymentsSyncService {
         }
 
         try {
-          paidRows = await fetchLinkbuxMerchantCommissionsByPaidDate(token, startDate, endDate);
+          paidRows = await fetchLinkbuxMerchantCommissionsByPaidDate(
+            token,
+            startDate,
+            endDate,
+            startDate,
+            endDate,
+          );
         } catch (err) {
           const msg = err instanceof Error ? err.message : String(err);
           fetchError = fetchError ? `${fetchError}; ${msg}` : msg;

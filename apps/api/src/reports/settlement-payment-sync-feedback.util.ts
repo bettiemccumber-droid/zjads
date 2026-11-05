@@ -26,3 +26,13 @@ export function zeroAggregateHint(month: string, apiRowCount: number): string | 
   }
   return `${apiRowCount} 条打款未计入 ${month}（Request/Paid 日期或状态与后台不一致）`;
 }
+
+/**
+ * LinkBux Payment Details 专用提示（无 Request Date 字段）
+ */
+export function linkbuxZeroAggregateHint(month: string, apiRowCount: number): string {
+  if (apiRowCount <= 0) {
+    return `${month} Payment Details 无返回行（validation 与 paid_date 各查一次）`;
+  }
+  return `${apiRowCount} 条 Payment Details 未计入 ${month}（settlement_date/paid_date 不在该月、金额为 0，或无 payment_id 的在途行）`;
+}

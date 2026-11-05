@@ -38,6 +38,17 @@ function runTests() {
   const novActual = aggregateLinkbuxActualCommissionsForSettlement(paid, month);
   assert.equal(novActual.actualH1 + novActual.actualH2, 0);
 
+  const pendingBatch: LinkbuxMerchantCommissionRow[] = [
+    {
+      sale_comm: '1,155.60',
+      settlement_date: '10-15-2026',
+      payment_id: 18540,
+      paid_date: null,
+    },
+  ];
+  const pendingRecv = aggregateLinkbuxReceivableCommissionsForSettlement(pendingBatch, month);
+  assert.equal(pendingRecv.receivableH1, 1155.6);
+
   console.log('linkbux-payment-details.util.test.ts: ok');
 }
 

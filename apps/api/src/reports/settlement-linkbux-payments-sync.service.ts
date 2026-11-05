@@ -3,8 +3,10 @@ import { UserRole } from '@prisma/client';
 import {
   aggregateLinkbuxActualCommissionsForSettlement,
   aggregateLinkbuxReceivableCommissionsForSettlement,
+  dedupeLinkbuxMerchantCommissionRows,
   fetchLinkbuxMerchantCommissions,
   fetchLinkbuxMerchantCommissionsByPaidDate,
+  linkbuxValidationBeginDate,
 } from '../collectors/linkbux-payment-details.util';
 import { AuthUser, isCompanyWideScope, resolveOwnerUserId } from '../common/ownership.util';
 import { CryptoService } from '../common/crypto.service';
@@ -14,8 +16,8 @@ import { SettlementActualCommissionService } from './settlement-actual-commissio
 import { SettlementReceivableCommissionService } from './settlement-receivable-commission.service';
 import { persistPaymentHalvesByAccountOwner } from './settlement-commission-persist.util';
 import {
+  linkbuxZeroAggregateHint,
   shouldPersistPaymentSyncLine,
-  zeroAggregateHint,
 } from './settlement-payment-sync-feedback.util';
 import { canEditSettlementActualCommission } from './settlement-report-scope.util';
 
@@ -57,6 +59,7 @@ export class SettlementLinkbuxPaymentsSyncService {
     }
 
     const { startDate, endDate } = monthToDateRange(month);
+    const validationBegin = linkbuxValidationBeginDate(endDate);
     const ownerIds = await this.resolveOwnerUserIds(user, queryUserId);
 
     const accounts = await this.prisma.channelAccount.findMany({
@@ -87,7 +90,11 @@ export class SettlementLinkbuxPaymentsSyncService {
         let fetchError: string | undefined;
 
         try {
-          validationRows = await fetchLinkbuxMerchantCommissions(token, startDate, endDate);
+          validationRows = await fetchLinkbuxMerchantCommissions(
+            token,
+            validationBegin,
+            endDate,
+          );
         } catch (err) {
           fetchError = err instanceof Error ? err.message : String(err);
         }
@@ -95,7 +102,7 @@ export class SettlementLinkbuxPaymentsSyncService {
         try {
           paidRows = await fetchLinkbuxMerchantCommissionsByPaidDate(
             token,
-            startDate,
+            validationBegin,
             endDate,
             startDate,
             endDate,
@@ -112,15 +119,17 @@ export class SettlementLinkbuxPaymentsSyncService {
         const actualAgg = aggregateLinkbuxActualCommissionsForSettlement(paidRows, month);
         const receivable = { usdH1: receivableAgg.receivableH1, usdH2: receivableAgg.receivableH2 };
         const actual = { usdH1: actualAgg.actualH1, usdH2: actualAgg.actualH2 };
-        const apiRowCount = validationRows.length + paidRows.length;
+        const mergedRows = dedupeLinkbuxMerchantCommissionRows([
+          ...validationRows,
+          ...paidRows,
+        ]);
+        const apiRowCount = mergedRows.length;
         const aggSum =
           receivable.usdH1 + receivable.usdH2 + actual.usdH1 + actual.usdH2;
 
         let lineError = fetchError;
-        if (!lineError && aggSum <= 0 && apiRowCount > 0) {
-          lineError = zeroAggregateHint(month, apiRowCount);
-        } else if (!lineError && aggSum <= 0 && apiRowCount === 0) {
-          lineError = `${month} Payment Details 无返回行（validation 与 paid_date 各查一次）`;
+        if (!lineError && aggSum <= 0) {
+          lineError = linkbuxZeroAggregateHint(month, apiRowCount);
         }
 
         if (shouldPersistPaymentSyncLine(receivable, actual, apiRowCount)) {
@@ -130,7 +139,7 @@ export class SettlementLinkbuxPaymentsSyncService {
             lineError = undefined;
           }
         } else if (!lineError) {
-          lineError = zeroAggregateHint(month, apiRowCount);
+          lineError = linkbuxZeroAggregateHint(month, apiRowCount);
         }
 
         synced.push({

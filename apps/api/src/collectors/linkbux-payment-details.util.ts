@@ -54,8 +54,11 @@ function parseLbSettlementList(body: unknown): LinkbuxMerchantCommissionRow[] {
   return [];
 }
 
+/** 解析金额（API 可能带千分位逗号） */
 function parseMoney(v: unknown): number {
-  const n = Number(v);
+  if (v == null || v === '') return 0;
+  if (typeof v === 'number') return Number.isFinite(v) ? v : 0;
+  const n = parseFloat(String(v).replace(/[$,\s]/g, ''));
   return Number.isFinite(n) ? n : 0;
 }
 
@@ -73,7 +76,66 @@ function parseYmd(raw: string | null | undefined): string | null {
 
 /** 仅 paid_date 表示已实收；有 payment_id 但无 paid_date 为在途提现（Pending） */
 function isPaid(row: LinkbuxMerchantCommissionRow): boolean {
-  return Boolean(parseYmd(row.paid_date));
+  const paid = parseYmd(row.paid_date);
+  return paid != null && paid !== '0000-00-00';
+}
+
+function hasPendingPaymentId(row: LinkbuxMerchantCommissionRow): boolean {
+  const id = row.payment_id;
+  if (id == null || id === '') return false;
+  return String(id).trim() !== '' && String(id) !== '0';
+}
+
+/**
+ * validation 查询 begin_date：在结算月之前扩展窗口（API 单次跨度 ≤62 天），便于 Pending 批次含历史 settlement 行
+ */
+export function linkbuxValidationBeginDate(monthEndDate: string): string {
+  const end = new Date(`${monthEndDate}T12:00:00Z`);
+  const begin = new Date(end);
+  begin.setUTCDate(begin.getUTCDate() - 61);
+  const ymd = begin.toISOString().slice(0, 10);
+  return ymd < '2023-01-01' ? '2023-01-01' : ymd;
+}
+
+/**
+ * 合并 validation / paid_date 两次拉取，按 settlement_uuid 去重
+ */
+export function dedupeLinkbuxMerchantCommissionRows(
+  rows: LinkbuxMerchantCommissionRow[],
+): LinkbuxMerchantCommissionRow[] {
+  const seen = new Set<string>();
+  const out: LinkbuxMerchantCommissionRow[] = [];
+  for (const row of rows) {
+    const key = String(
+      row.settlement_uuid ??
+        row.settlement_id ??
+        `${row.mid ?? ''}|${row.mcid ?? ''}|${row.settlement_date ?? ''}|${row.sale_comm ?? ''}|${row.paid_date ?? ''}`,
+    );
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(row);
+  }
+  return out;
+}
+
+function bucketHalfMonth(month: string, ymd: string): 'h1' | 'h2' {
+  const day = Number(ymd.slice(8, 10));
+  return day <= 15 ? 'h1' : 'h2';
+}
+
+/**
+ * 应收落半月：settlement_date 在结算月内按日；在途 payment_id 且 settlement 不在月内时归入上半月（对齐后台 Pending 提现月）
+ */
+function bucketLinkbuxReceivableHalf(
+  month: string,
+  settlementYmd: string | null,
+  pendingPayment: boolean,
+): 'h1' | 'h2' | null {
+  if (settlementYmd?.startsWith(`${month}-`)) {
+    return bucketHalfMonth(month, settlementYmd);
+  }
+  if (pendingPayment) return 'h1';
+  return null;
 }
 
 /**
@@ -166,9 +228,9 @@ export function aggregateLinkbuxReceivableCommissionsForSettlement(
     const comm = parseMoney(row.sale_comm);
     if (comm <= 0 || isPaid(row)) continue;
     const settled = parseYmd(row.settlement_date);
-    if (!settled || !settled.startsWith(`${month}-`)) continue;
-    const day = Number(settled.slice(8, 10));
-    if (day <= 15) out.receivableH1 += comm;
+    const half = bucketLinkbuxReceivableHalf(month, settled, hasPendingPaymentId(row));
+    if (!half) continue;
+    if (half === 'h1') out.receivableH1 += comm;
     else out.receivableH2 += comm;
   }
   const round = (n: number) => Math.round(n * 100) / 100;
@@ -208,9 +270,13 @@ export function aggregateLinkbuxCommissionsForSettlement(
     }
 
     const settled = parseYmd(row.settlement_date);
-    if (!settled || !settled.startsWith(`${month}-`)) continue;
-    const day = Number(settled.slice(8, 10));
-    if (day <= 15) out.receivableH1 += comm;
+    const half = bucketLinkbuxReceivableHalf(
+      month,
+      settled,
+      hasPendingPaymentId(row),
+    );
+    if (!half) continue;
+    if (half === 'h1') out.receivableH1 += comm;
     else out.receivableH2 += comm;
   }
 

@@ -1,8 +1,8 @@
 import { ForbiddenException, Injectable } from '@nestjs/common';
 import { UserRole } from '@prisma/client';
 import {
-  aggregateLinkbuxCommissionsForSettlement,
-  fetchLinkbuxMerchantCommissions,
+  aggregateLinkbuxActualCommissionsForSettlement,
+  fetchLinkbuxMerchantCommissionsByPaidDate,
 } from '../collectors/linkbux-payment-details.util';
 import {
   aggregateLinkbuxPaymentsForSettlement,
@@ -88,24 +88,40 @@ export class SettlementLinkbuxPaymentsSyncService {
           paymentError = err instanceof Error ? err.message : String(err);
         }
 
-        const commissionRows = await fetchLinkbuxMerchantCommissions(token, startDate, endDate);
         const fromPayments = aggregateLinkbuxPaymentsForSettlement(paymentRows, month);
-        const fromCommissions = aggregateLinkbuxCommissionsForSettlement(commissionRows, month);
+        /** 应收：仅付款历史 Pending/In progress（当月发起提现），不用 merchant_commission 兜底 */
+        const receivable = {
+          usdH1: fromPayments.receivableH1,
+          usdH2: fromPayments.receivableH2,
+        };
 
-        const hasPaymentHistory =
-          paymentRows.length > 0 ||
-          fromPayments.receivableH1 +
-            fromPayments.receivableH2 +
-            fromPayments.actualH1 +
-            fromPayments.actualH2 >
-            0;
+        let actual = { usdH1: fromPayments.actualH1, usdH2: fromPayments.actualH2 };
+        let detailRowCount = 0;
+        try {
+          const paidDetailRows = await fetchLinkbuxMerchantCommissionsByPaidDate(
+            token,
+            startDate,
+            endDate,
+          );
+          detailRowCount = paidDetailRows.length;
+          const fromDetails = aggregateLinkbuxActualCommissionsForSettlement(paidDetailRows, month);
+          if (fromDetails.actualH1 + fromDetails.actualH2 > 0) {
+            actual = { usdH1: fromDetails.actualH1, usdH2: fromDetails.actualH2 };
+          }
+        } catch (detailErr) {
+          const msg = detailErr instanceof Error ? detailErr.message : String(detailErr);
+          paymentError = paymentError ? `${paymentError}; ${msg}` : msg;
+        }
 
-        const receivable = hasPaymentHistory
-          ? { usdH1: fromPayments.receivableH1, usdH2: fromPayments.receivableH2 }
-          : { usdH1: fromCommissions.receivableH1, usdH2: fromCommissions.receivableH2 };
-        const actual = hasPaymentHistory
-          ? { usdH1: fromPayments.actualH1, usdH2: fromPayments.actualH2 }
-          : { usdH1: fromCommissions.actualH1, usdH2: fromCommissions.actualH2 };
+        const recvTotal = receivable.usdH1 + receivable.usdH2;
+        const warnNoHistory =
+          recvTotal <= 0 &&
+          paymentRows.length === 0 &&
+          paymentError
+            ? paymentError
+            : recvTotal <= 0 && paymentRows.length === 0
+              ? '未拉到 LB 付款历史：应收应对齐 Payment Summary Pending（需正确 payments 接口）'
+              : undefined;
 
         receivableBatch[key] = receivable;
         actualBatch[key] = actual;
@@ -115,8 +131,8 @@ export class SettlementLinkbuxPaymentsSyncService {
           affiliateAlias: account.affiliateAlias,
           receivable,
           actual,
-          commissionRowCount: paymentRows.length + commissionRows.length,
-          error: paymentError && !hasPaymentHistory ? paymentError : undefined,
+          commissionRowCount: paymentRows.length + detailRowCount,
+          error: warnNoHistory,
         });
       } catch (err) {
         synced.push({

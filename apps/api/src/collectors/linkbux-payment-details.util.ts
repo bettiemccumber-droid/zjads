@@ -97,6 +97,41 @@ export async function fetchLinkbuxMerchantCommissions(
 }
 
 /**
+ * Payment Details API：按 paid_date 区间拉已付商家明细（文档 Optional paid_date_begin/end）
+ */
+export async function fetchLinkbuxMerchantCommissionsByPaidDate(
+  token: string,
+  paidDateBegin: string,
+  paidDateEnd: string,
+): Promise<LinkbuxMerchantCommissionRow[]> {
+  await throttleLbRequest();
+  const { data } = await axios.get(LB_API, {
+    params: {
+      mod: 'settlement',
+      op: 'merchant_commission',
+      token: token.trim(),
+      paid_date_begin: paidDateBegin,
+      paid_date_end: paidDateEnd,
+      type: 'json',
+    },
+    timeout: 120000,
+    validateStatus: () => true,
+  });
+  return parseLbSettlementList(data);
+}
+
+/**
+ * 仅汇总实收（paid_date 落在结算月）
+ */
+export function aggregateLinkbuxActualCommissionsForSettlement(
+  rows: LinkbuxMerchantCommissionRow[],
+  month: string,
+): Pick<LinkbuxPaymentHalfTotals, 'actualH1' | 'actualH2'> {
+  const full = aggregateLinkbuxCommissionsForSettlement(rows, month);
+  return { actualH1: full.actualH1, actualH2: full.actualH2 };
+}
+
+/**
  * 汇总为结算报表上下半月应收/实收（USD）
  *
  * - 未打款（无 paid_date）→ 应收，按 settlement_date 落月/半月（明细兜底，与 Payment Summary 可能不一致）

@@ -134,6 +134,7 @@ export default function SettlementClassicMonthlyPanel({
   const [syncingFs, setSyncingFs] = useState(false);
   const [syncingCg, setSyncingCg] = useState(false);
   const [syncingAll, setSyncingAll] = useState(false);
+  const [lastSyncSummary, setLastSyncSummary] = useState<string | null>(null);
   const [commissionEditMode, setCommissionEditMode] = useState(false);
   const [adSpendDraft, setAdSpendDraft] = useState<AdSpendDraftLine[]>([]);
   const [rebateDraft, setRebateDraft] = useState(0);
@@ -143,7 +144,7 @@ export default function SettlementClassicMonthlyPanel({
 
   const monthStr = month.format('YYYY-MM');
 
-  const loadReport = useCallback(async (refreshFx = false, syncPayments = false) => {
+  const loadReport = useCallback(async (refreshFx = false) => {
     setLoading(true);
     try {
       const params: Record<string, string> = { month: monthStr };
@@ -152,9 +153,6 @@ export default function SettlementClassicMonthlyPanel({
       }
       if (refreshFx) {
         params.refreshFx = '1';
-      }
-      if (syncPayments) {
-        params.syncPayments = '1';
       }
       const { data } = await api.get<ApiResult<SettlementMonthlyReport>>(
         '/reports/settlement-monthly',
@@ -402,7 +400,7 @@ export default function SettlementClassicMonthlyPanel({
           month: string;
           synced: PaymentSyncLine[];
         }>
-      >(path, body);
+      >(path, body, { timeout: 600_000 });
       if (!data.success) {
         message.error(data.message || '同步失败');
         return;
@@ -427,13 +425,30 @@ export default function SettlementClassicMonthlyPanel({
   const syncAllPlatformPayments = async () => {
     if (!report?.canEditActualCommission) return;
     setSyncingAll(true);
-    const platforms = Object.keys(paymentSyncConfig) as (keyof typeof paymentSyncConfig)[];
+    setLastSyncSummary(null);
     try {
-      for (const platform of platforms) {
-        await syncPlatformPayments(platform, () => undefined, { quiet: true });
+      const body: { month: string; userId?: string } = { month: monthStr };
+      if (effectiveScopeUserId != null) {
+        body.userId = String(effectiveScopeUserId);
       }
-      message.success('全部平台打款数据已同步，请核对下方应收/实收');
+      const { data } = await api.post<
+        ApiResult<{
+          month: string;
+          platforms: Array<{ platform: string; synced: number; failed: number }>;
+        }>
+      >('/reports/settlement-monthly/sync-all-payments', body, { timeout: 600_000 });
+      if (!data.success) {
+        message.error(data.message || '同步失败');
+        return;
+      }
+      const parts = data.data.platforms.map(
+        (p) => `${p.platform}: 成功 ${p.synced}${p.failed ? `，失败 ${p.failed}` : ''}`,
+      );
+      setLastSyncSummary(parts.join('；'));
+      message.success('全部平台打款已同步，正在刷新报表…');
       await loadReport();
+    } catch {
+      message.error('同步全部平台打款超时或失败，请稍后只读刷新查看是否已部分写入');
     } finally {
       setSyncingAll(false);
     }
@@ -706,18 +721,35 @@ export default function SettlementClassicMonthlyPanel({
               ]}
             />
           )}
-          <Button
-            icon={<ReloadOutlined />}
-            onClick={() => void loadReport(true, canEdit)}
-            loading={loading}
-          >
-            刷新并同步打款
+          <Button icon={<ReloadOutlined />} onClick={() => void loadReport(true)} loading={loading}>
+            刷新
           </Button>
+          {canEdit && (
+            <Button
+              loading={syncingAll}
+              onClick={() => void syncAllPlatformPayments()}
+              type="default"
+            >
+              同步打款（约 1–10 分钟）
+            </Button>
+          )}
           <Button type="primary" icon={<DownloadOutlined />} onClick={handleExport} disabled={!report}>
             导出 Excel
           </Button>
         </Space>
       </div>
+
+      {lastSyncSummary && (
+        <Alert
+          type="info"
+          showIcon
+          closable
+          onClose={() => setLastSyncSummary(null)}
+          message="最近一次同步打款"
+          description={lastSyncSummary}
+          style={{ marginBottom: 8 }}
+        />
+      )}
 
       {report && (
         <div

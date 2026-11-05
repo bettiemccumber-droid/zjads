@@ -123,6 +123,16 @@ export async function fetchLinkbuxPayments(
       extra: { begin_date: beginDate, end_date: endDate },
     },
     {
+      mod: 'settlement',
+      op: 'payment_history',
+      extra: { request_begin: beginDate, request_end: endDate },
+    },
+    {
+      mod: 'settlement',
+      op: 'payments',
+      extra: { request_begin: beginDate, request_end: endDate },
+    },
+    {
       mod: 'linkpayment',
       op: 'payment2',
       extra: { payment_begin: beginDate, payment_end: endDate },

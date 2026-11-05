@@ -248,11 +248,7 @@ export class ReportsController {
       q.month?.trim() ||
       new Date().toISOString().slice(0, 7);
     const queryUserId = q.userId ? parseInt(q.userId, 10) : undefined;
-    const wantSync =
-      q.syncPayments === '1' || q.syncPayments === 'true';
-    if (wantSync) {
-      await this.settlementAllPaymentsSync.syncForMonth(user, month, queryUserId);
-    }
+    /** 打款同步请用 POST settlement-monthly/sync-all-payments，避免 GET 网关超时 */
     return ok(
       await this.settlementMonthlyReport.build(
         user,

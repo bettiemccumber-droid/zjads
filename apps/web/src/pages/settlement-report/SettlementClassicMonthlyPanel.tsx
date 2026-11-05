@@ -434,17 +434,37 @@ export default function SettlementClassicMonthlyPanel({
       const { data } = await api.post<
         ApiResult<{
           month: string;
-          platforms: Array<{ platform: string; synced: number; failed: number }>;
+          platforms: Array<{
+            platform: string;
+            synced: number;
+            failed: number;
+            lines: Array<{
+              displayName: string;
+              affiliateAlias: string;
+              receivableUsd: number;
+              actualUsd: number;
+              error?: string;
+            }>;
+          }>;
         }>
       >('/reports/settlement-monthly/sync-all-payments', body, { timeout: 600_000 });
       if (!data.success) {
         message.error(data.message || '同步失败');
         return;
       }
-      const parts = data.data.platforms.map(
-        (p) => `${p.platform}: 成功 ${p.synced}${p.failed ? `，失败 ${p.failed}` : ''}`,
-      );
-      setLastSyncSummary(parts.join('；'));
+      const parts: string[] = [];
+      for (const p of data.data.platforms) {
+        parts.push(`${p.platform}: 成功 ${p.synced}${p.failed ? `，失败 ${p.failed}` : ''}`);
+        for (const line of p.lines) {
+          const amt = `应收 $${line.receivableUsd.toFixed(2)} / 实收 $${line.actualUsd.toFixed(2)}`;
+          parts.push(
+            line.error
+              ? `  · ${line.displayName}: ${amt} — ${line.error}`
+              : `  · ${line.displayName}: ${amt}`,
+          );
+        }
+      }
+      setLastSyncSummary(parts.join('\n'));
       message.success('全部平台打款已同步，正在刷新报表…');
       await loadReport();
     } catch {
@@ -746,7 +766,7 @@ export default function SettlementClassicMonthlyPanel({
           closable
           onClose={() => setLastSyncSummary(null)}
           message="最近一次同步打款"
-          description={lastSyncSummary}
+          description={<pre className="sr-sync-summary">{lastSyncSummary}</pre>}
           style={{ marginBottom: 8 }}
         />
       )}

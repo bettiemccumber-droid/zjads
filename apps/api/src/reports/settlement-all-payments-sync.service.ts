@@ -8,12 +8,21 @@ import { SettlementPartnermaticPaymentsSyncService } from './settlement-partnerm
 import { SettlementRewardooPaymentsSyncService } from './settlement-rewardoo-payments-sync.service';
 import { SettlementUltrainfluencePaymentsSyncService } from './settlement-ultrainfluence-payments-sync.service';
 
+export interface AllPaymentsSyncPlatformLine {
+  displayName: string;
+  affiliateAlias: string;
+  receivableUsd: number;
+  actualUsd: number;
+  error?: string;
+}
+
 export interface AllPaymentsSyncResult {
   month: string;
   platforms: Array<{
     platform: string;
     synced: number;
     failed: number;
+    lines: AllPaymentsSyncPlatformLine[];
   }>;
 }
 
@@ -57,14 +66,28 @@ export class SettlementAllPaymentsSyncService {
     for (const { platform, run } of runners) {
       try {
         const result = await run();
-        const lines = result.synced as Array<{ error?: string }>;
+        const lines = result.synced as Array<{
+          displayName: string;
+          affiliateAlias: string;
+          receivable?: { usdH1: number; usdH2: number };
+          actual?: { usdH1: number; usdH2: number };
+          error?: string;
+        }>;
         platforms.push({
           platform,
           synced: lines.filter((l) => !l.error).length,
           failed: lines.filter((l) => l.error).length,
+          lines: lines.map((l) => ({
+            displayName: l.displayName,
+            affiliateAlias: l.affiliateAlias,
+            receivableUsd:
+              (l.receivable?.usdH1 ?? 0) + (l.receivable?.usdH2 ?? 0),
+            actualUsd: (l.actual?.usdH1 ?? 0) + (l.actual?.usdH2 ?? 0),
+            error: l.error,
+          })),
         });
       } catch {
-        platforms.push({ platform, synced: 0, failed: 1 });
+        platforms.push({ platform, synced: 0, failed: 1, lines: [] });
       }
     }
 

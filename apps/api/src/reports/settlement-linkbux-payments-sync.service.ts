@@ -15,6 +15,10 @@ import { monthToDateRange } from './settlement-monthly.util';
 import { SettlementActualCommissionService } from './settlement-actual-commission.service';
 import { SettlementReceivableCommissionService } from './settlement-receivable-commission.service';
 import { persistPaymentHalvesByAccountOwner } from './settlement-commission-persist.util';
+import {
+  shouldPersistPaymentSyncLine,
+  zeroAggregateHint,
+} from './settlement-payment-sync-feedback.util';
 import { canEditSettlementActualCommission } from './settlement-report-scope.util';
 
 export interface LinkbuxPaymentsSyncLineResult {
@@ -113,26 +117,35 @@ export class SettlementLinkbuxPaymentsSyncService {
           paymentError = paymentError ? `${paymentError}; ${msg}` : msg;
         }
 
+        const apiRowCount = paymentRows.length + detailRowCount;
         const recvTotal = receivable.usdH1 + receivable.usdH2;
-        const warnNoHistory =
-          recvTotal <= 0 &&
-          paymentRows.length === 0 &&
-          paymentError
-            ? paymentError
-            : recvTotal <= 0 && paymentRows.length === 0
-              ? '未拉到 LB 付款历史：应收应对齐 Payment Summary Pending（需正确 payments 接口）'
-              : undefined;
+        const aggSum =
+          receivable.usdH1 +
+          receivable.usdH2 +
+          actual.usdH1 +
+          actual.usdH2;
+        let lineError = paymentError;
+        if (recvTotal <= 0 && paymentRows.length === 0 && !lineError) {
+          lineError =
+            '未拉到 LB 付款历史：应收应对齐 Payment Summary Pending（需在 DevTools 抓 payments 的 mod/op）';
+        }
+        if (!shouldPersistPaymentSyncLine(receivable, actual, apiRowCount)) {
+          lineError = lineError ?? zeroAggregateHint(month, apiRowCount);
+        } else if (aggSum <= 0 && apiRowCount > 0) {
+          lineError = lineError ?? zeroAggregateHint(month, apiRowCount);
+        } else {
+          receivableBatch[key] = receivable;
+          actualBatch[key] = actual;
+        }
 
-        receivableBatch[key] = receivable;
-        actualBatch[key] = actual;
         synced.push({
           channelAccountId: account.id,
           displayName: account.displayName,
           affiliateAlias: account.affiliateAlias,
           receivable,
           actual,
-          commissionRowCount: paymentRows.length + detailRowCount,
-          error: warnNoHistory,
+          commissionRowCount: apiRowCount,
+          error: lineError,
         });
       } catch (err) {
         synced.push({

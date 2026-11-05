@@ -11,6 +11,10 @@ import { monthToDateRange } from './settlement-monthly.util';
 import { SettlementActualCommissionService } from './settlement-actual-commission.service';
 import { SettlementReceivableCommissionService } from './settlement-receivable-commission.service';
 import { persistPaymentHalvesByAccountOwner } from './settlement-commission-persist.util';
+import {
+  shouldPersistPaymentSyncLine,
+  zeroAggregateHint,
+} from './settlement-payment-sync-feedback.util';
 import { canEditSettlementActualCommission } from './settlement-report-scope.util';
 
 export interface RewardooPaymentsSyncLineResult {
@@ -86,15 +90,27 @@ export class SettlementRewardooPaymentsSyncService {
 
         const rows = await fetchRewardooPayments(token, startDate, endDate);
         const agg = aggregateRewardooPaymentsForSettlement(rows, month);
-        receivableBatch[key] = { usdH1: agg.receivableH1, usdH2: agg.receivableH2 };
-        actualBatch[key] = { usdH1: agg.actualH1, usdH2: agg.actualH2 };
+        const receivable = { usdH1: agg.receivableH1, usdH2: agg.receivableH2 };
+        const actual = { usdH1: agg.actualH1, usdH2: agg.actualH2 };
+        const aggSum =
+          receivable.usdH1 + receivable.usdH2 + actual.usdH1 + actual.usdH2;
+        let lineError: string | undefined;
+        if (!shouldPersistPaymentSyncLine(receivable, actual, rows.length)) {
+          lineError = zeroAggregateHint(month, rows.length);
+        } else if (aggSum <= 0 && rows.length > 0) {
+          lineError = zeroAggregateHint(month, rows.length);
+        } else {
+          receivableBatch[key] = receivable;
+          actualBatch[key] = actual;
+        }
         synced.push({
           channelAccountId: account.id,
           displayName: account.displayName,
           affiliateAlias: account.affiliateAlias,
-          receivable: receivableBatch[key],
-          actual: actualBatch[key],
+          receivable,
+          actual,
           paymentRowCount: rows.length,
+          error: lineError,
         });
       } catch (err) {
         synced.push({

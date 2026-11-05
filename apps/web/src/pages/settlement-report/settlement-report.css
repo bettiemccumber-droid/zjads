@@ -51,6 +51,14 @@
   flex-shrink: 0;
 }
 
+.settlement-report-classic .sr-sync-summary {
+  margin: 0;
+  white-space: pre-wrap;
+  font-family: inherit;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
 .settlement-report-classic .sr-tip {
   margin-top: 8px;
   font-size: 12px;

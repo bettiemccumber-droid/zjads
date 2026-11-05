@@ -769,6 +769,37 @@ export default function SettlementClassicMonthlyPanel({
     );
   };
 
+  /** 对标站：合计列 USD 在上、CNY 在下（实收行）；账期/应收仅 USD */
+  const renderTotalStackCell = (
+    rowKey: string,
+    kind: HalfDraftKind,
+    layout: MatrixValueLayout,
+  ) => {
+    const usd = rowTotal(rowKey, kind);
+    return (
+      <td colSpan={2} align="right" className="sr-total-col sr-sticky-right sr-total-stack">
+        <span className="sr-money-usd">{fmtUsd(usd)}</span>
+        {layout === 'usdCny' ? <span className="sr-money-cny">{fmtCny(usd, rate)}</span> : null}
+      </td>
+    );
+  };
+
+  /** 实收区块内 USD/CNY 子表头（对标站红框区域） */
+  const renderActualCurrencyHeaderCells = () => (
+    <>
+      {cols.map((c) => (
+        <Fragment key={`cur-${c.key}`}>
+          <td className="sr-currency-head-cell sr-cur-usd">USD</td>
+          <td className="sr-currency-head-cell sr-cur-cny">CNY</td>
+        </Fragment>
+      ))}
+      <td colSpan={2} align="right" className="sr-total-col sr-sticky-right sr-total-stack sr-currency-head-total">
+        <span className="sr-cur-usd">$</span>
+        <span className="sr-cur-cny">¥</span>
+      </td>
+    </>
+  );
+
   const renderMatrixMoneyCells = (
     rowKey: string,
     layout: MatrixValueLayout,
@@ -802,19 +833,7 @@ export default function SettlementClassicMonthlyPanel({
             </Fragment>
           );
         })}
-        <td align="right" className="sr-total-col sr-sticky-right sr-sticky-right-usd">
-          <span className="sr-money-usd">{fmtUsd(rowTotal(rowKey, kind))}</span>
-        </td>
-        <td
-          align="right"
-          className={`sr-total-col sr-sticky-right sr-sticky-right-cny${layout === 'singleUsd' ? ' sr-total-cny-empty' : ''}`}
-        >
-          {layout === 'usdCny' ? (
-            <span className="sr-money-cny">{fmtCny(rowTotal(rowKey, kind), rate)}</span>
-          ) : (
-            '\u00A0'
-          )}
-        </td>
+        {renderTotalStackCell(rowKey, kind, layout)}
       </>
     );
   };
@@ -1156,8 +1175,14 @@ export default function SettlementClassicMonthlyPanel({
                           {c.label}
                         </th>
                       ))}
-                      <th colSpan={2} rowSpan={3} className="sr-total-col sr-sticky-right sr-total-head">
-                        佣金合计
+                      <th colSpan={2} rowSpan={2} className="sr-total-col sr-sticky-right sr-total-head">
+                        <div className="sr-total-head-stack">
+                          <span>佣金合计</span>
+                          <span className="sr-total-head-cur">
+                            <span className="sr-cur-usd">$</span>
+                            <span className="sr-cur-cny"> / ¥</span>
+                          </span>
+                        </div>
                       </th>
                     </tr>
                     <tr>
@@ -1168,15 +1193,6 @@ export default function SettlementClassicMonthlyPanel({
                         <th key={`${c.key}-acc`} colSpan={2} className="sr-channel-sub">
                           <div className="sr-account-hint">{c.accountHint || c.platformName || '—'}</div>
                         </th>
-                      ))}
-                    </tr>
-                    <tr>
-                      <th colSpan={2} className="sr-head-side sr-sticky-left sr-head-side-muted" />
-                      {cols.map((c) => (
-                        <Fragment key={`${c.key}-cur`}>
-                          <th className="sr-cur-usd">USD</th>
-                          <th className="sr-cur-cny">CNY</th>
-                        </Fragment>
                       ))}
                     </tr>
                   </thead>
@@ -1210,11 +1226,15 @@ export default function SettlementClassicMonthlyPanel({
                       <td className="sr-sublabel sr-sticky-sub">合计</td>
                       {renderMatrixMoneyCells('recv_total', 'singleUsd', undefined, 'receivable')}
                     </tr>
-                    <tr>
-                      <td rowSpan={3} className="sr-group sr-sticky-left">
+                    <tr className="sr-currency-head-row">
+                      <td rowSpan={4} className="sr-group sr-sticky-left">
                         实收佣金
                         <div className="sr-sub">点击单元格手工纠正</div>
                       </td>
+                      <td className="sr-sublabel sr-sticky-sub sr-currency-head-gap" />
+                      {renderActualCurrencyHeaderCells()}
+                    </tr>
+                    <tr>
                       <td className="sr-sublabel sr-sticky-sub">10号 · 上半月</td>
                       {renderMatrixMoneyCells('actual_h1', 'usdCny', 'h1', 'actual')}
                     </tr>
@@ -1246,12 +1266,14 @@ export default function SettlementClassicMonthlyPanel({
                       {cols.map((c) => (
                         <td key={`profit-${c.key}`} colSpan={2} />
                       ))}
-                      <td align="right" className="sr-total-col sr-sticky-right sr-sticky-right-usd">
+                      <td
+                        colSpan={2}
+                        align="right"
+                        className="sr-total-col sr-sticky-right sr-total-stack sr-profit-total"
+                      >
                         <span className={`sr-money-usd ${profitClass(distributableActualUsd)}`}>
                           {fmtUsd(distributableActualUsd)}
                         </span>
-                      </td>
-                      <td align="right" className="sr-total-col sr-sticky-right sr-sticky-right-cny">
                         <span className={`sr-money-cny ${profitClass(distributableActualCny)}`}>
                           {fmtCny(distributableActualUsd, rate)}
                         </span>

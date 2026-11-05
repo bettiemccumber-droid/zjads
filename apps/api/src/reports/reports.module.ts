@@ -7,6 +7,11 @@ import { SettlementMonthlyReportService } from './settlement-monthly-report.serv
 import { SettlementPayoutInfoService } from './settlement-payout-info.service';
 import { SettlementReceivableCommissionService } from './settlement-receivable-commission.service';
 import { SettlementLinkbuxPaymentsSyncService } from './settlement-linkbux-payments-sync.service';
+import { SettlementLinkhaitaoPaymentsSyncService } from './settlement-linkhaitao-payments-sync.service';
+import { SettlementPartnermaticPaymentsSyncService } from './settlement-partnermatic-payments-sync.service';
+import { SettlementUltrainfluencePaymentsSyncService } from './settlement-ultrainfluence-payments-sync.service';
+import { SettlementFamestaPaymentsSyncService } from './settlement-famesta-payments-sync.service';
+import { SettlementCollabglowPaymentsSyncService } from './settlement-collabglow-payments-sync.service';
 import { SettlementRewardooPaymentsSyncService } from './settlement-rewardoo-payments-sync.service';
 import { SettlementUsdCnyRateService } from './settlement-usd-cny-rate.service';
 import { CryptoService } from '../common/crypto.service';
@@ -22,6 +27,11 @@ import { CryptoService } from '../common/crypto.service';
     SettlementReceivableCommissionService,
     SettlementRewardooPaymentsSyncService,
     SettlementLinkbuxPaymentsSyncService,
+    SettlementLinkhaitaoPaymentsSyncService,
+    SettlementPartnermaticPaymentsSyncService,
+    SettlementUltrainfluencePaymentsSyncService,
+    SettlementFamestaPaymentsSyncService,
+    SettlementCollabglowPaymentsSyncService,
     CryptoService,
     SettlementMonthlyReportService,
   ],

@@ -126,6 +126,11 @@ export default function SettlementClassicMonthlyPanel({
   const [savingReceivable, setSavingReceivable] = useState(false);
   const [syncingRw, setSyncingRw] = useState(false);
   const [syncingLb, setSyncingLb] = useState(false);
+  const [syncingLh, setSyncingLh] = useState(false);
+  const [syncingPm, setSyncingPm] = useState(false);
+  const [syncingUi, setSyncingUi] = useState(false);
+  const [syncingFs, setSyncingFs] = useState(false);
+  const [syncingCg, setSyncingCg] = useState(false);
   const [adSpendDraft, setAdSpendDraft] = useState<AdSpendDraftLine[]>([]);
   const [rebateDraft, setRebateDraft] = useState(0);
   const [savingAdSpend, setSavingAdSpend] = useState(false);
@@ -307,22 +312,56 @@ export default function SettlementClassicMonthlyPanel({
     }
   };
 
+  const paymentSyncConfig = {
+    rewardoo: {
+      path: '/reports/settlement-monthly/sync-rewardoo-payments',
+      label: 'Rewardoo',
+      short: 'RW',
+    },
+    linkbux: {
+      path: '/reports/settlement-monthly/sync-linkbux-payments',
+      label: 'LinkBux',
+      short: 'LB',
+    },
+    linkhaitao: {
+      path: '/reports/settlement-monthly/sync-linkhaitao-payments',
+      label: 'LinkHaitao',
+      short: 'LH',
+    },
+    partnermatic: {
+      path: '/reports/settlement-monthly/sync-partnermatic-payments',
+      label: 'Partnermatic',
+      short: 'PM',
+    },
+    ultrainfluence: {
+      path: '/reports/settlement-monthly/sync-ultrainfluence-payments',
+      label: 'UltraInfluence',
+      short: 'UI',
+    },
+    famesta: {
+      path: '/reports/settlement-monthly/sync-famesta-payments',
+      label: 'Famesta',
+      short: 'FS',
+    },
+    collabglow: {
+      path: '/reports/settlement-monthly/sync-collabglow-payments',
+      label: 'CollabGlow',
+      short: 'CG',
+    },
+  } as const;
+
   const syncPlatformPayments = async (
-    platform: 'rewardoo' | 'linkbux',
+    platform: keyof typeof paymentSyncConfig,
     setLoading: (v: boolean) => void,
   ) => {
     if (!report?.canEditActualCommission) return;
     setLoading(true);
+    const { path, label, short } = paymentSyncConfig[platform];
     try {
       const body: { month: string; userId?: string } = { month: monthStr };
       if (effectiveScopeUserId != null) {
         body.userId = String(effectiveScopeUserId);
       }
-      const path =
-        platform === 'rewardoo'
-          ? '/reports/settlement-monthly/sync-rewardoo-payments'
-          : '/reports/settlement-monthly/sync-linkbux-payments';
-      const label = platform === 'rewardoo' ? 'Rewardoo' : 'LinkBux';
       const { data } = await api.post<
         ApiResult<{
           month: string;
@@ -341,7 +380,7 @@ export default function SettlementClassicMonthlyPanel({
       }
       await loadReport();
     } catch {
-      message.error(`同步 ${platform === 'rewardoo' ? 'RW' : 'LB'} 打款失败`);
+      message.error(`同步 ${short} 打款失败`);
     } finally {
       setLoading(false);
     }
@@ -349,6 +388,12 @@ export default function SettlementClassicMonthlyPanel({
 
   const syncRewardooPayments = () => void syncPlatformPayments('rewardoo', setSyncingRw);
   const syncLinkbuxPayments = () => void syncPlatformPayments('linkbux', setSyncingLb);
+  const syncLinkhaitaoPayments = () => void syncPlatformPayments('linkhaitao', setSyncingLh);
+  const syncPartnermaticPayments = () => void syncPlatformPayments('partnermatic', setSyncingPm);
+  const syncUltrainfluencePayments = () =>
+    void syncPlatformPayments('ultrainfluence', setSyncingUi);
+  const syncFamestaPayments = () => void syncPlatformPayments('famesta', setSyncingFs);
+  const syncCollabglowPayments = () => void syncPlatformPayments('collabglow', setSyncingCg);
 
   const saveReceivable = async () => {
     if (!report?.canEditActualCommission) return;
@@ -785,6 +830,21 @@ export default function SettlementClassicMonthlyPanel({
                   <Button size="small" loading={syncingLb} onClick={syncLinkbuxPayments}>
                     同步 LB 打款
                   </Button>
+                  <Button size="small" loading={syncingLh} onClick={syncLinkhaitaoPayments}>
+                    同步 LH 打款
+                  </Button>
+                  <Button size="small" loading={syncingPm} onClick={syncPartnermaticPayments}>
+                    同步 PM 打款
+                  </Button>
+                  <Button size="small" loading={syncingUi} onClick={syncUltrainfluencePayments}>
+                    同步 UI 打款
+                  </Button>
+                  <Button size="small" loading={syncingFs} onClick={syncFamestaPayments}>
+                    同步 FS 打款
+                  </Button>
+                  <Button size="small" loading={syncingCg} onClick={syncCollabglowPayments}>
+                    同步 CG 打款
+                  </Button>
                   <Button
                     size="small"
                     icon={<SaveOutlined />}
@@ -919,8 +979,8 @@ export default function SettlementClassicMonthlyPanel({
             )}
           </Spin>
           <p className="sr-tip" style={{ padding: '8px 16px 12px' }}>
-            账期/失效来自订单同步。应收/实收按各平台分列：可点「同步 RW / LB 打款」（Rewardoo Payments、LinkBux
-            Payment Details），或手工填。LB 口径：未打款（无 paid_date）→ 应收；paid_date 在当月 → 实收。CNY
+            账期/失效来自订单同步。应收/实收按各平台分列：可点各平台「同步打款」，或手工填。V2 系（LH/PM/UI/FS/CG）
+            未打款 → 应收（validation_date）；paid_date 在当月 → 实收。Summary 的 amount 可与 Detail 对账。CNY
             按页头汇率。收款人/卡号见 <Link to="/channel-accounts">平台账号</Link>。
           </p>
         </div>

@@ -25,6 +25,11 @@ import { SettlementMonthlyReportService } from './settlement-monthly-report.serv
 import { SettlementPayoutInfoService } from './settlement-payout-info.service';
 import { SettlementReceivableCommissionService } from './settlement-receivable-commission.service';
 import { SettlementLinkbuxPaymentsSyncService } from './settlement-linkbux-payments-sync.service';
+import { SettlementLinkhaitaoPaymentsSyncService } from './settlement-linkhaitao-payments-sync.service';
+import { SettlementPartnermaticPaymentsSyncService } from './settlement-partnermatic-payments-sync.service';
+import { SettlementUltrainfluencePaymentsSyncService } from './settlement-ultrainfluence-payments-sync.service';
+import { SettlementFamestaPaymentsSyncService } from './settlement-famesta-payments-sync.service';
+import { SettlementCollabglowPaymentsSyncService } from './settlement-collabglow-payments-sync.service';
 import { SettlementRewardooPaymentsSyncService } from './settlement-rewardoo-payments-sync.service';
 
 class DateRangeQuery {
@@ -164,6 +169,11 @@ export class ReportsController {
     private readonly settlementReceivableCommission: SettlementReceivableCommissionService,
     private readonly settlementRewardooPaymentsSync: SettlementRewardooPaymentsSyncService,
     private readonly settlementLinkbuxPaymentsSync: SettlementLinkbuxPaymentsSyncService,
+    private readonly settlementLinkhaitaoPaymentsSync: SettlementLinkhaitaoPaymentsSyncService,
+    private readonly settlementPartnermaticPaymentsSync: SettlementPartnermaticPaymentsSyncService,
+    private readonly settlementUltrainfluencePaymentsSync: SettlementUltrainfluencePaymentsSyncService,
+    private readonly settlementFamestaPaymentsSync: SettlementFamestaPaymentsSyncService,
+    private readonly settlementCollabglowPaymentsSync: SettlementCollabglowPaymentsSyncService,
   ) {}
 
   @Get('merchant-summary')
@@ -249,6 +259,81 @@ export class ReportsController {
   ) {
     const queryUserId = body.userId ? parseInt(body.userId, 10) : undefined;
     const result = await this.settlementLinkbuxPaymentsSync.syncForMonth(
+      user,
+      body.month,
+      queryUserId,
+    );
+    return ok(result);
+  }
+
+  /** 从 CollabGlow Payment Detail API 同步 CG 列应收/实收 */
+  @Post('settlement-monthly/sync-collabglow-payments')
+  async syncSettlementCollabglowPayments(
+    @CurrentUser() user: AuthUser,
+    @Body() body: SaveSettlementActualCommissionDto,
+  ) {
+    const queryUserId = body.userId ? parseInt(body.userId, 10) : undefined;
+    const result = await this.settlementCollabglowPaymentsSync.syncForMonth(
+      user,
+      body.month,
+      queryUserId,
+    );
+    return ok(result);
+  }
+
+  /** 从 Famesta Payment Detail API 同步 FS 列应收/实收 */
+  @Post('settlement-monthly/sync-famesta-payments')
+  async syncSettlementFamestaPayments(
+    @CurrentUser() user: AuthUser,
+    @Body() body: SaveSettlementActualCommissionDto,
+  ) {
+    const queryUserId = body.userId ? parseInt(body.userId, 10) : undefined;
+    const result = await this.settlementFamestaPaymentsSync.syncForMonth(
+      user,
+      body.month,
+      queryUserId,
+    );
+    return ok(result);
+  }
+
+  /** 从 UltraInfluence Payment Detail API 同步 UI 列应收/实收 */
+  @Post('settlement-monthly/sync-ultrainfluence-payments')
+  async syncSettlementUltrainfluencePayments(
+    @CurrentUser() user: AuthUser,
+    @Body() body: SaveSettlementActualCommissionDto,
+  ) {
+    const queryUserId = body.userId ? parseInt(body.userId, 10) : undefined;
+    const result = await this.settlementUltrainfluencePaymentsSync.syncForMonth(
+      user,
+      body.month,
+      queryUserId,
+    );
+    return ok(result);
+  }
+
+  /** 从 Partnermatic Payment Detail API 同步 PM 列应收/实收 */
+  @Post('settlement-monthly/sync-partnermatic-payments')
+  async syncSettlementPartnermaticPayments(
+    @CurrentUser() user: AuthUser,
+    @Body() body: SaveSettlementActualCommissionDto,
+  ) {
+    const queryUserId = body.userId ? parseInt(body.userId, 10) : undefined;
+    const result = await this.settlementPartnermaticPaymentsSync.syncForMonth(
+      user,
+      body.month,
+      queryUserId,
+    );
+    return ok(result);
+  }
+
+  /** 从 LinkHaitao Payment Detail API (V2) 同步 LH 列应收/实收 */
+  @Post('settlement-monthly/sync-linkhaitao-payments')
+  async syncSettlementLinkhaitaoPayments(
+    @CurrentUser() user: AuthUser,
+    @Body() body: SaveSettlementActualCommissionDto,
+  ) {
+    const queryUserId = body.userId ? parseInt(body.userId, 10) : undefined;
+    const result = await this.settlementLinkhaitaoPaymentsSync.syncForMonth(
       user,
       body.month,
       queryUserId,

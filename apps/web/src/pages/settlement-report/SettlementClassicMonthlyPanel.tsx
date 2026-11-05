@@ -140,6 +140,8 @@ export default function SettlementClassicMonthlyPanel({
   const [persistedActual, setPersistedActual] = useState<CommissionHalfDraft>({});
   /** 格式 kind:colKey:usdH1|usdH2 */
   const [activeCommissionCell, setActiveCommissionCell] = useState<string | null>(null);
+  /** 格式 colKey:payeeName|bankAccount */
+  const [activePayoutCell, setActivePayoutCell] = useState<string | null>(null);
   /** 本次会话内改过的半月格，保证保存前后手填样式一致 */
   const [localManualHalfKeys, setLocalManualHalfKeys] = useState<Set<string>>(() => new Set());
   const [adSpendDraft, setAdSpendDraft] = useState<AdSpendDraftLine[]>([]);
@@ -781,18 +783,37 @@ export default function SettlementClassicMonthlyPanel({
     void saveCommissionKind(kind, { silent: true, toast: true });
   };
 
+  const payoutCellKey = (colKey: string, field: 'payeeName' | 'bankAccount') =>
+    `${colKey}:${field}`;
+
   const renderTextCells = (field: 'payeeName' | 'bankAccount') => (
     <>
       {cols.map((c) => {
         const val = payoutDraft[c.key]?.[field]?.trim() ?? '';
+        const focusKey = payoutCellKey(c.key, field);
+        const isActive = activePayoutCell === focusKey;
+        const tdClass = [
+          'sr-payout-cell',
+          canEditPayout ? 'sr-cell-clickable' : 'sr-cell-readonly',
+          isActive ? 'sr-payout-cell-editing' : undefined,
+        ]
+          .filter(Boolean)
+          .join(' ');
+
+        const flushPayoutCell = () => {
+          setActivePayoutCell(null);
+          void savePayoutInfo({ silent: true });
+        };
+
         return (
-          <td key={c.key} colSpan={2} className={canEditPayout ? 'sr-cell-editable' : undefined}>
-            {canEditPayout ? (
+          <td key={c.key} colSpan={2} className={tdClass}>
+            {canEditPayout && isActive ? (
               <Input
-                size="small"
+                autoFocus
+                bordered={false}
+                className="sr-payout-input"
                 value={payoutDraft[c.key]?.[field] ?? ''}
                 maxLength={field === 'payeeName' ? 120 : 80}
-                placeholder={field === 'payeeName' ? '收款人' : '卡号'}
                 onChange={(e) =>
                   setPayoutDraft((prev) => ({
                     ...prev,
@@ -803,16 +824,32 @@ export default function SettlementClassicMonthlyPanel({
                     },
                   }))
                 }
-                onBlur={() => void savePayoutInfo({ silent: true })}
+                onBlur={flushPayoutCell}
+                onPressEnter={flushPayoutCell}
                 disabled={savingPayout}
               />
+            ) : canEditPayout ? (
+              <div
+                className="sr-payout-display"
+                role="button"
+                tabIndex={0}
+                onClick={() => setActivePayoutCell(focusKey)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault();
+                    setActivePayoutCell(focusKey);
+                  }
+                }}
+              >
+                {val ? <span className="sr-payout-text">{val}</span> : null}
+              </div>
             ) : (
-              val || '—'
+              val || null
             )}
           </td>
         );
       })}
-      <td colSpan={2} className="sr-total-col" />
+      <td colSpan={2} className="sr-total-col sr-payout-total-gap" />
     </>
   );
 
@@ -1107,13 +1144,13 @@ export default function SettlementClassicMonthlyPanel({
                       <td className="sr-sublabel sr-sticky-sub">合计</td>
                       {renderMatrixMoneyCells('actual_total', 'usdCny', undefined, 'actual')}
                     </tr>
-                    <tr>
+                    <tr className="sr-payout-row">
                       <td colSpan={2} className="sr-label sr-sticky-left">
                         收款人
                       </td>
                       {renderTextCells('payeeName')}
                     </tr>
-                    <tr>
+                    <tr className="sr-payout-row sr-payout-row-bank">
                       <td colSpan={2} className="sr-label sr-sticky-left">
                         收款卡号
                       </td>

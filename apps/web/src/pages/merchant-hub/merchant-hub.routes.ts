@@ -8,13 +8,15 @@ export const MERCHANT_HUB_BASE = '/merchants';
 export interface MerchantHubTabDef {
   path: string;
   label: string;
+  /** Tab 副标题（导航说明） */
+  subtitle: string;
   enabled: boolean;
 }
 
 /** Tab 顺序（左 → 右） */
 export const MERCHANT_HUB_TABS: MerchantHubTabDef[] = [
-  { path: 'status', label: '商家状态', enabled: true },
-  { path: 'chargebacks', label: '拒付商家', enabled: true },
+  { path: 'status', label: '商家状态', subtitle: 'Join · 上架检测', enabled: true },
+  { path: 'chargebacks', label: '拒付商家', subtitle: '全员拒付汇总', enabled: true },
   // 预留，与竞品对齐时可启用：
   // { path: 'active', label: '活跃商家', enabled: false },
   // { path: 'violations', label: '违规商家', enabled: false },

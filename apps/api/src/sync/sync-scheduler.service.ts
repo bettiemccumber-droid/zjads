@@ -24,7 +24,10 @@ export interface ScheduledSyncRunResult {
   }>;
 }
 
-/** 定时全员联盟订单采集（试点：默认关闭，由环境变量开启） */
+/**
+ * 定时全员联盟订单采集（试点：默认关闭）。
+ * 仅订单与佣金/拒付等状态；不含联盟点击（SCHEDULED_SYNC_INCLUDE_CLICKS 默认 false）。
+ */
 @Injectable()
 export class SyncSchedulerService implements OnModuleInit {
   private readonly log = new Logger(SyncSchedulerService.name);
@@ -143,8 +146,8 @@ export class SyncSchedulerService implements OnModuleInit {
   }
 
   private lookbackDays(): number {
-    const raw = parseInt(this.config.get<string>('SCHEDULED_SYNC_LOOKBACK_DAYS') ?? '30', 10);
-    return Number.isFinite(raw) ? raw : 30;
+    const raw = parseInt(this.config.get<string>('SCHEDULED_SYNC_LOOKBACK_DAYS') ?? '60', 10);
+    return Number.isFinite(raw) ? raw : 60;
   }
 
   private includeClicks(): boolean {

@@ -5,17 +5,17 @@ import {
   DashboardOutlined,
   FileExcelOutlined,
   PieChartOutlined,
-  ShopOutlined,
+  AlertOutlined,
+  SafetyCertificateOutlined,
   SyncOutlined,
   TeamOutlined,
   UserOutlined,
 } from '@ant-design/icons';
 import { Link } from 'react-router-dom';
 import type { MenuProps } from 'antd';
-import { merchantHubDefaultPath } from '../pages/merchant-hub/merchant-hub.routes';
 
-/** 我的商家菜单项 key（含 /merchants/status、/merchants/chargebacks） */
-export const MERCHANT_HUB_MENU_KEY = '/merchants';
+export const MERCHANT_HUB_STATUS_KEY = '/merchants/status';
+export const MERCHANT_HUB_CHARGEBACKS_KEY = '/merchants/chargebacks';
 
 type MenuItem = NonNullable<MenuProps['items']>[number];
 
@@ -32,9 +32,14 @@ export function buildEmployeeSidebarMenu(): MenuProps['items'] {
   return [
     group('商家管理', [
       item(
-        MERCHANT_HUB_MENU_KEY,
-        <ShopOutlined />,
-        <Link to={merchantHubDefaultPath()}>我的商家</Link>,
+        MERCHANT_HUB_STATUS_KEY,
+        <SafetyCertificateOutlined />,
+        <Link to="/merchants/status">商家状态</Link>,
+      ),
+      item(
+        MERCHANT_HUB_CHARGEBACKS_KEY,
+        <AlertOutlined />,
+        <Link to="/merchants/chargebacks">拒付商家</Link>,
       ),
     ]),
     group('数据中心', [
@@ -103,9 +108,14 @@ export function buildAdminSidebarMenu(): MenuProps['items'] {
     ]),
     group('商家管理', [
       item(
-        MERCHANT_HUB_MENU_KEY,
-        <ShopOutlined />,
-        <Link to={merchantHubDefaultPath()}>我的商家</Link>,
+        MERCHANT_HUB_STATUS_KEY,
+        <SafetyCertificateOutlined />,
+        <Link to="/merchants/status">商家状态</Link>,
+      ),
+      item(
+        MERCHANT_HUB_CHARGEBACKS_KEY,
+        <AlertOutlined />,
+        <Link to="/merchants/chargebacks">拒付商家</Link>,
       ),
     ]),
   ];
@@ -113,8 +123,11 @@ export function buildAdminSidebarMenu(): MenuProps['items'] {
 
 /** 根据 pathname 解析应高亮的菜单 key */
 export function resolveSidebarSelectedKey(pathname: string, isAdmin: boolean): string {
+  if (pathname.startsWith('/merchants/chargebacks')) {
+    return MERCHANT_HUB_CHARGEBACKS_KEY;
+  }
   if (pathname.startsWith('/merchants')) {
-    return MERCHANT_HUB_MENU_KEY;
+    return MERCHANT_HUB_STATUS_KEY;
   }
   if (isAdmin && pathname.startsWith('/admin/users')) {
     return pathname === '/admin/users/manage' ? '/admin/users/manage' : '/admin/users';

@@ -258,7 +258,10 @@ export default function AdminSyncPage() {
             <>
               状态：{scheduledCfg.enabled ? '已开启' : '未开启（Railway/API 设 SCHEDULED_SYNC_ENABLED=true 并重启）'}
               ；计划每天 {scheduledCfg.timeZone} 06:10 自动采近 {scheduledCfg.lookbackDays} 天（含今天）
-              {scheduledCfg.includeClicks ? '，含联盟点击' : '，仅订单'}。试跑区间：
+              {scheduledCfg.includeClicks
+                ? '，含联盟点击（不推荐）'
+                : '，仅联盟订单与佣金/拒付状态（不含联盟点击）'}
+              。试跑区间：
               {scheduledCfg.nextRangePreview.startDate} ~ {scheduledCfg.nextRangePreview.endDate}。
               {scheduledCfg.lastRun && (
                 <>

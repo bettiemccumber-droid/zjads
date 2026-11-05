@@ -1,27 +1,88 @@
 .merchant-hub-module__title {
   margin-top: 0;
-  margin-bottom: 12px;
+  margin-bottom: 4px;
+}
+
+.merchant-hub-module__intro {
+  margin-bottom: 12px !important;
+  font-size: 13px;
+}
+
+.merchant-hub-module__nav-shell {
+  margin-bottom: 16px;
+  background: linear-gradient(180deg, #f0f5ff 0%, #fff 100%);
+  border: 1px solid #adc6ff;
+  border-radius: 10px;
+  padding: 4px 12px 0;
+  box-shadow: 0 2px 8px rgba(22, 119, 255, 0.08);
 }
 
 .merchant-hub-module__tabs {
-  margin-bottom: 16px;
+  margin-bottom: 0;
 }
 
 .merchant-hub-module__tabs .ant-tabs-nav {
   margin-bottom: 0;
 }
 
-.merchant-hub-module__tabs .ant-tabs-tab {
-  padding: 10px 4px;
-  font-size: 14px;
+.merchant-hub-module__tabs--prominent .ant-tabs-tab {
+  padding: 12px 20px 10px !important;
+  margin: 0 4px !important;
 }
 
-.merchant-hub-module__tabs .ant-tabs-tab-active .ant-tabs-tab-btn {
+.merchant-hub-module__tabs--prominent .ant-tabs-tab-btn {
+  line-height: 1.25;
+}
+
+.merchant-hub-tab-label {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  text-align: left;
+}
+
+.merchant-hub-tab-label__main {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 16px;
   font-weight: 600;
+}
+
+.merchant-hub-tab-label__sub {
+  font-size: 12px;
+  font-weight: 400;
+  color: rgba(0, 0, 0, 0.45);
+  padding-left: 24px;
+}
+
+.merchant-hub-module__tabs--prominent .ant-tabs-tab-active .merchant-hub-tab-label__main {
   color: #1677ff;
+}
+
+.merchant-hub-module__tabs--prominent.is-chargebacks-active
+  .ant-tabs-tab-active
+  .merchant-hub-tab-label__main {
+  color: #cf1322;
+}
+
+.merchant-hub-module__tabs--prominent.is-chargebacks-active .ant-tabs-ink-bar {
+  background: #cf1322;
 }
 
 .merchant-hub-module__tabs .ant-tabs-ink-bar {
   height: 3px;
   border-radius: 3px 3px 0 0;
+}
+
+.merchant-hub-tab-label--chargebacks .merchant-hub-tab-label__main {
+  color: rgba(0, 0, 0, 0.75);
+}
+
+.merchant-hub-module__tabs--prominent
+  .ant-tabs-tab-active
+  .merchant-hub-tab-label--chargebacks
+  .merchant-hub-tab-label__main {
+  color: #cf1322;
 }

@@ -105,12 +105,22 @@ export async function fetchLinkbuxPayments(
     {
       mod: 'settlement',
       op: 'payments',
-      extra: { payment_begin: beginDate, payment_end: endDate },
+      extra: { request_begin: beginDate, request_end: endDate },
     },
     {
       mod: 'settlement',
       op: 'payments',
       extra: { begin_date: beginDate, end_date: endDate },
+    },
+    {
+      mod: 'settlement',
+      op: 'payment_history',
+      extra: { begin_date: beginDate, end_date: endDate },
+    },
+    {
+      mod: 'settlement',
+      op: 'payments',
+      extra: { payment_begin: beginDate, payment_end: endDate },
     },
     {
       mod: 'settlement',
@@ -120,16 +130,6 @@ export async function fetchLinkbuxPayments(
     {
       mod: 'settlement',
       op: 'payment_history',
-      extra: { begin_date: beginDate, end_date: endDate },
-    },
-    {
-      mod: 'settlement',
-      op: 'payment_history',
-      extra: { request_begin: beginDate, request_end: endDate },
-    },
-    {
-      mod: 'settlement',
-      op: 'payments',
       extra: { request_begin: beginDate, request_end: endDate },
     },
     {
@@ -137,8 +137,13 @@ export async function fetchLinkbuxPayments(
       op: 'payment2',
       extra: { payment_begin: beginDate, payment_end: endDate },
     },
+    { mod: 'settlement', op: 'payment_list', extra: {} },
+    { mod: 'settlement', op: 'payments', extra: {} },
+    { mod: 'settlement', op: 'payment_history', extra: {} },
+    { mod: 'linkpayment', op: 'payment2', extra: {} },
   ];
 
+  const merged = new Map<string, LinkbuxPaymentRow>();
   let lastError: Error | null = null;
 
   for (const attempt of attempts) {
@@ -157,16 +162,20 @@ export async function fetchLinkbuxPayments(
       });
       assertLbSuccess(data);
       const list = extractPaymentList(data);
-      if (list.length > 0) {
-        return list;
+      for (const row of list) {
+        const id =
+          row.payment_id != null && String(row.payment_id).trim()
+            ? String(row.payment_id)
+            : `${parseLinkbuxPaymentDate(row, false) ?? ''}|${parseMoney(row.amount)}|${row.status ?? ''}`;
+        merged.set(id, row);
       }
     } catch (err) {
       lastError = err instanceof Error ? err : new Error(String(err));
     }
   }
 
-  if (lastError) throw lastError;
-  return [];
+  if (merged.size === 0 && lastError) throw lastError;
+  return [...merged.values()];
 }
 
 /**

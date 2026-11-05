@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import {
   aggregateRewardooPaymentsForSettlement,
+  coerceRewardooPaymentRows,
   type RewardooPaymentRow,
 } from './rewardoo-payments.util';
 
@@ -27,6 +28,13 @@ function runTests() {
   assert.equal(oct.actualH2, 359.51);
   const novFromPaid = aggregateRewardooPaymentsForSettlement([paid], '2026-11');
   assert.equal(novFromPaid.actualH1 + novFromPaid.actualH2, 0);
+
+  const fromSummary = coerceRewardooPaymentRows([
+    { payment_in_progress: 161.1, last_update: '2026-11-05 00:08:56' },
+  ]);
+  assert.equal(fromSummary.length, 1);
+  const novSummary = aggregateRewardooPaymentsForSettlement(fromSummary, '2026-11');
+  assert.equal(novSummary.receivableH1, 161.1);
 
   console.log('rewardoo-payments.util.test.ts: ok');
 }

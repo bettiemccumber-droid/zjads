@@ -17,10 +17,16 @@ import { ensureSyncJobIdCapacity } from './sync-job-id.util';
 /** 超过此时长仍为 running 视为卡住（服务重启或点击采集异常） */
 const STALE_JOB_MS = 3 * 60 * 60 * 1000;
 
+/** 任务已标记 running 但所有子项仍为 pending（进程中途退出） */
+const ZOMBIE_JOB_MS = 45 * 60 * 1000;
+
 const STALE_MSG = '任务已中断（服务重启或超时），请重新点击「开始采集」';
 
 @Injectable()
 export class SyncService implements OnModuleInit {
+  /** 同一员工同时只跑一条 SyncJob，其余 pending 按创建时间排队 */
+  private readonly ownerRunnerBusy = new Set<number>();
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly channelAccounts: ChannelAccountsService,
@@ -33,6 +39,57 @@ export class SyncService implements OnModuleInit {
     const n = await this.recoverStaleJobs();
     if (n > 0) {
       console.log(`[sync] 启动时已标记 ${n} 个卡住的任务为失败`);
+    }
+    await this.resumeInterruptedOwnerQueues();
+  }
+
+  /**
+   * 服务重启后：对仍有 pending/running 任务的员工重新拉起串行队列
+   */
+  private async resumeInterruptedOwnerQueues() {
+    const rows = await this.prisma.syncJob.findMany({
+      where: { status: { in: [SyncJobStatus.pending, SyncJobStatus.running] } },
+      select: { ownerUserId: true },
+      distinct: ['ownerUserId'],
+    });
+    for (const { ownerUserId } of rows) {
+      this.kickOwnerSyncQueue(ownerUserId);
+    }
+    if (rows.length > 0) {
+      console.log(`[sync] 启动续跑 ${rows.length} 名员工的未完成采集队列`);
+    }
+  }
+
+  /**
+   * 触发该员工的采集队列（新建任务或续跑时调用）
+   */
+  private kickOwnerSyncQueue(ownerUserId: number) {
+    void this.drainOwnerSyncQueue(ownerUserId).catch((err) => {
+      console.error(`[sync] 员工 #${ownerUserId} 采集队列异常:`, err);
+    });
+  }
+
+  /**
+   * 按创建时间 FIFO 执行同一员工的所有 pending/running 任务
+   */
+  private async drainOwnerSyncQueue(ownerUserId: number): Promise<void> {
+    if (this.ownerRunnerBusy.has(ownerUserId)) return;
+    this.ownerRunnerBusy.add(ownerUserId);
+    try {
+      for (;;) {
+        const next = await this.prisma.syncJob.findFirst({
+          where: {
+            ownerUserId,
+            status: { in: [SyncJobStatus.pending, SyncJobStatus.running] },
+          },
+          orderBy: { createdAt: 'asc' },
+          select: { id: true },
+        });
+        if (!next) break;
+        await this.runJob(next.id);
+      }
+    } finally {
+      this.ownerRunnerBusy.delete(ownerUserId);
     }
   }
 
@@ -50,7 +107,54 @@ export class SyncService implements OnModuleInit {
     return n > 0;
   }
 
+  /**
+   * 进程重启后：running 但 0 进度且子项从未完成 → 重置为 pending 以便队列续跑
+   */
+  private async requeueZombieJobs(): Promise<number[]> {
+    const zombieCutoff = new Date(Date.now() - ZOMBIE_JOB_MS);
+    const candidates = await this.prisma.syncJob.findMany({
+      where: {
+        status: SyncJobStatus.running,
+        completed: 0,
+        startedAt: { lt: zombieCutoff },
+      },
+      include: {
+        items: { select: { id: true, status: true, completedAt: true } },
+      },
+    });
+
+    const ownerIds: number[] = [];
+    for (const job of candidates) {
+      const zombie = job.items.every(
+        (i) =>
+          i.status === SyncJobItemStatus.pending ||
+          (i.status === SyncJobItemStatus.running && i.completedAt == null),
+      );
+      if (!zombie) continue;
+
+      await this.prisma.syncJobItem.updateMany({
+        where: {
+          syncJobId: job.id,
+          status: SyncJobItemStatus.running,
+          completedAt: null,
+        },
+        data: { status: SyncJobItemStatus.pending, startedAt: null, errorMessage: null },
+      });
+      await this.prisma.syncJob.update({
+        where: { id: job.id },
+        data: { status: SyncJobStatus.pending },
+      });
+      ownerIds.push(job.ownerUserId);
+    }
+    return [...new Set(ownerIds)];
+  }
+
   async recoverStaleJobs(): Promise<number> {
+    const requeueOwners = await this.requeueZombieJobs();
+    for (const ownerUserId of requeueOwners) {
+      this.kickOwnerSyncQueue(ownerUserId);
+    }
+
     const cutoff = new Date(Date.now() - STALE_JOB_MS);
     const stale = await this.prisma.syncJob.findMany({
       where: {
@@ -137,7 +241,7 @@ export class SyncService implements OnModuleInit {
       },
     });
 
-    setImmediate(() => this.runJob(job.id).catch(console.error));
+    this.kickOwnerSyncQueue(user.id);
     return job;
   }
 
@@ -187,7 +291,7 @@ export class SyncService implements OnModuleInit {
       },
     });
 
-    setImmediate(() => this.runJob(job.id).catch(console.error));
+    this.kickOwnerSyncQueue(ownerUserId);
     return job;
   }
 
@@ -299,27 +403,66 @@ export class SyncService implements OnModuleInit {
     });
     if (!job) return;
 
+    if (
+      job.status === SyncJobStatus.completed ||
+      job.status === SyncJobStatus.failed ||
+      job.status === SyncJobStatus.partial
+    ) {
+      return;
+    }
+
+    const itemsToRun = job.items.filter(
+      (item) =>
+        item.status === SyncJobItemStatus.pending ||
+        item.status === SyncJobItemStatus.running ||
+        item.status === SyncJobItemStatus.failed,
+    );
+
+    if (itemsToRun.length === 0) {
+      const completedOnly = job.items.every((i) => i.status === SyncJobItemStatus.completed);
+      if (completedOnly) {
+        await this.prisma.syncJob.update({
+          where: { id: jobId },
+          data: {
+            status: SyncJobStatus.completed,
+            completed: job.items.length,
+            failed: 0,
+            completedAt: new Date(),
+          },
+        });
+        console.log(`[sync] 任务 #${jobId} 子项已全部完成，补标记为成功`);
+      }
+      return;
+    }
+
     await this.prisma.syncJob.update({
       where: { id: jobId },
-      data: { status: SyncJobStatus.running, startedAt: new Date() },
+      data: {
+        status: SyncJobStatus.running,
+        startedAt: job.startedAt ?? new Date(),
+      },
     });
-    console.log(`[sync] 任务 #${jobId} 开始`);
+    console.log(`[sync] 任务 #${jobId} 开始（待跑 ${itemsToRun.length}/${job.items.length} 账号）`);
 
     const start = job.startDate.toISOString().slice(0, 10);
     const end = job.endDate.toISOString().slice(0, 10);
     const includeClicks = job.includeClicks;
 
-    const results: ('completed' | 'failed')[] = await Promise.all(
-      job.items.map((item) =>
+    await Promise.all(
+      itemsToRun.map((item) =>
         this.runJobItem(jobId, job.ownerUserId, item, start, end, includeClicks),
       ),
     );
 
+    const itemsAfter = await this.prisma.syncJobItem.findMany({
+      where: { syncJobId: jobId },
+      select: { status: true },
+    });
     let completed = 0;
     let failed = 0;
-    for (const r of results) {
-      if (r === 'completed') completed += 1;
-      else failed += 1;
+    for (const item of itemsAfter) {
+      if (item.status === SyncJobItemStatus.completed) completed += 1;
+      else if (item.status === SyncJobItemStatus.failed) failed += 1;
     }
 
     const status =

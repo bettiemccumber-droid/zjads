@@ -1,9 +1,9 @@
 .settlement-report-classic {
-  --sr-border: #c8e6c9;
-  --sr-head: #e8f5e9;
-  --sr-head-deep: #c8e6c9;
-  --sr-accent: #f6ffed;
-  --sr-section-title: #389e0d;
+  --sr-border: #d9e8f7;
+  --sr-head: #f0f6fc;
+  --sr-head-deep: #e6f0fa;
+  --sr-accent: #f5f9ff;
+  --sr-section-title: #1677ff;
   --sr-page-bg: #f5f7fa;
 }
 
@@ -79,7 +79,7 @@
   margin: 0;
   font-size: 15px;
   font-weight: 600;
-  color: #135200;
+  color: rgba(0, 0, 0, 0.88);
 }
 
 .settlement-report-classic .sr-section-body {
@@ -107,7 +107,7 @@
   background: var(--sr-head);
   text-align: center;
   font-weight: 600;
-  color: #237804;
+  color: rgba(0, 0, 0, 0.75);
 }
 
 .settlement-report-classic table.sr-table thead tr:last-child th {
@@ -160,11 +160,11 @@
 }
 
 .settlement-report-classic table.sr-table .sr-group {
-  background: #f0f9f0;
+  background: #f5f9ff;
   font-weight: 600;
   text-align: center;
   vertical-align: middle;
-  color: #135200;
+  color: rgba(0, 0, 0, 0.75);
   min-width: 88px;
   line-height: 1.4;
 }
@@ -195,7 +195,7 @@
 .settlement-report-classic table.sr-table tfoot td {
   background: var(--sr-accent);
   font-weight: 600;
-  color: #135200;
+  color: rgba(0, 0, 0, 0.75);
 }
 
 .settlement-report-classic .sr-money-usd {
@@ -212,8 +212,16 @@
 }
 
 .settlement-report-classic .sr-total-col {
-  background: #f6ffed !important;
+  background: #f0f6fc !important;
   font-weight: 600;
+}
+
+.settlement-report-classic table.sr-matrix tbody td.sr-cell-readonly {
+  background: #fff;
+}
+
+.settlement-report-classic table.sr-matrix tbody tr:nth-child(even) td.sr-cell-readonly {
+  background: #fafafa;
 }
 
 .settlement-report-classic .sr-cell-editable {

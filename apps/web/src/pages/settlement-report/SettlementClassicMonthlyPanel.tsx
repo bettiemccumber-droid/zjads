@@ -3,6 +3,7 @@ import {
   Alert,
   Button,
   DatePicker,
+  Dropdown,
   Empty,
   Input,
   InputNumber,
@@ -11,6 +12,7 @@ import {
   Spin,
   message,
 } from 'antd';
+import type { MenuProps } from 'antd';
 import type { Dayjs } from 'dayjs';
 import dayjs from 'dayjs';
 import { DownloadOutlined, ReloadOutlined, SaveOutlined } from '@ant-design/icons';
@@ -131,6 +133,8 @@ export default function SettlementClassicMonthlyPanel({
   const [syncingUi, setSyncingUi] = useState(false);
   const [syncingFs, setSyncingFs] = useState(false);
   const [syncingCg, setSyncingCg] = useState(false);
+  const [syncingAll, setSyncingAll] = useState(false);
+  const [commissionEditMode, setCommissionEditMode] = useState(false);
   const [adSpendDraft, setAdSpendDraft] = useState<AdSpendDraftLine[]>([]);
   const [rebateDraft, setRebateDraft] = useState(0);
   const [savingAdSpend, setSavingAdSpend] = useState(false);
@@ -350,9 +354,37 @@ export default function SettlementClassicMonthlyPanel({
     },
   } as const;
 
+  type PaymentSyncLine = {
+    channelAccountId?: number;
+    displayName: string;
+    error?: string;
+    receivable?: { usdH1: number; usdH2: number };
+    actual?: { usdH1: number; usdH2: number };
+  };
+
+  const applySyncLinesToDraft = (lines: PaymentSyncLine[]) => {
+    setReceivableDraft((prev) => {
+      const next = { ...prev };
+      for (const line of lines) {
+        if (line.channelAccountId == null || !line.receivable) continue;
+        next[String(line.channelAccountId)] = line.receivable;
+      }
+      return next;
+    });
+    setActualDraft((prev) => {
+      const next = { ...prev };
+      for (const line of lines) {
+        if (line.channelAccountId == null || !line.actual) continue;
+        next[String(line.channelAccountId)] = line.actual;
+      }
+      return next;
+    });
+  };
+
   const syncPlatformPayments = async (
     platform: keyof typeof paymentSyncConfig,
     setLoading: (v: boolean) => void,
+    opts?: { quiet?: boolean },
   ) => {
     if (!report?.canEditActualCommission) return;
     setLoading(true);
@@ -365,18 +397,21 @@ export default function SettlementClassicMonthlyPanel({
       const { data } = await api.post<
         ApiResult<{
           month: string;
-          synced: Array<{ displayName: string; error?: string }>;
+          synced: PaymentSyncLine[];
         }>
       >(path, body);
       if (!data.success) {
         message.error(data.message || '同步失败');
         return;
       }
+      applySyncLinesToDraft(data.data.synced);
       const failed = data.data.synced.filter((s) => s.error);
-      if (failed.length) {
-        message.warning(`${label} 部分账号失败：${failed.map((f) => f.displayName).join('、')}`);
-      } else {
-        message.success(`已同步 ${data.data.synced.length} 个 ${label} 账号`);
+      if (!opts?.quiet) {
+        if (failed.length) {
+          message.warning(`${label} 部分账号失败：${failed.map((f) => f.displayName).join('、')}`);
+        } else {
+          message.success(`已同步 ${data.data.synced.length} 个 ${label} 账号`);
+        }
       }
       await loadReport();
     } catch {
@@ -386,14 +421,20 @@ export default function SettlementClassicMonthlyPanel({
     }
   };
 
-  const syncRewardooPayments = () => void syncPlatformPayments('rewardoo', setSyncingRw);
-  const syncLinkbuxPayments = () => void syncPlatformPayments('linkbux', setSyncingLb);
-  const syncLinkhaitaoPayments = () => void syncPlatformPayments('linkhaitao', setSyncingLh);
-  const syncPartnermaticPayments = () => void syncPlatformPayments('partnermatic', setSyncingPm);
-  const syncUltrainfluencePayments = () =>
-    void syncPlatformPayments('ultrainfluence', setSyncingUi);
-  const syncFamestaPayments = () => void syncPlatformPayments('famesta', setSyncingFs);
-  const syncCollabglowPayments = () => void syncPlatformPayments('collabglow', setSyncingCg);
+  const syncAllPlatformPayments = async () => {
+    if (!report?.canEditActualCommission) return;
+    setSyncingAll(true);
+    const platforms = Object.keys(paymentSyncConfig) as (keyof typeof paymentSyncConfig)[];
+    try {
+      for (const platform of platforms) {
+        await syncPlatformPayments(platform, () => undefined, { quiet: true });
+      }
+      message.success('全部平台打款数据已同步，请核对下方应收/实收');
+      await loadReport();
+    } finally {
+      setSyncingAll(false);
+    }
+  };
 
   const saveReceivable = async () => {
     if (!report?.canEditActualCommission) return;
@@ -549,17 +590,24 @@ export default function SettlementClassicMonthlyPanel({
     kind: HalfDraftKind = 'actual',
   ) => {
     const canEditHalf = kind === 'actual' ? canEdit : canEdit;
+    const isCommissionRow = kind === 'receivable' || kind === 'actual';
     return (
       <>
         {cols.map((c) => {
           const usd = cellUsd(rowKey, c.key, kind);
-          const isEdit = editableHalf && canEditHalf;
+          const isEdit =
+            editableHalf && canEditHalf && (!isCommissionRow || commissionEditMode);
           const draft = draftFor(kind);
           const setDraft = setDraftFor(kind);
           const field = editableHalf === 'h1' ? 'usdH1' : 'usdH2';
+          const cellClass = isEdit
+            ? 'sr-cell-editable'
+            : isCommissionRow
+              ? 'sr-cell-readonly'
+              : undefined;
           return (
             <Fragment key={c.key}>
-              <td align="right" className={isEdit ? 'sr-cell-editable' : undefined}>
+              <td align="right" className={cellClass}>
                 {isEdit ? (
                   <InputNumber
                     min={0}
@@ -821,47 +869,74 @@ export default function SettlementClassicMonthlyPanel({
         <div className="sr-section-head">
           <h3>佣金明细</h3>
           {(canEdit || canEditPayout) && (
-            <Space size="small">
+            <Space size="small" wrap>
               {canEdit && (
                 <>
-                  <Button size="small" loading={syncingRw} onClick={syncRewardooPayments}>
-                    同步 RW 打款
-                  </Button>
-                  <Button size="small" loading={syncingLb} onClick={syncLinkbuxPayments}>
-                    同步 LB 打款
-                  </Button>
-                  <Button size="small" loading={syncingLh} onClick={syncLinkhaitaoPayments}>
-                    同步 LH 打款
-                  </Button>
-                  <Button size="small" loading={syncingPm} onClick={syncPartnermaticPayments}>
-                    同步 PM 打款
-                  </Button>
-                  <Button size="small" loading={syncingUi} onClick={syncUltrainfluencePayments}>
-                    同步 UI 打款
-                  </Button>
-                  <Button size="small" loading={syncingFs} onClick={syncFamestaPayments}>
-                    同步 FS 打款
-                  </Button>
-                  <Button size="small" loading={syncingCg} onClick={syncCollabglowPayments}>
-                    同步 CG 打款
-                  </Button>
+                  <Dropdown
+                    menu={{
+                      items: [
+                        {
+                          key: 'all',
+                          label: '全部平台',
+                          onClick: () => void syncAllPlatformPayments(),
+                        },
+                        { type: 'divider' },
+                        ...(
+                          Object.entries(paymentSyncConfig) as [
+                            keyof typeof paymentSyncConfig,
+                            (typeof paymentSyncConfig)[keyof typeof paymentSyncConfig],
+                          ][]
+                        ).map(([key, cfg]) => ({
+                          key,
+                          label: `仅 ${cfg.short}`,
+                          onClick: () => {
+                            const setters = {
+                              rewardoo: setSyncingRw,
+                              linkbux: setSyncingLb,
+                              linkhaitao: setSyncingLh,
+                              partnermatic: setSyncingPm,
+                              ultrainfluence: setSyncingUi,
+                              famesta: setSyncingFs,
+                              collabglow: setSyncingCg,
+                            } as const;
+                            void syncPlatformPayments(key, setters[key]);
+                          },
+                        })),
+                      ] as MenuProps['items'],
+                    }}
+                  >
+                    <Button size="small" loading={syncingAll || syncingRw || syncingLb || syncingLh || syncingPm || syncingUi || syncingFs || syncingCg}>
+                      同步打款数据
+                    </Button>
+                  </Dropdown>
                   <Button
                     size="small"
-                    icon={<SaveOutlined />}
-                    loading={savingReceivable}
-                    onClick={() => void saveReceivable()}
+                    type={commissionEditMode ? 'primary' : 'default'}
+                    onClick={() => setCommissionEditMode((v) => !v)}
                   >
-                    保存应收佣金
+                    {commissionEditMode ? '完成编辑' : '手工调整'}
                   </Button>
-                  <Button
-                    type="primary"
-                    size="small"
-                    icon={<SaveOutlined />}
-                    loading={savingActual}
-                    onClick={() => void saveActual()}
-                  >
-                    保存实收佣金
-                  </Button>
+                  {commissionEditMode && (
+                    <>
+                      <Button
+                        size="small"
+                        icon={<SaveOutlined />}
+                        loading={savingReceivable}
+                        onClick={() => void saveReceivable()}
+                      >
+                        保存应收
+                      </Button>
+                      <Button
+                        size="small"
+                        type="primary"
+                        icon={<SaveOutlined />}
+                        loading={savingActual}
+                        onClick={() => void saveActual()}
+                      >
+                        保存实收
+                      </Button>
+                    </>
+                  )}
                 </>
               )}
               {canEditPayout && (
@@ -879,6 +954,15 @@ export default function SettlementClassicMonthlyPanel({
         </div>
         <div className="sr-section-body">
           <Spin spinning={loading}>
+            {isAdmin && scopeUserId == null && (
+              <Alert
+                type="info"
+                showIcon
+                style={{ margin: '12px 16px 0' }}
+                message="全公司视图"
+                description="各列应收/实收来自各员工已同步或保存的数据。按员工同步时请先在上方选择该员工，或在此视图使用「同步打款数据 → 全部平台」。"
+              />
+            )}
             {!cols.length ? (
               <Empty description="暂无平台账号" style={{ padding: 24 }} />
             ) : (
@@ -979,10 +1063,9 @@ export default function SettlementClassicMonthlyPanel({
             )}
           </Spin>
           <p className="sr-tip" style={{ padding: '8px 16px 12px' }}>
-            账期/失效来自订单同步。应收/实收按各平台分列：可点各平台「同步打款」，或手工填。RW/LB 应收对齐
-            Payment in Progress / Pending；RW 实收按 Paid Date。LH 应收按 Payment History Date（无 paid_date）。
-            PM/UI/FS/CG 优先 Payment Summary。CNY
-            按页头汇率。收款人/卡号见 <Link to="/channel-accounts">平台账号</Link>。
+            账期/失效来自订单同步。应收/实收默认只读展示；需改数时点「手工调整」。后台口径：RW/LB 在途提现、LH
+            无 paid_date、PM/UI/FS/CG 用 Payment Summary。CNY 按页头汇率。收款人见{' '}
+            <Link to="/channel-accounts">平台账号</Link>。
           </p>
         </div>
       </div>

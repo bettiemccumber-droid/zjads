@@ -132,13 +132,13 @@ export class SettlementMonthlyReportService {
       throw new BadRequestException('month 须为 YYYY-MM');
     }
     const { startDate, endDate } = monthToDateRange(month);
-    const ownerIds = await this.resolveOwnerUserIds(user, queryUserId);
     const fx = await this.usdCnyRateService.getQuote(refreshFx);
     const rate = fx.rate;
 
     const scopeKey = resolveSettlementReportScopeKey(user, queryUserId);
-    const actualHalves = await this.actualCommission.loadHalvesForMonth(scopeKey, month);
-    const receivableHalves = await this.receivableCommission.loadHalvesForMonth(scopeKey, month);
+    const ownerIds = await this.resolveOwnerUserIds(user, queryUserId);
+    const actualHalves = await this.loadMergedActualHalves(scopeKey, month, ownerIds);
+    const receivableHalves = await this.loadMergedReceivableHalves(scopeKey, month, ownerIds);
 
     const adSpendSaved = await this.adSpend.loadLinesForMonth(scopeKey, month);
     const adSpendMeta = await this.adSpend.loadMeta(scopeKey, month);
@@ -163,8 +163,8 @@ export class SettlementMonthlyReportService {
 
     const notes: string[] = [
       '账面/失效佣金按联盟订单 orderDate 汇总；拒付拆分与结算查询一致。',
-      '应收/实收按各平台后台：「同步 RW 打款」「同步 LB 打款」或手工填列（LB1/LB2 各账号 Token）。',
-      '账期/失效仍来自订单同步；应收/实收保存后与报表 scope（全公司/员工）绑定。',
+      '应收/实收来自各平台 Payment API 同步或手工录入；全公司视图会自动汇总各员工已保存的数据。',
+      '管理员按员工同步时数据存于该员工 scope；切换「全公司」仍可看到各列金额。',
       '广告费按各 MCC 关联的 Google 子账号汇总；多 MCC 时请重新导入 Sheet 以刷新子账号绑定。',
       '佣金列按平台渠道账号拆分（同 alias 多账号显示 RW1/RW2 等）。',
       '补充金额与「广告费可改」可保存；未保存时广告费等于库内汇总。',
@@ -282,6 +282,45 @@ export class SettlementMonthlyReportService {
       return employees.map((e) => e.id);
     }
     return [resolveOwnerUserId(user, queryUserId)];
+  }
+
+  /**
+   * 全公司视图合并各员工 scope 下的实收/应收（按渠道账号 id 列）
+   * 避免「按员工同步、全公司查看」时表格全为 0
+   */
+  private async loadMergedActualHalves(
+    scopeKey: string,
+    month: string,
+    ownerIds: number[],
+  ): Promise<Record<string, { usdH1: number; usdH2: number }>> {
+    if (scopeKey !== 'company') {
+      return this.actualCommission.loadHalvesForMonth(scopeKey, month);
+    }
+    const merged: Record<string, { usdH1: number; usdH2: number }> = {};
+    for (const ownerId of ownerIds) {
+      Object.assign(merged, await this.actualCommission.loadHalvesForMonth(`user:${ownerId}`, month));
+    }
+    Object.assign(merged, await this.actualCommission.loadHalvesForMonth('company', month));
+    return merged;
+  }
+
+  private async loadMergedReceivableHalves(
+    scopeKey: string,
+    month: string,
+    ownerIds: number[],
+  ): Promise<Record<string, { usdH1: number; usdH2: number }>> {
+    if (scopeKey !== 'company') {
+      return this.receivableCommission.loadHalvesForMonth(scopeKey, month);
+    }
+    const merged: Record<string, { usdH1: number; usdH2: number }> = {};
+    for (const ownerId of ownerIds) {
+      Object.assign(
+        merged,
+        await this.receivableCommission.loadHalvesForMonth(`user:${ownerId}`, month),
+      );
+    }
+    Object.assign(merged, await this.receivableCommission.loadHalvesForMonth('company', month));
+    return merged;
   }
 
   private async buildAdSpendRows(
@@ -663,11 +702,12 @@ export class SettlementMonthlyReportService {
     const sumVals = (vals: Record<string, number>) =>
       roundMoney(Object.values(vals).reduce((s, v) => s + v, 0));
 
-    const pickReceivableHalf = (colKey: string) => {
-      const direct = receivableHalves[colKey];
-      if (direct) return direct;
-      return receivableHalves[colKey.toLowerCase()] ?? { usdH1: 0, usdH2: 0 };
-    };
+    const pickHalf = (
+      halves: Record<string, { usdH1: number; usdH2: number }>,
+      colKey: string,
+    ) => halves[colKey] ?? halves[colKey.toLowerCase()] ?? { usdH1: 0, usdH2: 0 };
+
+    const pickReceivableHalf = (colKey: string) => pickHalf(receivableHalves, colKey);
 
     const recvH1: Record<string, number> = {};
     const recvH2: Record<string, number> = {};
@@ -684,7 +724,7 @@ export class SettlementMonthlyReportService {
     const actualH1: Record<string, number> = {};
     const actualH2: Record<string, number> = {};
     for (const col of columns) {
-      const half = actualHalves[col.key] ?? { usdH1: 0, usdH2: 0 };
+      const half = pickHalf(actualHalves, col.key);
       actualH1[col.key] = roundMoney(half.usdH1);
       actualH2[col.key] = roundMoney(half.usdH2);
     }

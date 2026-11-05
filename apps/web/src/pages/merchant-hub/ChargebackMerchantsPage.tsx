@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useMemo, useState, type CSSProperties } from 'react';
 import {
+  Alert,
   Button,
   DatePicker,
+  Drawer,
   Empty,
   Input,
   Select,
@@ -31,6 +33,9 @@ interface SettlementRow {
   platformName: string;
   platformCode: string;
   affiliateAlias: string;
+  channelDisplayName?: string;
+  ownerUserId?: number;
+  ownerUsername?: string;
   orderCount: number;
   totalCommission: number;
   confirmedCommission: number;
@@ -114,6 +119,11 @@ export default function ChargebackMerchantsPage() {
   const [scopeUserId, setScopeUserId] = useState<number | null>(null);
   const effectiveScopeUserId = isAdmin ? scopeUserId : scopedMemberId ?? null;
   const [employees, setEmployees] = useState<EmployeeOption[]>([]);
+  const [breakdownOpen, setBreakdownOpen] = useState(false);
+  const [breakdownTarget, setBreakdownTarget] = useState<SettlementRow | null>(null);
+  const [breakdownRows, setBreakdownRows] = useState<SettlementRow[]>([]);
+  const [breakdownTotals, setBreakdownTotals] = useState<SettlementRow | null>(null);
+  const [breakdownLoading, setBreakdownLoading] = useState(false);
 
   useEffect(() => {
     if (!isAdmin) return;
@@ -162,6 +172,85 @@ export default function ChargebackMerchantsPage() {
   useEffect(() => {
     void loadData();
   }, [loadData]);
+
+  const openBreakdown = useCallback(
+    async (row: SettlementRow) => {
+      setBreakdownTarget(row);
+      setBreakdownOpen(true);
+      setBreakdownLoading(true);
+      setBreakdownRows([]);
+      setBreakdownTotals(null);
+      try {
+        const { data } = await api.get<
+          ApiResult<{
+            items: SettlementRow[];
+            breakdownTotals: SettlementRow | null;
+          }>
+        >('/orders/settlement/merchant-summary', {
+          params: {
+            breakdown: 'true',
+            merchantId: row.merchantId,
+            platformCode: row.platformCode,
+            startDate: range[0].format('YYYY-MM-DD'),
+            endDate: range[1].format('YYYY-MM-DD'),
+            ...(effectiveScopeUserId != null
+              ? { userId: effectiveScopeUserId }
+              : { orgWide: 'true' }),
+          },
+        });
+        if (data.success) {
+          setBreakdownRows(data.data.items);
+          setBreakdownTotals(data.data.breakdownTotals ?? null);
+        }
+      } catch {
+        message.error('分别拒付明细加载失败');
+        setBreakdownOpen(false);
+      } finally {
+        setBreakdownLoading(false);
+      }
+    },
+    [range, effectiveScopeUserId],
+  );
+
+  const breakdownColumns: ColumnsType<SettlementRow> = useMemo(
+    () => [
+      {
+        title: '员工',
+        dataIndex: 'ownerUsername',
+        width: 96,
+        render: (name: string) => name || '—',
+      },
+      {
+        title: '渠道账号',
+        dataIndex: 'channelDisplayName',
+        ellipsis: true,
+        render: (v: string, r) => v || r.affiliateAlias || '—',
+      },
+      { title: '订单数', dataIndex: 'orderCount', width: 80, align: 'right' },
+      {
+        title: '总佣金 (含待结算)',
+        dataIndex: 'totalCommission',
+        width: 132,
+        align: 'right',
+        render: (v: number) => <span className="cb-money">{money(v)}</span>,
+      },
+      {
+        title: '拒付金额',
+        dataIndex: 'rejectedCommission',
+        width: 100,
+        align: 'right',
+        render: (v: number) => <span className="cb-money cb-money--danger">{money(v)}</span>,
+      },
+      {
+        title: '拒付率',
+        dataIndex: 'rejectionRate',
+        width: 120,
+        align: 'right',
+        render: (v: number) => <RejectionRateCell rate={v} />,
+      },
+    ],
+    [],
+  );
 
   const platformOptions = useMemo(() => {
     const codes = [...new Set(items.map((i) => i.platformCode))].sort();
@@ -285,21 +374,30 @@ export default function ChargebackMerchantsPage() {
       width: 96,
       align: 'center',
       fixed: 'right',
-      render: () => (
-        <Link className="cb-action-link" to="/settlement">
-          结算查询
-        </Link>
+      render: (_, row) => (
+        <Button type="link" className="cb-action-link" onClick={() => void openBreakdown(row)}>
+          分别拒付
+        </Button>
       ),
     },
   ];
 
   return (
     <div className="chargeback-merchants">
-      <Typography.Paragraph className="chargeback-merchants__tip">
-        按联盟订单 orderDate 汇总本公司所有员工的拒付（全员共享），仅展示有拒付金额的商家。数据以最后一次采集为准，状态变更请先在
-        <Link to="/settlement"> 结算查询 </Link>
-        重新采集。
-      </Typography.Paragraph>
+      <Alert
+        type="warning"
+        showIcon
+        className="chargeback-merchants__banner"
+        message="全员拒付聚合"
+        description={
+          <>
+            订单数、总佣金（含待结算）、拒付金额与拒付率均按<strong>本公司全部员工</strong>
+            在同一平台、同一 MID 下合并汇总；同平台同订单号只计一次。分母为合并后的总佣金。数据以最后一次采集为准，状态变更请先在
+            <Link to="/settlement"> 结算查询 </Link>
+            重新采集。
+          </>
+        }
+      />
 
       <div className="chargeback-merchants__toolbar">
         <div className="chargeback-merchants__toolbar-row">
@@ -366,7 +464,7 @@ export default function ChargebackMerchantsPage() {
       <div className="chargeback-merchants__panel">
         <Table
           className="cb-table"
-          rowKey={(r) => `${r.merchantId}|${r.platformCode}|${r.affiliateAlias}`}
+          rowKey={(r) => `${r.platformCode}|${r.merchantId}`}
           loading={loading}
           columns={columns}
           dataSource={filteredRows}
@@ -386,6 +484,59 @@ export default function ChargebackMerchantsPage() {
           }}
         />
       </div>
+
+      <Drawer
+        className="chargeback-breakdown-drawer"
+        title={
+          breakdownTarget
+            ? `分别拒付 · ${breakdownTarget.merchantName || breakdownTarget.merchantId}`
+            : '分别拒付'
+        }
+        width={720}
+        open={breakdownOpen}
+        onClose={() => setBreakdownOpen(false)}
+        destroyOnClose
+      >
+        {breakdownTarget && (
+          <Typography.Paragraph type="secondary" className="chargeback-breakdown-drawer__meta">
+            <PlatformBadge platformCode={breakdownTarget.platformCode} /> MID{' '}
+            {breakdownTarget.merchantId} · {range[0].format('YYYY-MM-DD')} ~{' '}
+            {range[1].format('YYYY-MM-DD')}
+            {breakdownTotals && (
+              <>
+                {' '}
+                · 全员合计拒付{' '}
+                <Typography.Text type="danger" strong>
+                  {money(breakdownTotals.rejectedCommission)}
+                </Typography.Text>{' '}
+                / 总佣金 {money(breakdownTotals.totalCommission)}（{breakdownRows.length}{' '}
+                条渠道/账号）
+              </>
+            )}
+          </Typography.Paragraph>
+        )}
+        <Table
+          className="cb-table"
+          size="small"
+          bordered
+          loading={breakdownLoading}
+          rowKey={(r) =>
+            `${r.ownerUserId ?? 0}|${r.channelDisplayName ?? ''}|${r.affiliateAlias}|${r.orderCount}`
+          }
+          columns={breakdownColumns}
+          dataSource={breakdownRows}
+          pagination={false}
+          locale={{
+            emptyText: (
+              <Empty description="该商家在本时段内无分渠道拒付明细" />
+            ),
+          }}
+        />
+        <Typography.Paragraph type="secondary" style={{ marginTop: 16, marginBottom: 0 }}>
+          按联盟渠道账号拆分，与列表「全员合并一行」互为下钻关系；同平台同订单号在合并行中只计一次。
+          需改状态请至 <Link to="/settlement">结算查询</Link> 重新采集。
+        </Typography.Paragraph>
+      </Drawer>
     </div>
   );
 }

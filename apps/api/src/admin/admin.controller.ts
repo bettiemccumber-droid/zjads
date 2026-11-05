@@ -7,6 +7,7 @@ import { CurrentUser } from '../auth/current-user.decorator';
 import { AuthUser } from '../common/ownership.util';
 import { Roles } from '../auth/roles.decorator';
 import { RolesGuard } from '../auth/roles.guard';
+import { SyncSchedulerService } from '../sync/sync-scheduler.service';
 import { AdminService } from './admin.service';
 
 class AdminDateQuery {
@@ -83,7 +84,10 @@ class MerchantAnalysisQuery extends AdminDateQuery {
 @UseGuards(AuthGuard('jwt'), RolesGuard)
 @Roles(UserRole.ADMIN)
 export class AdminController {
-  constructor(private readonly admin: AdminService) {}
+  constructor(
+    private readonly admin: AdminService,
+    private readonly syncScheduler: SyncSchedulerService,
+  ) {}
 
   @Get('overview')
   async overview(@Query() q: AdminDateQuery) {
@@ -124,6 +128,17 @@ export class AdminController {
   @Get('collection-status')
   async collectionStatus() {
     return ok(await this.admin.collectionStatus());
+  }
+
+  @Get('scheduled-sync/config')
+  async scheduledSyncConfig() {
+    return ok(this.syncScheduler.getConfig());
+  }
+
+  @Post('scheduled-sync/run')
+  async scheduledSyncRun() {
+    const result = await this.syncScheduler.runScheduledSync('manual');
+    return ok(result, `已按定时策略创建 ${result.startedJobs} 个采集任务`);
   }
 
   @Post('sync/batch')

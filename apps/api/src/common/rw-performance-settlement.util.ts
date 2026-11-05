@@ -68,6 +68,38 @@ export function aggregateRwPerformanceByMerchant(
 }
 
 /**
+ * 全员/多员工汇总时：同一 RW 商家跨投放单元的 Performance 合并为一键
+ */
+export function mergeRwPerformanceByMerchantId(
+  perfByKey: Map<string, RwPerformanceMerchantTotals>,
+): Map<string, RwPerformanceMerchantTotals> {
+  const byMid = new Map<string, RwPerformanceMerchantTotals>();
+  for (const perf of perfByKey.values()) {
+    const prev = byMid.get(perf.merchantId);
+    if (!prev) {
+      byMid.set(perf.merchantId, {
+        merchantId: perf.merchantId,
+        merchantName: perf.merchantName,
+        affiliateAlias: '',
+        displayName: '',
+        platformName: perf.platformName,
+        orderCount: perf.orderCount,
+        totalCommission: perf.totalCommission,
+      });
+      continue;
+    }
+    prev.orderCount += perf.orderCount;
+    prev.totalCommission += perf.totalCommission;
+    if (!prev.merchantName && perf.merchantName) prev.merchantName = perf.merchantName;
+  }
+  const result = new Map<string, RwPerformanceMerchantTotals>();
+  for (const perf of byMid.values()) {
+    result.set(rwMerchantAggKey(perf.merchantId, '', ''), perf);
+  }
+  return result;
+}
+
+/**
  * 将 RW 商家总佣金/订单数对齐为 Performance 逐日汇总（每个投放单元每商家只覆盖一次）
  */
 export function applyRwPerformanceCommissionOverlay(

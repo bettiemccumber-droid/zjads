@@ -39,6 +39,17 @@ export class SyncService implements OnModuleInit {
   /**
    * 将超时未完成的采集任务标记为失败
    */
+  /** 该员工是否已有 pending/running 采集任务 */
+  async hasActiveSyncJob(ownerUserId: number): Promise<boolean> {
+    const n = await this.prisma.syncJob.count({
+      where: {
+        ownerUserId,
+        status: { in: [SyncJobStatus.pending, SyncJobStatus.running] },
+      },
+    });
+    return n > 0;
+  }
+
   async recoverStaleJobs(): Promise<number> {
     const cutoff = new Date(Date.now() - STALE_JOB_MS);
     const stale = await this.prisma.syncJob.findMany({

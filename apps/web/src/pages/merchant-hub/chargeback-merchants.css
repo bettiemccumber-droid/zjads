@@ -8,11 +8,15 @@
   --cb-muted: rgba(0, 0, 0, 0.35);
 }
 
-.chargeback-merchants__tip {
+.chargeback-merchants__banner {
   margin-bottom: 12px;
+  border-radius: 8px;
+}
+
+.chargeback-merchants__banner .ant-alert-description {
   font-size: 13px;
   line-height: 1.6;
-  color: rgba(0, 0, 0, 0.45);
+  color: rgba(0, 0, 0, 0.65);
 }
 
 .chargeback-merchants__toolbar {
@@ -209,4 +213,11 @@
 .cb-action-link {
   font-size: 13px;
   white-space: nowrap;
+  padding: 0;
+  height: auto;
+}
+
+.chargeback-breakdown-drawer__meta {
+  margin-bottom: 12px !important;
+  font-size: 13px;
 }

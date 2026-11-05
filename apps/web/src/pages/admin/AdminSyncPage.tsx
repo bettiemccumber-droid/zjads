@@ -75,6 +75,31 @@ export default function AdminSyncPage() {
   const [importingUserId, setImportingUserId] = useState<number | null>(null);
   const [includeClicks, setIncludeClicks] = useState(false);
   const [purging, setPurging] = useState(false);
+  const [scheduledCfg, setScheduledCfg] = useState<{
+    enabled: boolean;
+    cron: string;
+    timeZone: string;
+    lookbackDays: number;
+    includeClicks: boolean;
+    nextRangePreview: { startDate: string; endDate: string };
+    lastRun: {
+      trigger: string;
+      startedAt: string;
+      startDate: string;
+      endDate: string;
+      startedJobs: number;
+      skippedUsers: number;
+      failedUsers: number;
+    } | null;
+  } | null>(null);
+  const [scheduledRunning, setScheduledRunning] = useState(false);
+
+  const loadScheduledConfig = async () => {
+    const { data } = await api.get<
+      ApiResult<NonNullable<typeof scheduledCfg>>
+    >('/admin/scheduled-sync/config');
+    if (data.success) setScheduledCfg(data.data);
+  };
 
   const purgeSyncHistory = async () => {
     setPurging(true);
@@ -105,7 +130,24 @@ export default function AdminSyncPage() {
 
   useEffect(() => {
     void load();
+    void loadScheduledConfig();
   }, []);
+
+  const runScheduledSyncTrial = async () => {
+    setScheduledRunning(true);
+    try {
+      const { data } = await api.post<
+        ApiResult<{ startedJobs: number; skippedUsers: number; failedUsers: number }>
+      >('/admin/scheduled-sync/run');
+      if (data.success) {
+        message.success(data.message);
+        void loadScheduledConfig();
+        void load();
+      } else message.error(data.message);
+    } finally {
+      setScheduledRunning(false);
+    }
+  };
 
   const batchSync = async (userIds?: number[]) => {
     const isSingle = userIds?.length === 1;
@@ -204,6 +246,39 @@ export default function AdminSyncPage() {
         style={{ marginBottom: 16 }}
         message="管理员批量采集"
         description="各员工订单采集完成后，平台会自动导入其全部 Google Sheet 广告费（同日期区间）。下方表格仍可单独操作。"
+      />
+
+      <Alert
+        type={scheduledCfg?.enabled ? 'success' : 'warning'}
+        showIcon
+        style={{ marginBottom: 16 }}
+        message="定时采集（试点）"
+        description={
+          scheduledCfg ? (
+            <>
+              状态：{scheduledCfg.enabled ? '已开启' : '未开启（Railway/API 设 SCHEDULED_SYNC_ENABLED=true 并重启）'}
+              ；计划每天 {scheduledCfg.timeZone} 06:10 自动采近 {scheduledCfg.lookbackDays} 天（含今天）
+              {scheduledCfg.includeClicks ? '，含联盟点击' : '，仅订单'}。试跑区间：
+              {scheduledCfg.nextRangePreview.startDate} ~ {scheduledCfg.nextRangePreview.endDate}。
+              {scheduledCfg.lastRun && (
+                <>
+                  {' '}
+                  上次{scheduledCfg.lastRun.trigger === 'manual' ? '手动' : '定时'}试跑：
+                  {scheduledCfg.lastRun.startedJobs} 任务启动 / 跳过 {scheduledCfg.lastRun.skippedUsers} / 失败{' '}
+                  {scheduledCfg.lastRun.failedUsers}（{scheduledCfg.lastRun.startDate}~
+                  {scheduledCfg.lastRun.endDate}）。
+                </>
+              )}
+            </>
+          ) : (
+            '加载配置中…'
+          )
+        }
+        action={
+          <Button size="small" loading={scheduledRunning} onClick={() => void runScheduledSyncTrial()}>
+            立即试跑定时策略
+          </Button>
+        }
       />
 
       <Card title="快速操作" style={{ marginBottom: 16 }}>

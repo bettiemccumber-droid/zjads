@@ -40,6 +40,8 @@ export class OrdersController {
         userId: query.userId ? parseInt(query.userId, 10) : undefined,
         teamWide: query.teamWide === 'true' || query.teamWide === '1',
         orgWide: query.orgWide === 'true' || query.orgWide === '1',
+        merchantBreakdown: query.breakdown === 'true' || query.breakdown === '1',
+        merchantId: query.merchantId,
         channelAccountId: query.channelAccountId
           ? parseInt(query.channelAccountId, 10)
           : undefined,

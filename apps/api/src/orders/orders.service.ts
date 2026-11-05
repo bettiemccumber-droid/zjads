@@ -1,7 +1,8 @@
-import { Injectable } from '@nestjs/common';
+import { BadRequestException, Injectable } from '@nestjs/common';
 import { NormalizedStatus, Prisma, UserRole } from '@prisma/client';
 import {
   aggregateAffiliateOrders,
+  aggregateAffiliateOrdersForMonitor,
   mergePlatformCatalog,
   PlatformCommissionSummary,
   ChannelAccountCommissionSummary,
@@ -15,6 +16,7 @@ import {
 import {
   aggregateRwPerformanceByMerchant,
   applyRwPerformanceCommissionOverlay,
+  mergeRwPerformanceByMerchantId,
 } from '../common/rw-performance-settlement.util';
 import { renormalizeOrdersForAccounts } from '../common/platform-status-defaults.util';
 import { buildOrderDateRangeFilter } from '../common/order-date-range.util';
@@ -30,6 +32,8 @@ export interface OrdersQuery {
   teamWide?: boolean;
   /** 未指定 userId 时汇总本组织全部活跃员工（拒付商家等共享视图） */
   orgWide?: boolean;
+  /** 拒付下钻：按员工/渠道账号拆分（需 merchantId + platformCode） */
+  merchantBreakdown?: boolean;
   channelAccountId?: number;
   platformCode?: string;
   normalizedStatus?: NormalizedStatus;
@@ -48,6 +52,8 @@ export interface SettlementMerchantRow {
   affiliateAlias: string;
   channelAccountId?: number;
   channelDisplayName?: string;
+  ownerUserId?: number;
+  ownerUsername?: string;
   orderCount: number;
   totalAmount: number;
   totalCommission: number;
@@ -145,6 +151,10 @@ export class OrdersService {
    * 管理员未指定 userId 时汇总全公司员工，并返回分员工明细
    */
   async settlementMerchantSummary(user: AuthUser, q: OrdersQuery) {
+    if (q.merchantBreakdown) {
+      return this.buildMerchantChargebackBreakdown(user, q);
+    }
+
     const ownerIds = await this.resolveOwnerUserIds(user, q.userId, {
       teamWide: q.teamWide,
       orgWide: q.orgWide,
@@ -174,9 +184,13 @@ export class OrdersService {
       );
     }
 
+    const companyWide =
+      q.userId == null &&
+      (isCompanyWideScope(user, q.userId) || q.orgWide === true || ownerIds.length > 1);
+
     return {
       ...core,
-      scope: isCompanyWideScope(user, q.userId) ? 'company' : 'user',
+      scope: companyWide ? 'company' : 'user',
       selectedUserId: q.userId ?? null,
       employeeSummaries,
     };
@@ -198,6 +212,109 @@ export class OrdersService {
       return resolveTeamOwnerUserIds(this.prisma, user.id, user.teamMemberIds);
     }
     return [user.id];
+  }
+
+  /**
+   * 拒付商家下钻：同一 MID 按渠道账号/员工拆分（不做全员 MID 合并）
+   */
+  private async buildMerchantChargebackBreakdown(user: AuthUser, q: OrdersQuery) {
+    const merchantId = q.merchantId?.trim();
+    const platformCode = q.platformCode?.trim();
+    if (!merchantId || !platformCode) {
+      throw new BadRequestException('分别拒付需提供 merchantId 与 platformCode');
+    }
+
+    const ownerIds = await this.resolveOwnerUserIds(user, q.userId, {
+      teamWide: q.teamWide,
+      orgWide: q.orgWide,
+    });
+
+    const ownerAccounts = await this.prisma.channelAccount.findMany({
+      where: {
+        ownerUserId: { in: ownerIds },
+        platform: { code: platformCode },
+      },
+      include: {
+        platform: true,
+        ownerUser: { select: { id: true, username: true } },
+      },
+    });
+
+    if (!ownerAccounts.length) {
+      return {
+        items: [] as SettlementMerchantRow[],
+        stats: this.emptyStats(),
+        platformSummaries: [] as PlatformCommissionSummary[],
+        channelSummaries: [] as ChannelAccountCommissionSummary[],
+        scope: 'breakdown' as const,
+        breakdownTotals: null,
+        selectedUserId: q.userId ?? null,
+      };
+    }
+
+    const accountIds = ownerAccounts.map((a) => a.id);
+    await renormalizeOrdersForAccounts(this.prisma, accountIds);
+
+    const dateRange = buildOrderDateRangeFilter(q.startDate, q.endDate);
+    const orders = await this.prisma.affiliateOrder.findMany({
+      where: {
+        channelAccountId: { in: accountIds },
+        merchantId,
+        ...(dateRange ? { orderDate: dateRange } : {}),
+      },
+      include: { channelAccount: { include: { platform: true } } },
+    });
+
+    let merchants = aggregateAffiliateOrders(orders, { groupByChannelAccount: true });
+    const accountById = new Map(ownerAccounts.map((a) => [a.id, a]));
+
+    if (dateRange) {
+      const rwClickRows = await this.prisma.affiliateMerchantClickDaily.findMany({
+        where: {
+          channelAccountId: { in: accountIds },
+          merchantId,
+          clickDate: dateRange,
+          channelAccount: { platform: { code: 'rewardoo' } },
+        },
+        include: { channelAccount: { include: { platform: true } } },
+      });
+      const perfByKey = aggregateRwPerformanceByMerchant(rwClickRows);
+      merchants = applyRwPerformanceCommissionOverlay(merchants, perfByKey);
+    }
+
+    const merged = aggregateAffiliateOrdersForMonitor(orders);
+    const breakdownTotals =
+      merged.find((m) => m.merchantId === merchantId && m.platformCode === platformCode) ??
+      merged[0];
+
+    const items = merchants
+      .filter((m) => m.rejectedCommission > 0)
+      .map((m) => {
+        const account =
+          m.channelAccountId != null ? accountById.get(m.channelAccountId) : undefined;
+        return {
+          ...this.toSettlementRow(m),
+          ownerUserId: account?.ownerUserId,
+          ownerUsername: account?.ownerUser.username,
+        };
+      })
+      .sort(
+        (a, b) =>
+          b.rejectedCommission - a.rejectedCommission ||
+          b.rejectionRate - a.rejectionRate,
+      );
+
+    const stats = this.aggregateSettlementStats(items);
+
+    return {
+      items,
+      stats,
+      platformSummaries: [] as PlatformCommissionSummary[],
+      channelSummaries: [] as ChannelAccountCommissionSummary[],
+      scope: 'breakdown' as const,
+      breakdownTotals: breakdownTotals ? this.toSettlementRow(breakdownTotals) : null,
+      selectedUserId: q.userId ?? null,
+    };
   }
 
   /** 本组织内活跃非管理员员工（联盟/拒付数据归属） */
@@ -236,9 +353,15 @@ export class OrdersService {
       include: { channelAccount: { include: { platform: true } } },
     });
 
-    let merchants = aggregateAffiliateOrders(orders, { groupByChannelAccount: true });
+    /** 多员工/全员：按平台+MID 合并（竞品拒付商家同款），并按平台内订单号去重 */
+    const mergeMerchantsOrgWide = ownerIds.length > 1;
+    let merchants = mergeMerchantsOrgWide
+      ? aggregateAffiliateOrdersForMonitor(orders)
+      : aggregateAffiliateOrders(orders, { groupByChannelAccount: true });
     const accountById = new Map(allAccounts.map((a) => [a.id, a]));
-    merchants = rollupMerchantsByDeploymentUnit(merchants, accountById);
+    if (!mergeMerchantsOrgWide) {
+      merchants = rollupMerchantsByDeploymentUnit(merchants, accountById);
+    }
     if (dateRange) {
       const rwClickRows = await this.prisma.affiliateMerchantClickDaily.findMany({
         where: {
@@ -248,7 +371,15 @@ export class OrdersService {
         },
         include: { channelAccount: { include: { platform: true } } },
       });
-      const perfByKey = aggregateRwPerformanceByMerchant(rwClickRows);
+      let perfByKey = aggregateRwPerformanceByMerchant(rwClickRows);
+      if (mergeMerchantsOrgWide) {
+        perfByKey = mergeRwPerformanceByMerchantId(perfByKey);
+        merchants = merchants.map((m) =>
+          m.platformCode === 'rewardoo'
+            ? { ...m, affiliateAlias: '', channelDisplayName: '' }
+            : m,
+        );
+      }
       merchants = applyRwPerformanceCommissionOverlay(merchants, perfByKey);
     }
 

@@ -20,6 +20,7 @@ import {
   DownloadOutlined,
   ReloadOutlined,
   SaveOutlined,
+  EditOutlined,
   UndoOutlined,
 } from '@ant-design/icons';
 import { Link } from 'react-router-dom';
@@ -143,7 +144,8 @@ export default function SettlementClassicMonthlyPanel({
   const [generatedAt, setGeneratedAt] = useState<string>('');
   const [systemReceivable, setSystemReceivable] = useState<CommissionHalfDraft>({});
   const [systemActual, setSystemActual] = useState<CommissionHalfDraft>({});
-  const [commissionEditMode, setCommissionEditMode] = useState(false);
+  /** 对标站：点击单元格进入编辑，格式 kind:colKey:usdH1|usdH2 */
+  const [activeCommissionCell, setActiveCommissionCell] = useState<string | null>(null);
   const [adSpendDraft, setAdSpendDraft] = useState<AdSpendDraftLine[]>([]);
   const [rebateDraft, setRebateDraft] = useState(0);
   const [savingAdSpend, setSavingAdSpend] = useState(false);
@@ -640,6 +642,12 @@ export default function SettlementClassicMonthlyPanel({
     return Math.abs(draft - sys) > 0.0001;
   };
 
+  const commissionCellKey = (
+    kind: HalfDraftKind,
+    colKey: string,
+    field: 'usdH1' | 'usdH2',
+  ) => `${kind}:${colKey}:${field}`;
+
   const resetCommissionHalf = (
     colKey: string,
     field: 'usdH1' | 'usdH2',
@@ -654,6 +662,7 @@ export default function SettlementClassicMonthlyPanel({
         usdH2: field === 'usdH2' ? sys.usdH2 : (prev[colKey]?.usdH2 ?? 0),
       },
     }));
+    setActiveCommissionCell(null);
   };
 
   const renderMoneyCells = (
@@ -661,34 +670,39 @@ export default function SettlementClassicMonthlyPanel({
     editableHalf?: 'h1' | 'h2',
     kind: HalfDraftKind = 'actual',
   ) => {
-    const canEditHalf = kind === 'actual' ? canEdit : canEdit;
+    const canEditHalf = canEdit;
     const isCommissionRow = kind === 'receivable' || kind === 'actual';
+    const canClickEdit = Boolean(editableHalf && canEditHalf && isCommissionRow);
     return (
       <>
         {cols.map((c) => {
           const usd = cellUsd(rowKey, c.key, kind);
-          const isEdit =
-            editableHalf && canEditHalf && (!isCommissionRow || commissionEditMode);
           const draft = draftFor(kind);
           const setDraft = setDraftFor(kind);
-          const field = editableHalf === 'h1' ? 'usdH1' : 'usdH2';
-          const manual =
-            isEdit &&
-            editableHalf &&
-            isCommissionRow &&
-            isHalfManual(c.key, field, kind);
+          const field: 'usdH1' | 'usdH2' = editableHalf === 'h1' ? 'usdH1' : 'usdH2';
+          const focusKey = commissionCellKey(kind, c.key, field);
+          const isActive = activeCommissionCell === focusKey;
+          const manual = canClickEdit && isHalfManual(c.key, field, kind);
           const cellClass = [
-            isEdit ? 'sr-cell-editable' : isCommissionRow ? 'sr-cell-readonly' : undefined,
+            canClickEdit ? 'sr-cell-clickable' : isCommissionRow ? 'sr-cell-readonly' : undefined,
+            isActive ? 'sr-cell-editable' : undefined,
             manual ? 'sr-cell-manual' : undefined,
           ]
             .filter(Boolean)
             .join(' ');
+          const displayUsd =
+            canClickEdit && (rowKey === 'recv_total' || rowKey === 'actual_total')
+              ? usd
+              : canClickEdit
+                ? (draft[c.key]?.[field] ?? 0)
+                : usd;
           return (
             <Fragment key={c.key}>
               <td align="right" className={cellClass}>
-                {isEdit ? (
+                {isActive ? (
                   <div className="sr-cell-edit-wrap">
                     <InputNumber
+                      autoFocus
                       min={0}
                       step={0.01}
                       precision={2}
@@ -704,24 +718,44 @@ export default function SettlementClassicMonthlyPanel({
                           },
                         }))
                       }
+                      onBlur={() => setActiveCommissionCell(null)}
                     />
+                  </div>
+                ) : (
+                  <div
+                    className="sr-cell-display"
+                    role={canClickEdit ? 'button' : undefined}
+                    tabIndex={canClickEdit ? 0 : undefined}
+                    onClick={() => {
+                      if (canClickEdit) setActiveCommissionCell(focusKey);
+                    }}
+                    onKeyDown={(e) => {
+                      if (canClickEdit && (e.key === 'Enter' || e.key === ' ')) {
+                        e.preventDefault();
+                        setActiveCommissionCell(focusKey);
+                      }
+                    }}
+                  >
+                    <span className="sr-money-usd">{fmtUsd(displayUsd)}</span>
+                    {canClickEdit && (
+                      <EditOutlined className="sr-cell-pencil" aria-hidden />
+                    )}
                     {manual && (
                       <Tooltip title="清除手填，恢复系统计算值">
                         <UndoOutlined
                           className="sr-cell-reset"
-                          onClick={() => resetCommissionHalf(c.key, field, kind)}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            resetCommissionHalf(c.key, field, kind);
+                          }}
                         />
                       </Tooltip>
                     )}
                   </div>
-                ) : (
-                  <span className="sr-money-usd">{fmtUsd(usd)}</span>
                 )}
               </td>
               <td align="right" className={cellClass || undefined}>
-                <span className="sr-money-cny">
-                  {fmtCny(isEdit ? (draft[c.key]?.[field] ?? 0) : usd, rate)}
-                </span>
+                <span className="sr-money-cny">{fmtCny(displayUsd, rate)}</span>
               </td>
             </Fragment>
           );
@@ -1005,32 +1039,21 @@ export default function SettlementClassicMonthlyPanel({
                   </Dropdown>
                   <Button
                     size="small"
-                    type={commissionEditMode ? 'primary' : 'default'}
-                    onClick={() => setCommissionEditMode((v) => !v)}
+                    icon={<SaveOutlined />}
+                    loading={savingReceivable}
+                    onClick={() => void saveReceivable()}
                   >
-                    {commissionEditMode ? '完成编辑' : '手工调整'}
+                    保存应收
                   </Button>
-                  {commissionEditMode && (
-                    <>
-                      <Button
-                        size="small"
-                        icon={<SaveOutlined />}
-                        loading={savingReceivable}
-                        onClick={() => void saveReceivable()}
-                      >
-                        保存应收
-                      </Button>
-                      <Button
-                        size="small"
-                        type="primary"
-                        icon={<SaveOutlined />}
-                        loading={savingActual}
-                        onClick={() => void saveActual()}
-                      >
-                        保存实收
-                      </Button>
-                    </>
-                  )}
+                  <Button
+                    size="small"
+                    type="primary"
+                    icon={<SaveOutlined />}
+                    loading={savingActual}
+                    onClick={() => void saveActual()}
+                  >
+                    保存实收
+                  </Button>
                 </>
               )}
               {canEditPayout && (
@@ -1179,8 +1202,8 @@ export default function SettlementClassicMonthlyPanel({
             )}
           </Spin>
           <p className="sr-tip">
-            账期/失效来自订单同步。应收/实收默认只读；点「手工调整」后可改数（蓝底为已手填，↺
-            恢复系统值）。左右合计列与项目列在横滑时保持可见。同步打款在「佣金明细」内操作。CNY
+            账期/失效来自订单同步。应收/实收单元格点击可手工纠正（蓝底为已手填，↺
+            恢复系统值）。左右合计列与项目列在横滑时保持可见。改完请点保存应收/实收。CNY
             按页头汇率。收款人见 <Link to="/channel-accounts">平台账号</Link>。
           </p>
         </div>

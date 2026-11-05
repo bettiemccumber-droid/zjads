@@ -132,10 +132,16 @@ export default function SettlementClassicMonthlyPanel({
   const [savingActual, setSavingActual] = useState(false);
   const [savingReceivable, setSavingReceivable] = useState(false);
   const [generatedAt, setGeneratedAt] = useState<string>('');
+  /** 打开/刷新报表时的基准值，用于恢复与手填高亮 */
   const [systemReceivable, setSystemReceivable] = useState<CommissionHalfDraft>({});
   const [systemActual, setSystemActual] = useState<CommissionHalfDraft>({});
+  /** 最近一次成功写入后端的快照，用于判断是否需要保存 */
+  const [persistedReceivable, setPersistedReceivable] = useState<CommissionHalfDraft>({});
+  const [persistedActual, setPersistedActual] = useState<CommissionHalfDraft>({});
   /** 格式 kind:colKey:usdH1|usdH2 */
   const [activeCommissionCell, setActiveCommissionCell] = useState<string | null>(null);
+  /** 本次会话内改过的半月格，保证保存前后手填样式一致 */
+  const [localManualHalfKeys, setLocalManualHalfKeys] = useState<Set<string>>(() => new Set());
   const [adSpendDraft, setAdSpendDraft] = useState<AdSpendDraftLine[]>([]);
   const [rebateDraft, setRebateDraft] = useState(0);
   const [savingAdSpend, setSavingAdSpend] = useState(false);
@@ -189,8 +195,13 @@ export default function SettlementClassicMonthlyPanel({
     }
     setActualDraft(actual);
     setReceivableDraft(receivable);
-    setSystemActual(JSON.parse(JSON.stringify(actual)) as CommissionHalfDraft);
-    setSystemReceivable(JSON.parse(JSON.stringify(receivable)) as CommissionHalfDraft);
+    const actualClone = JSON.parse(JSON.stringify(actual)) as CommissionHalfDraft;
+    const receivableClone = JSON.parse(JSON.stringify(receivable)) as CommissionHalfDraft;
+    setSystemActual(actualClone);
+    setSystemReceivable(receivableClone);
+    setPersistedActual(actualClone);
+    setPersistedReceivable(receivableClone);
+    setLocalManualHalfKeys(new Set());
     setAdSpendDraft(
       report.adSpendRows.map((r) => ({
         adSourceId: r.adSourceId,
@@ -322,13 +333,33 @@ export default function SettlementClassicMonthlyPanel({
     }
   };
 
-  const saveReceivable = async (opts?: { silent?: boolean }) => {
+  const cloneHalfDraft = (src: CommissionHalfDraft): CommissionHalfDraft =>
+    JSON.parse(JSON.stringify(src)) as CommissionHalfDraft;
+
+  const halfDraftsEqual = (a: CommissionHalfDraft, b: CommissionHalfDraft): boolean => {
+    const keys = new Set([...Object.keys(a), ...Object.keys(b)]);
+    for (const key of keys) {
+      const x = a[key] ?? { usdH1: 0, usdH2: 0 };
+      const y = b[key] ?? { usdH1: 0, usdH2: 0 };
+      if (Math.abs(x.usdH1 - y.usdH1) > 0.0001 || Math.abs(x.usdH2 - y.usdH2) > 0.0001) {
+        return false;
+      }
+    }
+    return true;
+  };
+
+  const saveReceivable = async (opts?: {
+    silent?: boolean;
+    toast?: boolean;
+    draft?: CommissionHalfDraft;
+  }) => {
     if (!report?.canEditActualCommission) return;
     setSavingReceivable(true);
     try {
+      const source = opts?.draft ?? receivableDraft;
       const halfValues: CommissionHalfDraft = {};
       for (const c of report.columns) {
-        halfValues[c.key] = receivableDraft[c.key] ?? { usdH1: 0, usdH2: 0 };
+        halfValues[c.key] = source[c.key] ?? { usdH1: 0, usdH2: 0 };
       }
       const body: { month: string; halfValues: CommissionHalfDraft; userId?: string } = {
         month: monthStr,
@@ -345,11 +376,13 @@ export default function SettlementClassicMonthlyPanel({
         message.error(data.message || '保存失败');
         return false;
       }
-      if (!opts?.silent) {
+      const saved = cloneHalfDraft(source);
+      setPersistedReceivable(saved);
+      if (opts?.toast) {
+        message.success('保存成功');
+      } else if (!opts?.silent) {
         message.success('应收佣金已保存');
         await loadReport();
-      } else {
-        setSystemReceivable(JSON.parse(JSON.stringify(receivableDraft)) as CommissionHalfDraft);
       }
       return true;
     } catch {
@@ -360,13 +393,18 @@ export default function SettlementClassicMonthlyPanel({
     }
   };
 
-  const saveActual = async (opts?: { silent?: boolean }) => {
+  const saveActual = async (opts?: {
+    silent?: boolean;
+    toast?: boolean;
+    draft?: CommissionHalfDraft;
+  }) => {
     if (!report?.canEditActualCommission) return;
     setSavingActual(true);
     try {
+      const source = opts?.draft ?? actualDraft;
       const halfValues: CommissionHalfDraft = {};
       for (const c of report.columns) {
-        halfValues[c.key] = actualDraft[c.key] ?? { usdH1: 0, usdH2: 0 };
+        halfValues[c.key] = source[c.key] ?? { usdH1: 0, usdH2: 0 };
       }
       const body: { month: string; halfValues: CommissionHalfDraft; userId?: string } = {
         month: monthStr,
@@ -383,11 +421,13 @@ export default function SettlementClassicMonthlyPanel({
         message.error(data.message || '保存失败');
         return false;
       }
-      if (!opts?.silent) {
+      const saved = cloneHalfDraft(source);
+      setPersistedActual(saved);
+      if (opts?.toast) {
+        message.success('保存成功');
+      } else if (!opts?.silent) {
         message.success('实收佣金已保存');
         await loadReport();
-      } else {
-        setSystemActual(JSON.parse(JSON.stringify(actualDraft)) as CommissionHalfDraft);
       }
       return true;
     } catch {
@@ -485,17 +525,56 @@ export default function SettlementClassicMonthlyPanel({
   const systemDraftFor = (kind: HalfDraftKind) =>
     kind === 'actual' ? systemActual : systemReceivable;
 
-  const isHalfManual = (colKey: string, field: 'usdH1' | 'usdH2', kind: HalfDraftKind) => {
-    const draft = draftFor(kind)[colKey]?.[field] ?? 0;
-    const sys = systemDraftFor(kind)[colKey]?.[field] ?? 0;
-    return Math.abs(draft - sys) > 0.0001;
-  };
-
   const commissionCellKey = (
     kind: HalfDraftKind,
     colKey: string,
     field: 'usdH1' | 'usdH2',
   ) => `${kind}:${colKey}:${field}`;
+
+  const persistedFor = (kind: HalfDraftKind) =>
+    kind === 'actual' ? persistedActual : persistedReceivable;
+
+  const markHalfManualLocal = (kind: HalfDraftKind, colKey: string, field: 'usdH1' | 'usdH2') => {
+    const key = commissionCellKey(kind, colKey, field);
+    setLocalManualHalfKeys((prev) => {
+      if (prev.has(key)) return prev;
+      const next = new Set(prev);
+      next.add(key);
+      return next;
+    });
+  };
+
+  const clearHalfManualLocal = (kind: HalfDraftKind, colKey: string, field: 'usdH1' | 'usdH2') => {
+    const key = commissionCellKey(kind, colKey, field);
+    setLocalManualHalfKeys((prev) => {
+      if (!prev.has(key)) return prev;
+      const next = new Set(prev);
+      next.delete(key);
+      return next;
+    });
+  };
+
+  const isHalfManual = (colKey: string, field: 'usdH1' | 'usdH2', kind: HalfDraftKind) => {
+    const key = commissionCellKey(kind, colKey, field);
+    const draft = draftFor(kind)[colKey]?.[field] ?? 0;
+    const sys = systemDraftFor(kind)[colKey]?.[field] ?? 0;
+    const persisted = persistedFor(kind)[colKey]?.[field] ?? 0;
+    if (localManualHalfKeys.has(key)) return true;
+    if (Math.abs(draft - sys) > 0.0001) return true;
+    if (Math.abs(draft - persisted) > 0.0001) return true;
+    return false;
+  };
+
+  const saveCommissionKind = async (
+    kind: HalfDraftKind,
+    opts?: { silent?: boolean; toast?: boolean; draft?: CommissionHalfDraft },
+  ) => {
+    if (kind === 'receivable') {
+      await saveReceivable(opts);
+    } else {
+      await saveActual(opts);
+    }
+  };
 
   const resetCommissionHalf = (
     colKey: string,
@@ -504,13 +583,20 @@ export default function SettlementClassicMonthlyPanel({
   ) => {
     const setDraft = setDraftFor(kind);
     const sys = systemDraftFor(kind)[colKey] ?? { usdH1: 0, usdH2: 0 };
-    setDraft((prev) => ({
-      ...prev,
-      [colKey]: {
-        usdH1: field === 'usdH1' ? sys.usdH1 : (prev[colKey]?.usdH1 ?? 0),
-        usdH2: field === 'usdH2' ? sys.usdH2 : (prev[colKey]?.usdH2 ?? 0),
-      },
-    }));
+    setDraft((prev) => {
+      const next: CommissionHalfDraft = {
+        ...prev,
+        [colKey]: {
+          usdH1: field === 'usdH1' ? sys.usdH1 : (prev[colKey]?.usdH1 ?? 0),
+          usdH2: field === 'usdH2' ? sys.usdH2 : (prev[colKey]?.usdH2 ?? 0),
+        },
+      };
+      if (!halfDraftsEqual(next, persistedFor(kind))) {
+        void saveCommissionKind(kind, { silent: true, toast: true, draft: next });
+      }
+      return next;
+    });
+    clearHalfManualLocal(kind, colKey, field);
     setActiveCommissionCell(null);
   };
 
@@ -551,7 +637,8 @@ export default function SettlementClassicMonthlyPanel({
           precision={2}
           size="small"
           value={draft[cKey]?.[field] ?? 0}
-          onChange={(v) =>
+          onChange={(v) => {
+            markHalfManualLocal(kind, cKey, field);
             setDraft((prev) => ({
               ...prev,
               [cKey]: {
@@ -559,9 +646,9 @@ export default function SettlementClassicMonthlyPanel({
                 usdH2: prev[cKey]?.usdH2 ?? 0,
                 [field]: typeof v === 'number' ? v : 0,
               },
-            }))
-          }
-          onBlur={() => flushCommissionCellEdit(kind, cKey, field)}
+            }));
+          }}
+          onBlur={() => flushCommissionCellEdit(kind)}
           disabled={savingReceivable || savingActual}
         />
       </div>
@@ -686,17 +773,12 @@ export default function SettlementClassicMonthlyPanel({
     );
   };
 
-  const saveCommissionDrafts = async (opts?: { silent?: boolean }) => {
-    setActiveCommissionCell(null);
-    await saveReceivable(opts);
-    await saveActual(opts);
-  };
-
-  const flushCommissionCellEdit = (kind: HalfDraftKind, colKey: string, field: 'usdH1' | 'usdH2') => {
+  const flushCommissionCellEdit = (kind: HalfDraftKind) => {
     setActiveCommissionCell(null);
     if (!canEdit) return;
-    if (!isHalfManual(colKey, field, kind)) return;
-    void saveCommissionDrafts({ silent: true });
+    const draft = draftFor(kind);
+    if (halfDraftsEqual(draft, persistedFor(kind))) return;
+    void saveCommissionKind(kind, { silent: true, toast: true });
   };
 
   const renderTextCells = (field: 'payeeName' | 'bankAccount') => (

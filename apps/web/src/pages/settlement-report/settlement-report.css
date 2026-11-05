@@ -280,8 +280,13 @@
   cursor: pointer;
 }
 
-.settlement-report-classic .sr-cell-clickable:hover {
+.settlement-report-classic .sr-cell-clickable:hover:not(.sr-cell-manual) {
   background: #e8f4ff !important;
+  box-shadow: inset 0 0 0 1px #42a5f5;
+}
+
+.settlement-report-classic .sr-cell-clickable.sr-cell-manual:hover {
+  background: #e3f2fd !important;
   box-shadow: inset 0 0 0 1px #42a5f5;
 }
 
@@ -331,9 +336,19 @@
   background: #e3f2fd !important;
 }
 
+.settlement-report-classic .sr-cell-manual .sr-money-usd {
+  color: #1976d2;
+  font-weight: 500;
+}
+
 .settlement-report-classic .sr-cell-editable {
   box-shadow: inset 0 0 0 2px #1976d2;
   background: #fff !important;
+}
+
+.settlement-report-classic .sr-cell-editable.sr-cell-manual {
+  background: #e3f2fd !important;
+  box-shadow: inset 0 0 0 2px #42a5f5;
 }
 
 .settlement-report-classic .sr-cell-edit-wrap .ant-input-number {

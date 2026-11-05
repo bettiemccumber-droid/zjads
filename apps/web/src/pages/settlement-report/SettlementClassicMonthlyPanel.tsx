@@ -10,12 +10,18 @@ import {
   Select,
   Space,
   Spin,
+  Tooltip,
   message,
 } from 'antd';
 import type { MenuProps } from 'antd';
 import type { Dayjs } from 'dayjs';
 import dayjs from 'dayjs';
-import { DownloadOutlined, ReloadOutlined, SaveOutlined } from '@ant-design/icons';
+import {
+  DownloadOutlined,
+  ReloadOutlined,
+  SaveOutlined,
+  UndoOutlined,
+} from '@ant-design/icons';
 import { Link } from 'react-router-dom';
 import { api, type ApiResult } from '../../api/client';
 import { exportSettlementMonthlyExcel } from '../../utils/exportSettlementMonthly';
@@ -134,7 +140,9 @@ export default function SettlementClassicMonthlyPanel({
   const [syncingFs, setSyncingFs] = useState(false);
   const [syncingCg, setSyncingCg] = useState(false);
   const [syncingAll, setSyncingAll] = useState(false);
-  const [lastSyncSummary, setLastSyncSummary] = useState<string | null>(null);
+  const [generatedAt, setGeneratedAt] = useState<string>('');
+  const [systemReceivable, setSystemReceivable] = useState<CommissionHalfDraft>({});
+  const [systemActual, setSystemActual] = useState<CommissionHalfDraft>({});
   const [commissionEditMode, setCommissionEditMode] = useState(false);
   const [adSpendDraft, setAdSpendDraft] = useState<AdSpendDraftLine[]>([]);
   const [rebateDraft, setRebateDraft] = useState(0);
@@ -163,6 +171,7 @@ export default function SettlementClassicMonthlyPanel({
         return;
       }
       setReport(data.data);
+      setGeneratedAt(dayjs().format('YYYY-MM-DD HH:mm:ss'));
     } catch {
       message.error('加载结算报表失败');
     } finally {
@@ -188,6 +197,8 @@ export default function SettlementClassicMonthlyPanel({
     }
     setActualDraft(actual);
     setReceivableDraft(receivable);
+    setSystemActual(JSON.parse(JSON.stringify(actual)) as CommissionHalfDraft);
+    setSystemReceivable(JSON.parse(JSON.stringify(receivable)) as CommissionHalfDraft);
     setAdSpendDraft(
       report.adSpendRows.map((r) => ({
         adSourceId: r.adSourceId,
@@ -413,12 +424,9 @@ export default function SettlementClassicMonthlyPanel({
             .map((f) => `${f.displayName}${f.error ? ` — ${f.error}` : ''}`)
             .join('\n');
           message.warning({
-            content: `${label} 部分账号未写入（见详情）`,
+            content: `${label} 部分账号未写入：\n${detail}`,
             duration: 12,
           });
-          setLastSyncSummary((prev) =>
-            [prev, `${label}:`, ...detail.split('\n')].filter(Boolean).join('\n'),
-          );
         } else {
           message.success(`已同步 ${data.data.synced.length} 个 ${label} 账号`);
         }
@@ -434,7 +442,6 @@ export default function SettlementClassicMonthlyPanel({
   const syncAllPlatformPayments = async () => {
     if (!report?.canEditActualCommission) return;
     setSyncingAll(true);
-    setLastSyncSummary(null);
     try {
       const body: { month: string; userId?: string } = { month: monthStr };
       if (effectiveScopeUserId != null) {
@@ -461,19 +468,12 @@ export default function SettlementClassicMonthlyPanel({
         message.error(data.message || '同步失败');
         return;
       }
-      const parts: string[] = [];
-      for (const p of data.data.platforms) {
-        parts.push(`${p.platform}: 成功 ${p.synced}${p.failed ? `，失败 ${p.failed}` : ''}`);
-        for (const line of p.lines) {
-          const amt = `应收 $${line.receivableUsd.toFixed(2)} / 实收 $${line.actualUsd.toFixed(2)}`;
-          parts.push(
-            line.error
-              ? `  · ${line.displayName}: ${amt} — ${line.error}`
-              : `  · ${line.displayName}: ${amt}`,
-          );
-        }
+      const failedLines = data.data.platforms.flatMap((p) =>
+        p.lines.filter((l) => l.error).map((l) => `${p.platform}/${l.displayName}: ${l.error}`),
+      );
+      if (failedLines.length) {
+        message.warning({ content: failedLines.slice(0, 3).join('\n'), duration: 10 });
       }
-      setLastSyncSummary(parts.join('\n'));
       message.success('全部平台打款已同步，正在刷新报表…');
       await loadReport();
     } catch {
@@ -631,6 +631,31 @@ export default function SettlementClassicMonthlyPanel({
     return rowMap.get(rowKey)?.totalUsd ?? 0;
   };
 
+  const systemDraftFor = (kind: HalfDraftKind) =>
+    kind === 'actual' ? systemActual : systemReceivable;
+
+  const isHalfManual = (colKey: string, field: 'usdH1' | 'usdH2', kind: HalfDraftKind) => {
+    const draft = draftFor(kind)[colKey]?.[field] ?? 0;
+    const sys = systemDraftFor(kind)[colKey]?.[field] ?? 0;
+    return Math.abs(draft - sys) > 0.0001;
+  };
+
+  const resetCommissionHalf = (
+    colKey: string,
+    field: 'usdH1' | 'usdH2',
+    kind: HalfDraftKind,
+  ) => {
+    const setDraft = setDraftFor(kind);
+    const sys = systemDraftFor(kind)[colKey] ?? { usdH1: 0, usdH2: 0 };
+    setDraft((prev) => ({
+      ...prev,
+      [colKey]: {
+        usdH1: field === 'usdH1' ? sys.usdH1 : (prev[colKey]?.usdH1 ?? 0),
+        usdH2: field === 'usdH2' ? sys.usdH2 : (prev[colKey]?.usdH2 ?? 0),
+      },
+    }));
+  };
+
   const renderMoneyCells = (
     rowKey: string,
     editableHalf?: 'h1' | 'h2',
@@ -647,38 +672,53 @@ export default function SettlementClassicMonthlyPanel({
           const draft = draftFor(kind);
           const setDraft = setDraftFor(kind);
           const field = editableHalf === 'h1' ? 'usdH1' : 'usdH2';
-          const cellClass = isEdit
-            ? 'sr-cell-editable'
-            : isCommissionRow
-              ? 'sr-cell-readonly'
-              : undefined;
+          const manual =
+            isEdit &&
+            editableHalf &&
+            isCommissionRow &&
+            isHalfManual(c.key, field, kind);
+          const cellClass = [
+            isEdit ? 'sr-cell-editable' : isCommissionRow ? 'sr-cell-readonly' : undefined,
+            manual ? 'sr-cell-manual' : undefined,
+          ]
+            .filter(Boolean)
+            .join(' ');
           return (
             <Fragment key={c.key}>
               <td align="right" className={cellClass}>
                 {isEdit ? (
-                  <InputNumber
-                    min={0}
-                    step={0.01}
-                    precision={2}
-                    size="small"
-                    value={draft[c.key]?.[field] ?? 0}
-                    onChange={(v) =>
-                      setDraft((prev) => ({
-                        ...prev,
-                        [c.key]: {
-                          usdH1: prev[c.key]?.usdH1 ?? 0,
-                          usdH2: prev[c.key]?.usdH2 ?? 0,
-                          [field]: typeof v === 'number' ? v : 0,
-                        },
-                      }))
-                    }
-                    style={{ width: '100%' }}
-                  />
+                  <div className="sr-cell-edit-wrap">
+                    <InputNumber
+                      min={0}
+                      step={0.01}
+                      precision={2}
+                      size="small"
+                      value={draft[c.key]?.[field] ?? 0}
+                      onChange={(v) =>
+                        setDraft((prev) => ({
+                          ...prev,
+                          [c.key]: {
+                            usdH1: prev[c.key]?.usdH1 ?? 0,
+                            usdH2: prev[c.key]?.usdH2 ?? 0,
+                            [field]: typeof v === 'number' ? v : 0,
+                          },
+                        }))
+                      }
+                    />
+                    {manual && (
+                      <Tooltip title="清除手填，恢复系统计算值">
+                        <UndoOutlined
+                          className="sr-cell-reset"
+                          onClick={() => resetCommissionHalf(c.key, field, kind)}
+                        />
+                      </Tooltip>
+                    )}
+                  </div>
                 ) : (
                   <span className="sr-money-usd">{fmtUsd(usd)}</span>
                 )}
               </td>
-              <td align="right" className={isEdit ? 'sr-cell-editable' : undefined}>
+              <td align="right" className={cellClass || undefined}>
                 <span className="sr-money-cny">
                   {fmtCny(isEdit ? (draft[c.key]?.[field] ?? 0) : usd, rate)}
                 </span>
@@ -686,10 +726,10 @@ export default function SettlementClassicMonthlyPanel({
             </Fragment>
           );
         })}
-        <td align="right" className="sr-total-col">
+        <td align="right" className="sr-total-col sr-sticky-right sr-sticky-right-usd">
           <span className="sr-money-usd">{fmtUsd(rowTotal(rowKey, kind))}</span>
         </td>
-        <td align="right" className="sr-total-col">
+        <td align="right" className="sr-total-col sr-sticky-right sr-sticky-right-cny">
           <span className="sr-money-cny">{fmtCny(rowTotal(rowKey, kind), rate)}</span>
         </td>
       </>
@@ -753,38 +793,20 @@ export default function SettlementClassicMonthlyPanel({
           <Button icon={<ReloadOutlined />} onClick={() => void loadReport(true)} loading={loading}>
             刷新
           </Button>
-          {canEdit && (
-            <Button
-              loading={syncingAll}
-              onClick={() => void syncAllPlatformPayments()}
-              type="default"
-            >
-              同步打款（约 1–10 分钟）
-            </Button>
-          )}
           <Button type="primary" icon={<DownloadOutlined />} onClick={handleExport} disabled={!report}>
             导出 Excel
           </Button>
         </Space>
       </div>
 
-      {lastSyncSummary && (
-        <Alert
-          type="info"
-          showIcon
-          closable
-          onClose={() => setLastSyncSummary(null)}
-          message="最近一次同步打款"
-          description={<pre className="sr-sync-summary">{lastSyncSummary}</pre>}
-          style={{ marginBottom: 8 }}
-        />
-      )}
-
       {report && (
-        <div
-          className={`sr-rate-bar ${report.usdCnyRateLive === false ? 'sr-rate-bar-fallback' : 'sr-rate-bar-live'}`}
-        >
-          {report.rateNote}
+        <div className="sr-meta-row">
+          <div
+            className={`sr-rate-bar ${report.usdCnyRateLive === false ? 'sr-rate-bar-fallback' : 'sr-rate-bar-live'}`}
+          >
+            {report.rateNote}
+          </div>
+          {generatedAt && <span className="sr-generated-at">生成于 {generatedAt}</span>}
         </div>
       )}
 
@@ -821,7 +843,7 @@ export default function SettlementClassicMonthlyPanel({
                     <th>MCC</th>
                     <th>币种</th>
                     <th>库内广告费(原币)</th>
-                    <th>补充金额($)</th>
+                    <th>补差额($)</th>
                     <th>广告费(原币,可改)</th>
                     <th>折美金($)</th>
                   </tr>
@@ -846,7 +868,9 @@ export default function SettlementClassicMonthlyPanel({
                               <span className="sr-mcc-tag sr-mcc-tag-muted">待导入拆分</span>
                             )}
                         </td>
-                        <td>{r.currency === 'USD' ? '美金' : r.currency}</td>
+                        <td>
+                          <span className="sr-currency-tag">{r.currency === 'USD' ? '美金' : r.currency}</span>
+                        </td>
                         <td align="right">
                           <span className="sr-money-usd">{fmtUsd(library)}</span>
                         </td>
@@ -906,9 +930,11 @@ export default function SettlementClassicMonthlyPanel({
                 {report && (
                   <tfoot>
                     <tr>
-                      <td colSpan={2}>总广告费（$）</td>
-                      <td align="right">{fmtUsd(adSpendTotalDraft)}</td>
-                      <td>应返广告费($)</td>
+                      <td colSpan={2}>广告费合计</td>
+                      <td align="right">
+                        <span className="sr-money-usd">{fmtUsd(adSpendTotalDraft)}</span>
+                      </td>
+                      <td>核算广告费</td>
                       <td align="right">
                         {canEditAdSpend ? (
                           <InputNumber
@@ -920,10 +946,10 @@ export default function SettlementClassicMonthlyPanel({
                             onChange={(v) => setRebateDraft(Number(v ?? 0))}
                           />
                         ) : (
-                          fmtUsd(rebateDraft)
+                          <span className="sr-money-usd">{fmtUsd(rebateDraft)}</span>
                         )}
                       </td>
-                      <td align="center">在跑广告数：{report.activeCampaignCount}</td>
+                      <td align="center">在投广告数 {report.activeCampaignCount}</td>
                     </tr>
                   </tfoot>
                 )}
@@ -1038,7 +1064,7 @@ export default function SettlementClassicMonthlyPanel({
                 <table className="sr-table sr-matrix">
                   <thead>
                     <tr>
-                      <th colSpan={2} rowSpan={2} className="sr-label">
+                      <th colSpan={2} rowSpan={2} className="sr-label sr-sticky-left">
                         项目
                       </th>
                       {cols.map((c) => (
@@ -1046,15 +1072,17 @@ export default function SettlementClassicMonthlyPanel({
                           {c.label}
                         </th>
                       ))}
-                      <th colSpan={2} rowSpan={2} className="sr-total-col">
+                      <th colSpan={1} rowSpan={2} className="sr-total-col sr-sticky-right sr-sticky-right-usd">
                         佣金合计
+                      </th>
+                      <th colSpan={1} rowSpan={2} className="sr-total-col sr-sticky-right sr-sticky-right-cny">
+                        &nbsp;
                       </th>
                     </tr>
                     <tr>
                       {cols.map((c) => (
                         <th key={`${c.key}-acc`} colSpan={2}>
-                          <div className="sr-sub">{c.platformName || '平台'}</div>
-                          <div className="sr-account-hint">{c.accountHint || '—'}</div>
+                          <div className="sr-account-hint">{c.accountHint || c.platformName || '—'}</div>
                         </th>
                       ))}
                     </tr>
@@ -1070,102 +1098,93 @@ export default function SettlementClassicMonthlyPanel({
                   </thead>
                   <tbody>
                     <tr>
-                      <td colSpan={2} className="sr-label">
-                        账期佣金 ($)
+                      <td colSpan={2} className="sr-label sr-sticky-left">
+                        账期佣金 (美金)
                       </td>
                       {renderMoneyCells('book')}
                     </tr>
                     <tr>
-                      <td colSpan={2} className="sr-label">
-                        失效佣金 ($)
+                      <td colSpan={2} className="sr-label sr-sticky-left">
+                        失效佣金 (美金)
                       </td>
                       {renderMoneyCells('rejected')}
                     </tr>
                     <tr>
-                      <td rowSpan={3} className="sr-group">
+                      <td rowSpan={3} className="sr-group sr-sticky-left">
                         应收佣金
                         <br />
                         (美金)
                       </td>
-                      <td className="sr-sublabel">5日·上半月(1–15)</td>
+                      <td className="sr-sublabel sr-sticky-sub">5号 · 上半月</td>
                       {renderMoneyCells('recv_h1', 'h1', 'receivable')}
                     </tr>
                     <tr>
-                      <td className="sr-sublabel">15日·下半月(16–末)</td>
+                      <td className="sr-sublabel sr-sticky-sub">15号 · 下半月</td>
                       {renderMoneyCells('recv_h2', 'h2', 'receivable')}
                     </tr>
                     <tr>
-                      <td className="sr-sublabel">合计</td>
+                      <td className="sr-sublabel sr-sticky-sub">合计</td>
                       {renderMoneyCells('recv_total', undefined, 'receivable')}
                     </tr>
                     <tr>
-                      <td rowSpan={3} className="sr-group">
+                      <td rowSpan={3} className="sr-group sr-sticky-left">
                         实收佣金
+                        <div className="sr-sub">点击单元格手工纠正</div>
                       </td>
-                      <td className="sr-sublabel">10日·上半月</td>
+                      <td className="sr-sublabel sr-sticky-sub">10号 · 上半月</td>
                       {renderMoneyCells('actual_h1', 'h1', 'actual')}
                     </tr>
                     <tr>
-                      <td className="sr-sublabel">20日·下半月</td>
+                      <td className="sr-sublabel sr-sticky-sub">20号 · 下半月</td>
                       {renderMoneyCells('actual_h2', 'h2', 'actual')}
                     </tr>
                     <tr>
-                      <td className="sr-sublabel">合计</td>
+                      <td className="sr-sublabel sr-sticky-sub">合计</td>
                       {renderMoneyCells('actual_total', undefined, 'actual')}
                     </tr>
                     <tr>
-                      <td colSpan={2} className="sr-label">
+                      <td colSpan={2} className="sr-label sr-sticky-left">
                         收款人
                       </td>
                       {renderTextCells('payeeName')}
                     </tr>
                     <tr>
-                      <td colSpan={2} className="sr-label">
+                      <td colSpan={2} className="sr-label sr-sticky-left">
                         收款卡号
                       </td>
                       {renderTextCells('bankAccount')}
+                    </tr>
+                    <tr className="sr-profit-row">
+                      <td colSpan={2} className="sr-label sr-sticky-left">
+                        可分配利润
+                        <div className="sr-profit-sub">实收佣金 − 推广服务费</div>
+                      </td>
+                      {cols.map((c) => (
+                        <td key={`profit-${c.key}`} colSpan={2} />
+                      ))}
+                      <td align="right" className="sr-total-col sr-sticky-right sr-sticky-right-usd">
+                        <span className={`sr-money-usd ${profitClass(distributableActualUsd)}`}>
+                          {fmtUsd(distributableActualUsd)}
+                        </span>
+                      </td>
+                      <td align="right" className="sr-total-col sr-sticky-right sr-sticky-right-cny">
+                        <span className={`sr-money-cny ${profitClass(distributableActualCny)}`}>
+                          {fmtCny(distributableActualUsd, rate)}
+                        </span>
+                      </td>
                     </tr>
                   </tbody>
                 </table>
               </div>
             )}
           </Spin>
-          <p className="sr-tip" style={{ padding: '8px 16px 12px' }}>
-            账期/失效来自订单同步。应收/实收默认只读展示；需改数时点「手工调整」。后台口径：RW/LB 在途提现、LH
-            无 paid_date、PM/UI/FS/CG 用 Payment Summary。CNY 按页头汇率。收款人见{' '}
-            <Link to="/channel-accounts">平台账号</Link>。
+          <p className="sr-tip">
+            账期/失效来自订单同步。应收/实收默认只读；点「手工调整」后可改数（蓝底为已手填，↺
+            恢复系统值）。左右合计列与项目列在横滑时保持可见。同步打款在「佣金明细」内操作。CNY
+            按页头汇率。收款人见 <Link to="/channel-accounts">平台账号</Link>。
           </p>
         </div>
       </div>
-
-      {report && (
-        <div className="sr-profit-bar">
-          <div className="sr-profit-item">
-            <div className="sr-profit-label">实收佣金合计 (USD)</div>
-            <div className={`sr-profit-value ${profitClass(actualTotalUsd)}`}>
-              {fmtUsd(canEdit ? actualTotalUsd : report.actualCommissionTotalUsd)}
-            </div>
-          </div>
-          <div className="sr-profit-item sr-profit-main">
-            <div className="sr-profit-label">可分配利润（实收 − 总广告费, USD）</div>
-            <div className={`sr-profit-value ${profitClass(distributableActualUsd)}`}>
-              {fmtUsd(distributableActualUsd)}
-            </div>
-          </div>
-          <div className="sr-profit-item sr-profit-main">
-            <div className="sr-profit-label">可分配利润（CNY）</div>
-            <div className={`sr-profit-value ${profitClass(distributableActualCny)}`}>
-              {fmtCny(distributableActualUsd, rate)}
-            </div>
-          </div>
-          <div className="sr-profit-item">
-            <div className="sr-profit-label">参考 · 账面 − 广告费 (USD)</div>
-            <div className={`sr-profit-value ${profitClass(distributableBookUsd)}`}>
-              {fmtUsd(distributableBookUsd)}
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 }

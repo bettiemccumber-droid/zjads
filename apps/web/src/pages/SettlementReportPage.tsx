@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Tabs, Typography } from 'antd';
+import { Tabs } from 'antd';
 import type { Dayjs } from 'dayjs';
 import dayjs from 'dayjs';
 import { useSearchParams } from 'react-router-dom';
@@ -8,6 +8,7 @@ import { useAuth } from '../hooks/useAuth';
 import { parseScopedViewUserId } from '../utils/team-scope.util';
 import SettlementClassicMonthlyPanel from './settlement-report/SettlementClassicMonthlyPanel';
 import SettlementReportYearlyPanel from './settlement-report/SettlementReportYearlyPanel';
+import './settlement-report/settlement-report.css';
 
 interface EmployeeOption {
   id: number;
@@ -49,15 +50,10 @@ export default function SettlementReportPage() {
   }, [isAdmin, month.year()]);
 
   return (
-    <div style={{ margin: '-8px -4px 0', padding: '0 4px' }}>
-      <Typography.Title level={4} style={{ marginTop: 0, marginBottom: 4 }}>
-        结算报表
-      </Typography.Title>
-      <Typography.Paragraph type="secondary" style={{ marginBottom: 12 }}>
-        月度结算 · 广告费与佣金矩阵（样式参考竞品，数据来自本系统采集与 Sheet）
-      </Typography.Paragraph>
+    <div className="settlement-report-page">
       <Tabs
         destroyInactiveTabPane
+        className="settlement-report-tabs"
         items={[
           {
             key: 'monthly',
@@ -84,6 +80,12 @@ export default function SettlementReportPage() {
                 onScopeChange={setScopeUserId}
               />
             ),
+          },
+          {
+            key: 'bank',
+            label: '银行流水',
+            disabled: true,
+            children: null,
           },
         ]}
       />

@@ -2,12 +2,10 @@ import { ForbiddenException, Injectable } from '@nestjs/common';
 import { UserRole } from '@prisma/client';
 import {
   aggregateLinkbuxActualCommissionsForSettlement,
+  aggregateLinkbuxReceivableCommissionsForSettlement,
+  fetchLinkbuxMerchantCommissions,
   fetchLinkbuxMerchantCommissionsByPaidDate,
 } from '../collectors/linkbux-payment-details.util';
-import {
-  aggregateLinkbuxPaymentsForSettlement,
-  fetchLinkbuxPayments,
-} from '../collectors/linkbux-payments.util';
 import { AuthUser, isCompanyWideScope, resolveOwnerUserId } from '../common/ownership.util';
 import { CryptoService } from '../common/crypto.service';
 import { PrismaService } from '../prisma/prisma.service';
@@ -46,8 +44,8 @@ export class SettlementLinkbuxPaymentsSyncService {
   ) {}
 
   /**
-   * 从 LinkBux 付款历史 + Payment Details 同步 LB 列应收/实收
-   * 应收优先对齐后台 Payment in Progress / Pending 提现单金额
+   * LinkBux 仅使用官方 Payment Details API（merchant_commission）
+   * @see https://www.linkbux.com/publisher/tools/api/payment_details_api/
    */
   async syncForMonth(
     user: AuthUser,
@@ -84,58 +82,48 @@ export class SettlementLinkbuxPaymentsSyncService {
           continue;
         }
 
-        let paymentRows: Awaited<ReturnType<typeof fetchLinkbuxPayments>> = [];
-        let paymentError: string | undefined;
+        let validationRows: Awaited<ReturnType<typeof fetchLinkbuxMerchantCommissions>> = [];
+        let paidRows: Awaited<ReturnType<typeof fetchLinkbuxMerchantCommissionsByPaidDate>> = [];
+        let fetchError: string | undefined;
+
         try {
-          paymentRows = await fetchLinkbuxPayments(token, startDate, endDate);
+          validationRows = await fetchLinkbuxMerchantCommissions(token, startDate, endDate);
         } catch (err) {
-          paymentError = err instanceof Error ? err.message : String(err);
+          fetchError = err instanceof Error ? err.message : String(err);
         }
 
-        const fromPayments = aggregateLinkbuxPaymentsForSettlement(paymentRows, month);
-        /** 应收：仅付款历史 Pending/In progress（当月发起提现），不用 merchant_commission 兜底 */
-        const receivable = {
-          usdH1: fromPayments.receivableH1,
-          usdH2: fromPayments.receivableH2,
-        };
-
-        let actual = { usdH1: fromPayments.actualH1, usdH2: fromPayments.actualH2 };
-        let detailRowCount = 0;
         try {
-          const paidDetailRows = await fetchLinkbuxMerchantCommissionsByPaidDate(
-            token,
-            startDate,
-            endDate,
-          );
-          detailRowCount = paidDetailRows.length;
-          const fromDetails = aggregateLinkbuxActualCommissionsForSettlement(paidDetailRows, month);
-          if (fromDetails.actualH1 + fromDetails.actualH2 > 0) {
-            actual = { usdH1: fromDetails.actualH1, usdH2: fromDetails.actualH2 };
-          }
-        } catch (detailErr) {
-          const msg = detailErr instanceof Error ? detailErr.message : String(detailErr);
-          paymentError = paymentError ? `${paymentError}; ${msg}` : msg;
+          paidRows = await fetchLinkbuxMerchantCommissionsByPaidDate(token, startDate, endDate);
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          fetchError = fetchError ? `${fetchError}; ${msg}` : msg;
         }
 
-        const apiRowCount = paymentRows.length + detailRowCount;
-        const recvTotal = receivable.usdH1 + receivable.usdH2;
+        const receivableAgg = aggregateLinkbuxReceivableCommissionsForSettlement(
+          validationRows,
+          month,
+        );
+        const actualAgg = aggregateLinkbuxActualCommissionsForSettlement(paidRows, month);
+        const receivable = { usdH1: receivableAgg.receivableH1, usdH2: receivableAgg.receivableH2 };
+        const actual = { usdH1: actualAgg.actualH1, usdH2: actualAgg.actualH2 };
+        const apiRowCount = validationRows.length + paidRows.length;
         const aggSum =
-          receivable.usdH1 +
-          receivable.usdH2 +
-          actual.usdH1 +
-          actual.usdH2;
-        let lineError = paymentError;
-        if (recvTotal <= 0 && paymentRows.length === 0 && !lineError) {
+          receivable.usdH1 + receivable.usdH2 + actual.usdH1 + actual.usdH2;
+
+        let lineError = fetchError;
+        if (aggSum <= 0 && apiRowCount > 0) {
+          lineError = lineError ?? zeroAggregateHint(month, apiRowCount);
+        } else if (aggSum <= 0 && apiRowCount === 0) {
           lineError =
-            '未拉到 LB 付款历史：应收应对齐 Payment Summary Pending（需在 DevTools 抓 payments 的 mod/op）';
+            lineError ??
+            `${month} Payment Details 无数据（begin_date/end_date 与 paid_date 区间各查一次）`;
         }
-        if (!shouldPersistPaymentSyncLine(receivable, actual, apiRowCount)) {
-          lineError = lineError ?? zeroAggregateHint(month, apiRowCount);
-        } else if (aggSum <= 0 && apiRowCount > 0) {
-          lineError = lineError ?? zeroAggregateHint(month, apiRowCount);
-        } else {
+
+        if (shouldPersistPaymentSyncLine(receivable, actual, apiRowCount)) {
           receivableBatch[key] = receivable;
           actualBatch[key] = actual;
+        } else if (!lineError) {
+          lineError = zeroAggregateHint(month, apiRowCount);
         }
 
         synced.push({

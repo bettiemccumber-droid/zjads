@@ -127,14 +127,50 @@ export function aggregateLinkbuxActualCommissionsForSettlement(
   rows: LinkbuxMerchantCommissionRow[],
   month: string,
 ): Pick<LinkbuxPaymentHalfTotals, 'actualH1' | 'actualH2'> {
-  const full = aggregateLinkbuxCommissionsForSettlement(rows, month);
-  return { actualH1: full.actualH1, actualH2: full.actualH2 };
+  const out = { actualH1: 0, actualH2: 0 };
+  for (const row of rows) {
+    const comm = parseMoney(row.sale_comm);
+    if (comm <= 0 || !isPaid(row)) continue;
+    const paid = parseYmd(row.paid_date);
+    if (!paid || !paid.startsWith(`${month}-`)) continue;
+    const day = Number(paid.slice(8, 10));
+    if (day <= 15) out.actualH1 += comm;
+    else out.actualH2 += comm;
+  }
+  const round = (n: number) => Math.round(n * 100) / 100;
+  out.actualH1 = round(out.actualH1);
+  out.actualH2 = round(out.actualH2);
+  return out;
+}
+
+/**
+ * 仅汇总应收（官方：paid_date 为空 = 尚未付给你；按 validation 字段 settlement_date 落月）
+ * @see https://www.linkbux.com/publisher/tools/api/payment_details_api/
+ */
+export function aggregateLinkbuxReceivableCommissionsForSettlement(
+  rows: LinkbuxMerchantCommissionRow[],
+  month: string,
+): Pick<LinkbuxPaymentHalfTotals, 'receivableH1' | 'receivableH2'> {
+  const out = { receivableH1: 0, receivableH2: 0 };
+  for (const row of rows) {
+    const comm = parseMoney(row.sale_comm);
+    if (comm <= 0 || isPaid(row)) continue;
+    const settled = parseYmd(row.settlement_date);
+    if (!settled || !settled.startsWith(`${month}-`)) continue;
+    const day = Number(settled.slice(8, 10));
+    if (day <= 15) out.receivableH1 += comm;
+    else out.receivableH2 += comm;
+  }
+  const round = (n: number) => Math.round(n * 100) / 100;
+  out.receivableH1 = round(out.receivableH1);
+  out.receivableH2 = round(out.receivableH2);
+  return out;
 }
 
 /**
  * 汇总为结算报表上下半月应收/实收（USD）
  *
- * - 未打款（无 paid_date）→ 应收，按 settlement_date 落月/半月（明细兜底，与 Payment Summary 可能不一致）
+ * - 未打款（无 paid_date）→ 应收，按 settlement_date 落月/半月
  * - 已打款且 paid_date 在结算月内 → 实收，按 paid_date 落半月
  */
 export function aggregateLinkbuxCommissionsForSettlement(

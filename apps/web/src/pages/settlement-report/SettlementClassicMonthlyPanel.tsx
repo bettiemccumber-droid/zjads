@@ -3,7 +3,6 @@ import {
   Alert,
   Button,
   DatePicker,
-  Dropdown,
   Empty,
   Input,
   InputNumber,
@@ -13,7 +12,6 @@ import {
   Tooltip,
   message,
 } from 'antd';
-import type { MenuProps } from 'antd';
 import type { Dayjs } from 'dayjs';
 import dayjs from 'dayjs';
 import {
@@ -133,19 +131,9 @@ export default function SettlementClassicMonthlyPanel({
   const [receivableDraft, setReceivableDraft] = useState<CommissionHalfDraft>({});
   const [savingActual, setSavingActual] = useState(false);
   const [savingReceivable, setSavingReceivable] = useState(false);
-  const [syncingRw, setSyncingRw] = useState(false);
-  const [syncingLb, setSyncingLb] = useState(false);
-  const [syncingLh, setSyncingLh] = useState(false);
-  const [syncingPm, setSyncingPm] = useState(false);
-  const [syncingUi, setSyncingUi] = useState(false);
-  const [syncingFs, setSyncingFs] = useState(false);
-  const [syncingCg, setSyncingCg] = useState(false);
-  const [syncingAll, setSyncingAll] = useState(false);
   const [generatedAt, setGeneratedAt] = useState<string>('');
   const [systemReceivable, setSystemReceivable] = useState<CommissionHalfDraft>({});
   const [systemActual, setSystemActual] = useState<CommissionHalfDraft>({});
-  /** 对标站「手工调整」开关；开启后可点击应收/实收单元格编辑 */
-  const [manualAdjustMode, setManualAdjustMode] = useState(false);
   /** 格式 kind:colKey:usdH1|usdH2 */
   const [activeCommissionCell, setActiveCommissionCell] = useState<string | null>(null);
   const [adSpendDraft, setAdSpendDraft] = useState<AdSpendDraftLine[]>([]);
@@ -267,7 +255,7 @@ export default function SettlementClassicMonthlyPanel({
     );
   };
 
-  const savePayoutInfo = async () => {
+  const savePayoutInfo = async (opts?: { silent?: boolean }) => {
     if (!canEditPayout || !report) return;
     setSavingPayout(true);
     try {
@@ -288,8 +276,10 @@ export default function SettlementClassicMonthlyPanel({
         message.error(data.message || '保存失败');
         return;
       }
-      message.success('收款信息已保存');
-      await loadReport();
+      if (!opts?.silent) {
+        message.success('收款信息已保存');
+        await loadReport();
+      }
     } catch {
       message.error('保存收款信息失败');
     } finally {
@@ -332,162 +322,7 @@ export default function SettlementClassicMonthlyPanel({
     }
   };
 
-  const paymentSyncConfig = {
-    rewardoo: {
-      path: '/reports/settlement-monthly/sync-rewardoo-payments',
-      label: 'Rewardoo',
-      short: 'RW',
-    },
-    linkbux: {
-      path: '/reports/settlement-monthly/sync-linkbux-payments',
-      label: 'LinkBux',
-      short: 'LB',
-    },
-    linkhaitao: {
-      path: '/reports/settlement-monthly/sync-linkhaitao-payments',
-      label: 'LinkHaitao',
-      short: 'LH',
-    },
-    partnermatic: {
-      path: '/reports/settlement-monthly/sync-partnermatic-payments',
-      label: 'Partnermatic',
-      short: 'PM',
-    },
-    ultrainfluence: {
-      path: '/reports/settlement-monthly/sync-ultrainfluence-payments',
-      label: 'UltraInfluence',
-      short: 'UI',
-    },
-    famesta: {
-      path: '/reports/settlement-monthly/sync-famesta-payments',
-      label: 'Famesta',
-      short: 'FS',
-    },
-    collabglow: {
-      path: '/reports/settlement-monthly/sync-collabglow-payments',
-      label: 'CollabGlow',
-      short: 'CG',
-    },
-  } as const;
-
-  type PaymentSyncLine = {
-    channelAccountId?: number;
-    displayName: string;
-    error?: string;
-    receivable?: { usdH1: number; usdH2: number };
-    actual?: { usdH1: number; usdH2: number };
-  };
-
-  const applySyncLinesToDraft = (lines: PaymentSyncLine[]) => {
-    setReceivableDraft((prev) => {
-      const next = { ...prev };
-      for (const line of lines) {
-        if (line.channelAccountId == null || !line.receivable) continue;
-        next[String(line.channelAccountId)] = line.receivable;
-      }
-      return next;
-    });
-    setActualDraft((prev) => {
-      const next = { ...prev };
-      for (const line of lines) {
-        if (line.channelAccountId == null || !line.actual) continue;
-        next[String(line.channelAccountId)] = line.actual;
-      }
-      return next;
-    });
-  };
-
-  const syncPlatformPayments = async (
-    platform: keyof typeof paymentSyncConfig,
-    setLoading: (v: boolean) => void,
-    opts?: { quiet?: boolean },
-  ) => {
-    if (!report?.canEditActualCommission) return;
-    setLoading(true);
-    const { path, label, short } = paymentSyncConfig[platform];
-    try {
-      const body: { month: string; userId?: string } = { month: monthStr };
-      if (effectiveScopeUserId != null) {
-        body.userId = String(effectiveScopeUserId);
-      }
-      const { data } = await api.post<
-        ApiResult<{
-          month: string;
-          synced: PaymentSyncLine[];
-        }>
-      >(path, body, { timeout: 600_000 });
-      if (!data.success) {
-        message.error(data.message || '同步失败');
-        return;
-      }
-      applySyncLinesToDraft(data.data.synced);
-      const failed = data.data.synced.filter((s) => s.error);
-      if (!opts?.quiet) {
-        if (failed.length) {
-          const detail = failed
-            .map((f) => `${f.displayName}${f.error ? ` — ${f.error}` : ''}`)
-            .join('\n');
-          message.warning({
-            content: `${label} 部分账号未写入：\n${detail}`,
-            duration: 12,
-          });
-        } else {
-          message.success(`已同步 ${data.data.synced.length} 个 ${label} 账号`);
-        }
-      }
-      await loadReport();
-    } catch {
-      message.error(`同步 ${short} 打款失败`);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const syncAllPlatformPayments = async () => {
-    if (!report?.canEditActualCommission) return;
-    setSyncingAll(true);
-    try {
-      const body: { month: string; userId?: string } = { month: monthStr };
-      if (effectiveScopeUserId != null) {
-        body.userId = String(effectiveScopeUserId);
-      }
-      const { data } = await api.post<
-        ApiResult<{
-          month: string;
-          platforms: Array<{
-            platform: string;
-            synced: number;
-            failed: number;
-            lines: Array<{
-              displayName: string;
-              affiliateAlias: string;
-              receivableUsd: number;
-              actualUsd: number;
-              error?: string;
-            }>;
-          }>;
-        }>
-      >('/reports/settlement-monthly/sync-all-payments', body, { timeout: 600_000 });
-      if (!data.success) {
-        message.error(data.message || '同步失败');
-        return;
-      }
-      const failedLines = data.data.platforms.flatMap((p) =>
-        p.lines.filter((l) => l.error).map((l) => `${p.platform}/${l.displayName}: ${l.error}`),
-      );
-      if (failedLines.length) {
-        message.warning({ content: failedLines.slice(0, 3).join('\n'), duration: 10 });
-      }
-      message.success('全部平台打款已同步，正在刷新报表…');
-      await loadReport();
-    } catch {
-      message.error('同步全部平台打款超时或失败，请稍后只读刷新查看是否已部分写入');
-    } finally {
-      setSyncingAll(false);
-    }
-  };
-
-  const saveReceivable = async () => {
+  const saveReceivable = async (opts?: { silent?: boolean }) => {
     if (!report?.canEditActualCommission) return;
     setSavingReceivable(true);
     try {
@@ -508,18 +343,24 @@ export default function SettlementClassicMonthlyPanel({
       );
       if (!data.success) {
         message.error(data.message || '保存失败');
-        return;
+        return false;
       }
-      message.success('应收佣金已保存');
-      await loadReport();
+      if (!opts?.silent) {
+        message.success('应收佣金已保存');
+        await loadReport();
+      } else {
+        setSystemReceivable(JSON.parse(JSON.stringify(receivableDraft)) as CommissionHalfDraft);
+      }
+      return true;
     } catch {
       message.error('保存应收佣金失败');
+      return false;
     } finally {
       setSavingReceivable(false);
     }
   };
 
-  const saveActual = async () => {
+  const saveActual = async (opts?: { silent?: boolean }) => {
     if (!report?.canEditActualCommission) return;
     setSavingActual(true);
     try {
@@ -540,12 +381,18 @@ export default function SettlementClassicMonthlyPanel({
       );
       if (!data.success) {
         message.error(data.message || '保存失败');
-        return;
+        return false;
       }
-      message.success('实收佣金已保存');
-      await loadReport();
+      if (!opts?.silent) {
+        message.success('实收佣金已保存');
+        await loadReport();
+      } else {
+        setSystemActual(JSON.parse(JSON.stringify(actualDraft)) as CommissionHalfDraft);
+      }
+      return true;
     } catch {
       message.error('保存实收佣金失败');
+      return false;
     } finally {
       setSavingActual(false);
     }
@@ -714,7 +561,8 @@ export default function SettlementClassicMonthlyPanel({
               },
             }))
           }
-          onBlur={() => setActiveCommissionCell(null)}
+          onBlur={() => flushCommissionCellEdit(kind, cKey, field)}
+          disabled={savingReceivable || savingActual}
         />
       </div>
     ) : (
@@ -838,18 +686,17 @@ export default function SettlementClassicMonthlyPanel({
     );
   };
 
-  const saveCommissionDrafts = async () => {
+  const saveCommissionDrafts = async (opts?: { silent?: boolean }) => {
     setActiveCommissionCell(null);
-    await saveReceivable();
-    await saveActual();
-    message.success('应收/实收已保存');
+    await saveReceivable(opts);
+    await saveActual(opts);
   };
 
-  const toggleManualAdjust = () => {
-    setManualAdjustMode((v) => !v);
-    if (manualAdjustMode) {
-      void saveCommissionDrafts();
-    }
+  const flushCommissionCellEdit = (kind: HalfDraftKind, colKey: string, field: 'usdH1' | 'usdH2') => {
+    setActiveCommissionCell(null);
+    if (!canEdit) return;
+    if (!isHalfManual(colKey, field, kind)) return;
+    void saveCommissionDrafts({ silent: true });
   };
 
   const renderTextCells = (field: 'payeeName' | 'bankAccount') => (
@@ -874,6 +721,8 @@ export default function SettlementClassicMonthlyPanel({
                     },
                   }))
                 }
+                onBlur={() => void savePayoutInfo({ silent: true })}
+                disabled={savingPayout}
               />
             ) : (
               val || '—'
@@ -1076,70 +925,8 @@ export default function SettlementClassicMonthlyPanel({
       </div>
 
       <div className="sr-section">
-        <div className="sr-section-head">
+        <div className="sr-section-head sr-section-head-title-only">
           <h3>佣金明细</h3>
-          {(canEdit || canEditPayout) && (
-            <Space size="small" wrap>
-              {canEdit && (
-                <>
-                  <Dropdown
-                    menu={{
-                      items: [
-                        {
-                          key: 'all',
-                          label: '全部平台',
-                          onClick: () => void syncAllPlatformPayments(),
-                        },
-                        { type: 'divider' },
-                        ...(
-                          Object.entries(paymentSyncConfig) as [
-                            keyof typeof paymentSyncConfig,
-                            (typeof paymentSyncConfig)[keyof typeof paymentSyncConfig],
-                          ][]
-                        ).map(([key, cfg]) => ({
-                          key,
-                          label: `仅 ${cfg.short}`,
-                          onClick: () => {
-                            const setters = {
-                              rewardoo: setSyncingRw,
-                              linkbux: setSyncingLb,
-                              linkhaitao: setSyncingLh,
-                              partnermatic: setSyncingPm,
-                              ultrainfluence: setSyncingUi,
-                              famesta: setSyncingFs,
-                              collabglow: setSyncingCg,
-                            } as const;
-                            void syncPlatformPayments(key, setters[key]);
-                          },
-                        })),
-                      ] as MenuProps['items'],
-                    }}
-                  >
-                    <Button
-                      size="small"
-                      className="sr-btn-sync-data"
-                      loading={syncingAll || syncingRw || syncingLb || syncingLh || syncingPm || syncingUi || syncingFs || syncingCg}
-                    >
-                      同步打款数据
-                    </Button>
-                  </Dropdown>
-                  <Button size="small" onClick={() => toggleManualAdjust()}>
-                    {manualAdjustMode ? '完成手工调整' : '手工调整'}
-                  </Button>
-                </>
-              )}
-              {canEditPayout && (
-                <Button
-                  size="small"
-                  icon={<SaveOutlined />}
-                  loading={savingPayout}
-                  onClick={() => void savePayoutInfo()}
-                >
-                  保存收款信息
-                </Button>
-              )}
-            </Space>
-          )}
         </div>
         <div className="sr-section-body">
           <Spin spinning={loading}>
@@ -1149,7 +936,7 @@ export default function SettlementClassicMonthlyPanel({
                 showIcon
                 style={{ margin: '12px 16px 0' }}
                 message="全公司视图"
-                description="各列应收/实收来自各员工已同步或保存的数据。按员工同步时请先在上方选择该员工，或在此视图使用「同步打款数据 → 全部平台」。"
+                description="各列应收/实收来自各员工已保存的数据。按员工查看时请先在上方选择该员工。"
               />
             )}
             {!cols.length ? (
@@ -1277,8 +1064,8 @@ export default function SettlementClassicMonthlyPanel({
             )}
           </Spin>
           <p className="sr-tip">
-            账期/失效来自订单同步。应收/实收：鼠标悬停 USD 单元格出现铅笔与恢复图标，点击改数（蓝底为已手填）。
-            改完点「完成手工调整」写入应收/实收。实收列 USD/CNY；账期/应收仅美金。CNY 按页头汇率。收款人见{' '}
+            账期/失效来自订单同步。应收/实收：悬停 USD 单元格可点选编辑，失焦自动保存（蓝底为手填，↺ 恢复系统值）。
+            实收区 USD/CNY；账期/应收仅美金。CNY 按页头汇率。收款人见{' '}
             <Link to="/channel-accounts">平台账号</Link>。
           </p>
         </div>

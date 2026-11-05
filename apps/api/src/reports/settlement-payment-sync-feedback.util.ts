@@ -34,5 +34,5 @@ export function linkbuxZeroAggregateHint(month: string, apiRowCount: number): st
   if (apiRowCount <= 0) {
     return `${month} Payment Details 无返回行（validation 与 paid_date 各查一次）`;
   }
-  return `${apiRowCount} 条 Payment Details 未计入 ${month}（settlement_date/paid_date 不在该月、金额为 0，或无 payment_id 的在途行）`;
+  return `${apiRowCount} 条 API 数据未计入 ${month}（明细 settlement/paid 不在该月；或仅为文档式历史行。应收应对齐付款历史 Pending 整笔，实收看 paid_date）`;
 }

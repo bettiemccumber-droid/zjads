@@ -164,6 +164,42 @@ export async function fetchLinkbuxMerchantCommissions(
 }
 
 /**
+ * 按 payment_id 拉整笔付款下的商家明细（官方：payment_id 与 begin/end 二选一）
+ * @see https://www.linkbux.com/publisher/tools/api/payment_details_api/
+ */
+export async function fetchLinkbuxMerchantCommissionsByPaymentId(
+  token: string,
+  paymentId: string | number,
+): Promise<LinkbuxMerchantCommissionRow[]> {
+  await throttleLbRequest();
+  const { data } = await axios.get(LB_API, {
+    params: {
+      mod: 'settlement',
+      op: 'merchant_commission',
+      token: token.trim(),
+      payment_id: String(paymentId).trim(),
+      type: 'json',
+    },
+    timeout: 120000,
+    validateStatus: () => true,
+  });
+  return parseLbSettlementList(data);
+}
+
+/** 从明细行收集待拉取的 payment_id（在途或未付批次） */
+export function collectLinkbuxPaymentIdsFromCommissions(
+  rows: LinkbuxMerchantCommissionRow[],
+): string[] {
+  const ids = new Set<string>();
+  for (const row of rows) {
+    if (!hasPendingPaymentId(row)) continue;
+    if (isPaid(row)) continue;
+    ids.add(String(row.payment_id).trim());
+  }
+  return [...ids];
+}
+
+/**
  * Payment Details API：按 paid_date 区间拉已付明细。
  * LinkBux 实测：仅 paid_date_begin/end 会 1003，须同时带 begin_date/end_date（validation 区间）。
  */
@@ -286,4 +322,17 @@ export function aggregateLinkbuxCommissionsForSettlement(
   out.actualH1 = round(out.actualH1);
   out.actualH2 = round(out.actualH2);
   return out;
+}
+
+/**
+ * 合并应收上下半月：优先取合计更大的一侧（付款历史整笔 vs 明细汇总）
+ */
+export function pickLinkbuxReceivableHalves(
+  commission: Pick<LinkbuxPaymentHalfTotals, 'receivableH1' | 'receivableH2'>,
+  paymentHistory: Pick<LinkbuxPaymentHalfTotals, 'receivableH1' | 'receivableH2'>,
+): Pick<LinkbuxPaymentHalfTotals, 'receivableH1' | 'receivableH2'> {
+  const sumA = commission.receivableH1 + commission.receivableH2;
+  const sumB = paymentHistory.receivableH1 + paymentHistory.receivableH2;
+  if (sumB > sumA) return { ...paymentHistory };
+  return { ...commission };
 }

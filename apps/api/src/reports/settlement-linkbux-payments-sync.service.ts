@@ -3,11 +3,20 @@ import { UserRole } from '@prisma/client';
 import {
   aggregateLinkbuxActualCommissionsForSettlement,
   aggregateLinkbuxReceivableCommissionsForSettlement,
+  collectLinkbuxPaymentIdsFromCommissions,
   dedupeLinkbuxMerchantCommissionRows,
   fetchLinkbuxMerchantCommissions,
   fetchLinkbuxMerchantCommissionsByPaidDate,
+  fetchLinkbuxMerchantCommissionsByPaymentId,
   linkbuxValidationBeginDate,
+  pickLinkbuxReceivableHalves,
 } from '../collectors/linkbux-payment-details.util';
+import {
+  aggregateLinkbuxPaymentsForSettlement,
+  fetchLinkbuxPayments,
+  parseLinkbuxPaymentDate,
+  type LinkbuxPaymentRow,
+} from '../collectors/linkbux-payments.util';
 import { AuthUser, isCompanyWideScope, resolveOwnerUserId } from '../common/ownership.util';
 import { CryptoService } from '../common/crypto.service';
 import { PrismaService } from '../prisma/prisma.service';
@@ -46,7 +55,7 @@ export class SettlementLinkbuxPaymentsSyncService {
   ) {}
 
   /**
-   * LinkBux 仅使用官方 Payment Details API（merchant_commission）
+   * LinkBux：实收走 Payment Details（paid_date）；应收优先付款历史 Pending 整笔，明细作补充（含 payment_id 拉全批次）
    * @see https://www.linkbux.com/publisher/tools/api/payment_details_api/
    */
   async syncForMonth(
@@ -87,6 +96,7 @@ export class SettlementLinkbuxPaymentsSyncService {
 
         let validationRows: Awaited<ReturnType<typeof fetchLinkbuxMerchantCommissions>> = [];
         let paidRows: Awaited<ReturnType<typeof fetchLinkbuxMerchantCommissionsByPaidDate>> = [];
+        let paymentHistoryRows: LinkbuxPaymentRow[] = [];
         let fetchError: string | undefined;
 
         try {
@@ -112,18 +122,66 @@ export class SettlementLinkbuxPaymentsSyncService {
           fetchError = fetchError ? `${fetchError}; ${msg}` : msg;
         }
 
-        const receivableAgg = aggregateLinkbuxReceivableCommissionsForSettlement(
-          validationRows,
-          month,
-        );
-        const actualAgg = aggregateLinkbuxActualCommissionsForSettlement(paidRows, month);
-        const receivable = { usdH1: receivableAgg.receivableH1, usdH2: receivableAgg.receivableH2 };
-        const actual = { usdH1: actualAgg.actualH1, usdH2: actualAgg.actualH2 };
+        try {
+          paymentHistoryRows = await fetchLinkbuxPayments(token, startDate, endDate);
+        } catch {
+          paymentHistoryRows = [];
+        }
+
         const mergedRows = dedupeLinkbuxMerchantCommissionRows([
           ...validationRows,
           ...paidRows,
         ]);
-        const apiRowCount = mergedRows.length;
+
+        const paymentIds = new Set<string>(collectLinkbuxPaymentIdsFromCommissions(mergedRows));
+        for (const pay of paymentHistoryRows) {
+          const pid = pay.payment_id;
+          if (pid == null || String(pid).trim() === '') continue;
+          const status = String(pay.status ?? '').toLowerCase();
+          const isPending =
+            status.includes('pending') ||
+            status.includes('progress') ||
+            status.includes('processing');
+          if (!isPending) continue;
+          const req = parseLinkbuxPaymentDate(pay, false);
+          if (req?.startsWith(`${month}-`)) paymentIds.add(String(pid).trim());
+        }
+
+        const paymentIdRows: Awaited<ReturnType<typeof fetchLinkbuxMerchantCommissionsByPaymentId>> =
+          [];
+        for (const pid of paymentIds) {
+          try {
+            paymentIdRows.push(...(await fetchLinkbuxMerchantCommissionsByPaymentId(token, pid)));
+          } catch (err) {
+            const msg = err instanceof Error ? err.message : String(err);
+            fetchError = fetchError ? `${fetchError}; payment_id ${pid}: ${msg}` : msg;
+          }
+        }
+
+        const receivableSourceRows = dedupeLinkbuxMerchantCommissionRows([
+          ...validationRows,
+          ...paymentIdRows,
+        ]);
+        const receivableAgg = aggregateLinkbuxReceivableCommissionsForSettlement(
+          receivableSourceRows,
+          month,
+        );
+        const paymentHistAgg = aggregateLinkbuxPaymentsForSettlement(paymentHistoryRows, month);
+        const receivablePick = pickLinkbuxReceivableHalves(receivableAgg, paymentHistAgg);
+        const actualAgg = aggregateLinkbuxActualCommissionsForSettlement(paidRows, month);
+        const actualFromHistory = {
+          actualH1: paymentHistAgg.actualH1,
+          actualH2: paymentHistAgg.actualH2,
+        };
+        const actualSumComm = actualAgg.actualH1 + actualAgg.actualH2;
+        const actualSumHist = actualFromHistory.actualH1 + actualFromHistory.actualH2;
+        const actualPick =
+          actualSumComm >= actualSumHist ? actualAgg : actualFromHistory;
+
+        const receivable = { usdH1: receivablePick.receivableH1, usdH2: receivablePick.receivableH2 };
+        const actual = { usdH1: actualPick.actualH1, usdH2: actualPick.actualH2 };
+        const apiRowCount =
+          mergedRows.length + paymentIdRows.length + paymentHistoryRows.length;
         const aggSum =
           receivable.usdH1 + receivable.usdH2 + actual.usdH1 + actual.usdH2;
 

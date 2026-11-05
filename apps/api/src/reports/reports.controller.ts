@@ -24,6 +24,7 @@ import { SettlementAdSpendService } from './settlement-ad-spend.service';
 import { SettlementMonthlyReportService } from './settlement-monthly-report.service';
 import { SettlementPayoutInfoService } from './settlement-payout-info.service';
 import { SettlementReceivableCommissionService } from './settlement-receivable-commission.service';
+import { SettlementLinkbuxPaymentsSyncService } from './settlement-linkbux-payments-sync.service';
 import { SettlementRewardooPaymentsSyncService } from './settlement-rewardoo-payments-sync.service';
 
 class DateRangeQuery {
@@ -162,6 +163,7 @@ export class ReportsController {
     private readonly settlementPayoutInfo: SettlementPayoutInfoService,
     private readonly settlementReceivableCommission: SettlementReceivableCommissionService,
     private readonly settlementRewardooPaymentsSync: SettlementRewardooPaymentsSyncService,
+    private readonly settlementLinkbuxPaymentsSync: SettlementLinkbuxPaymentsSyncService,
   ) {}
 
   @Get('merchant-summary')
@@ -237,6 +239,21 @@ export class ReportsController {
         parseRefreshFx(q.refreshFx),
       ),
     );
+  }
+
+  /** 从 LinkBux Payment Details API 同步 LB 列应收/实收 */
+  @Post('settlement-monthly/sync-linkbux-payments')
+  async syncSettlementLinkbuxPayments(
+    @CurrentUser() user: AuthUser,
+    @Body() body: SaveSettlementActualCommissionDto,
+  ) {
+    const queryUserId = body.userId ? parseInt(body.userId, 10) : undefined;
+    const result = await this.settlementLinkbuxPaymentsSync.syncForMonth(
+      user,
+      body.month,
+      queryUserId,
+    );
+    return ok(result);
   }
 
   /** 从 Rewardoo Payments API 同步 RW 列应收/实收 */

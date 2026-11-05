@@ -163,7 +163,7 @@ export class SettlementMonthlyReportService {
 
     const notes: string[] = [
       '账面/失效佣金按联盟订单 orderDate 汇总；拒付拆分与结算查询一致。',
-      '应收/实收按各平台后台打款：Rewardoo 可用「同步 RW 打款」；LinkBux 等请按 Payments 手工填列。',
+      '应收/实收按各平台后台：「同步 RW 打款」「同步 LB 打款」或手工填列（LB1/LB2 各账号 Token）。',
       '账期/失效仍来自订单同步；应收/实收保存后与报表 scope（全公司/员工）绑定。',
       '广告费按各 MCC 关联的 Google 子账号汇总；多 MCC 时请重新导入 Sheet 以刷新子账号绑定。',
       '佣金列按平台渠道账号拆分（同 alias 多账号显示 RW1/RW2 等）。',

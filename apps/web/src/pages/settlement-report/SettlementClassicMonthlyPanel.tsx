@@ -125,6 +125,7 @@ export default function SettlementClassicMonthlyPanel({
   const [savingActual, setSavingActual] = useState(false);
   const [savingReceivable, setSavingReceivable] = useState(false);
   const [syncingRw, setSyncingRw] = useState(false);
+  const [syncingLb, setSyncingLb] = useState(false);
   const [adSpendDraft, setAdSpendDraft] = useState<AdSpendDraftLine[]>([]);
   const [rebateDraft, setRebateDraft] = useState(0);
   const [savingAdSpend, setSavingAdSpend] = useState(false);
@@ -306,45 +307,48 @@ export default function SettlementClassicMonthlyPanel({
     }
   };
 
-  const syncRewardooPayments = async () => {
+  const syncPlatformPayments = async (
+    platform: 'rewardoo' | 'linkbux',
+    setLoading: (v: boolean) => void,
+  ) => {
     if (!report?.canEditActualCommission) return;
-    setSyncingRw(true);
+    setLoading(true);
     try {
       const body: { month: string; userId?: string } = { month: monthStr };
       if (effectiveScopeUserId != null) {
         body.userId = String(effectiveScopeUserId);
       }
+      const path =
+        platform === 'rewardoo'
+          ? '/reports/settlement-monthly/sync-rewardoo-payments'
+          : '/reports/settlement-monthly/sync-linkbux-payments';
+      const label = platform === 'rewardoo' ? 'Rewardoo' : 'LinkBux';
       const { data } = await api.post<
         ApiResult<{
           month: string;
-          synced: Array<{
-            channelAccountId: number;
-            displayName: string;
-            affiliateAlias: string;
-            paymentRowCount: number;
-            error?: string;
-          }>;
+          synced: Array<{ displayName: string; error?: string }>;
         }>
-      >('/reports/settlement-monthly/sync-rewardoo-payments', body);
+      >(path, body);
       if (!data.success) {
         message.error(data.message || '同步失败');
         return;
       }
       const failed = data.data.synced.filter((s) => s.error);
       if (failed.length) {
-        message.warning(
-          `RW 部分账号同步失败：${failed.map((f) => f.displayName).join('、')}`,
-        );
+        message.warning(`${label} 部分账号失败：${failed.map((f) => f.displayName).join('、')}`);
       } else {
-        message.success(`已同步 ${data.data.synced.length} 个 Rewardoo 账号打款`);
+        message.success(`已同步 ${data.data.synced.length} 个 ${label} 账号`);
       }
       await loadReport();
     } catch {
-      message.error('同步 Rewardoo 打款失败');
+      message.error(`同步 ${platform === 'rewardoo' ? 'RW' : 'LB'} 打款失败`);
     } finally {
-      setSyncingRw(false);
+      setLoading(false);
     }
   };
+
+  const syncRewardooPayments = () => void syncPlatformPayments('rewardoo', setSyncingRw);
+  const syncLinkbuxPayments = () => void syncPlatformPayments('linkbux', setSyncingLb);
 
   const saveReceivable = async () => {
     if (!report?.canEditActualCommission) return;
@@ -775,8 +779,11 @@ export default function SettlementClassicMonthlyPanel({
             <Space size="small">
               {canEdit && (
                 <>
-                  <Button size="small" loading={syncingRw} onClick={() => void syncRewardooPayments()}>
+                  <Button size="small" loading={syncingRw} onClick={syncRewardooPayments}>
                     同步 RW 打款
+                  </Button>
+                  <Button size="small" loading={syncingLb} onClick={syncLinkbuxPayments}>
+                    同步 LB 打款
                   </Button>
                   <Button
                     size="small"
@@ -912,9 +919,9 @@ export default function SettlementClassicMonthlyPanel({
             )}
           </Spin>
           <p className="sr-tip" style={{ padding: '8px 16px 12px' }}>
-            账期/失效来自订单同步。应收/实收请按<strong>各平台后台</strong>分列填写（如 LinkBux → LB1/LB2 分别对应
-            Payments：<em>Payment in Progress</em> 记入应收、当月 <em>Paid</em> 记入实收），保存后刷新仍保留；CNY
-            按页头实时汇率折算。收款人/卡号见 <Link to="/channel-accounts">平台账号</Link>。
+            账期/失效来自订单同步。应收/实收按各平台分列：可点「同步 RW / LB 打款」（Rewardoo Payments、LinkBux
+            Payment Details），或手工填。LB 口径：未打款（无 paid_date）→ 应收；paid_date 在当月 → 实收。CNY
+            按页头汇率。收款人/卡号见 <Link to="/channel-accounts">平台账号</Link>。
           </p>
         </div>
       </div>

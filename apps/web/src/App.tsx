@@ -1,5 +1,8 @@
 import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom';
 import LoginPage from './pages/LoginPage';
+import LandingPage from './pages/LandingPage';
+import PrivacyPage from './pages/PrivacyPage';
+import TermsPage from './pages/TermsPage';
 import AppLayout from './layouts/AppLayout';
 import DashboardPage from './pages/DashboardPage';
 import ChannelAccountsPage from './pages/ChannelAccountsPage';
@@ -26,14 +29,6 @@ function PrivateRoute({ children }: { children: React.ReactNode }) {
   return <>{children}</>;
 }
 
-/** 登录后默认首页：管理员进后台，员工进工作台 */
-function HomeRedirect() {
-  const { user, loading } = useAuth();
-  if (loading) return null;
-  if (user?.role === 'ADMIN') return <Navigate to="/admin" replace />;
-  return <Navigate to="/dashboard" replace />;
-}
-
 /** 管理员访问员工专属页时引导到采集中心 */
 function EmployeeOnlyRoute({ children }: { children: React.ReactNode }) {
   const { user, loading } = useAuth();
@@ -46,16 +41,17 @@ export default function App() {
   return (
     <BrowserRouter>
       <Routes>
+        <Route path="/" element={<LandingPage />} />
         <Route path="/login" element={<LoginPage />} />
+        <Route path="/privacy" element={<PrivacyPage />} />
+        <Route path="/terms" element={<TermsPage />} />
         <Route
-          path="/"
           element={
             <PrivateRoute>
               <AppLayout />
             </PrivateRoute>
           }
         >
-          <Route index element={<HomeRedirect />} />
           <Route path="dashboard" element={<DashboardPage />} />
           <Route path="merchants" element={<MerchantHubLayout />}>
             <Route index element={<Navigate to={merchantHubDefaultPath()} replace />} />

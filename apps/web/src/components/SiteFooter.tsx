@@ -1,0 +1,26 @@
+import { Link } from 'react-router-dom';
+import './SiteFooter.css';
+
+export type SiteFooterTone = 'light' | 'dark';
+
+/**
+ * 公开页与登录页共用的页脚。
+ * 展示公司主体、版权，以及隐私政策和服务条款入口。
+ */
+export default function SiteFooter({ tone = 'light' }: { tone?: SiteFooterTone }) {
+  return (
+    <footer className={`site-footer site-footer--${tone}`}>
+      <p className="site-footer__company">
+        温州市鹿城区志君电子商务商行 (Wenzhou Lucheng District Zhijun E-commerce Firm)
+      </p>
+      <p className="site-footer__copy">© 2024 fengdu-ads. All rights reserved.</p>
+      <nav className="site-footer__links" aria-label="Legal">
+        <Link to="/privacy">Privacy Policy</Link>
+        <span className="site-footer__sep" aria-hidden="true">
+          ·
+        </span>
+        <Link to="/terms">Terms of Service</Link>
+      </nav>
+    </footer>
+  );
+}

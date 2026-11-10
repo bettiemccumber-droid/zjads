@@ -7,22 +7,22 @@ import PublicShell from '../components/PublicShell';
  */
 export default function PrivacyPage() {
   useEffect(() => {
-    document.title = 'Privacy Policy · fengdu-ads';
+    document.title = 'Privacy Policy · Zhijun';
   }, []);
 
   return (
     <PublicShell>
       <article className="legal-page">
         <Link className="legal-page__back" to="/">
-          ← fengdu-ads
+          ← Zhijun
         </Link>
-        <p className="legal-page__eyebrow">fengdu-ads</p>
+        <p className="legal-page__eyebrow">Zhijun</p>
         <h1>Privacy Policy</h1>
         <p className="legal-page__updated">Last updated: November 10, 2026</p>
 
         <h2>Internal use</h2>
         <p>
-          fengdu-ads is an internal advertising operations platform operated by 温州市鹿城区志君电子商务商行
+          Zhijun is an internal advertising operations platform operated by 温州市鹿城区志君电子商务商行
           (Wenzhou Lucheng District Zhijun E-commerce Firm). Access is limited to personnel
           authorized by the firm. The service is not a public product and is not offered to
           outside customers.
@@ -30,7 +30,7 @@ export default function PrivacyPage() {
 
         <h2>Google Ads data we access</h2>
         <p>
-          When an authorized user connects a Google Ads account that the firm manages, fengdu-ads
+          When an authorized user connects a Google Ads account that the firm manages, Zhijun
           reads Google Ads data needed to operate those campaigns. The data may include:
         </p>
         <ul>
@@ -54,14 +54,14 @@ export default function PrivacyPage() {
 
         <h2>No sale or sharing with third parties</h2>
         <p>
-          We do not sell Google Ads data or any other data collected by fengdu-ads. We do not
+          We do not sell Google Ads data or any other data collected by Zhijun. We do not
           share that data with any third party. Data stays inside the firm and is available only
           to authorized personnel for the internal purposes described above.
         </p>
 
         <h2>Contact</h2>
         <p>
-          Questions about this policy may be directed to the operator of fengdu-ads: 温州市鹿城区志君电子商务商行
+          Questions about this policy may be directed to the operator of Zhijun: 温州市鹿城区志君电子商务商行
           (Wenzhou Lucheng District Zhijun E-commerce Firm), at{' '}
           <a href="mailto:marshallmarsxybasi01318@gmail.com">marshallmarsxybasi01318@gmail.com</a>.
           The company website is{' '}

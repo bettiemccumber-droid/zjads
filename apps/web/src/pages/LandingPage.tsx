@@ -45,6 +45,7 @@ interface LandingCopy {
   company: string;
   tagline: string;
   copyright: string;
+  brand: string;
 }
 
 const COPY: Record<LandingLang, LandingCopy> = {
@@ -107,6 +108,7 @@ const COPY: Record<LandingLang, LandingCopy> = {
     company: COMPANY_ZH,
     tagline: '联盟营销 + Google Ads 自动化',
     copyright: `© 2026 ${COMPANY_ZH} 版权所有`,
+    brand: '志君',
   },
   en: {
     badge: 'Affiliate marketing · Google Ads automation',
@@ -171,6 +173,7 @@ const COPY: Record<LandingLang, LandingCopy> = {
     company: COMPANY_EN,
     tagline: 'Affiliate marketing + Google Ads automation',
     copyright: `© 2026 ${COMPANY_EN}. All rights reserved.`,
+    brand: 'Zhijun',
   },
 };
 
@@ -182,18 +185,18 @@ export default function LandingPage() {
   const t = COPY[lang];
 
   useEffect(() => {
-    document.title = 'fengdu-ads · 广告自动化平台';
-  }, []);
+    document.title = lang === 'zh' ? '志君 · 广告自动化平台' : 'Zhijun · Advertising automation';
+  }, [lang]);
 
   return (
     <div className="lp">
       <header className="lp-header">
         <Link className="lp-brand" to="/">
           <span className="lp-brand__mark" aria-hidden="true">
-            f
+            Z
           </span>
           <span>
-            <span className="lp-brand__name">fengdu-ads</span>
+            <span className="lp-brand__name">{t.brand}</span>
             <span className="lp-brand__sub">{t.title}</span>
           </span>
         </Link>
@@ -311,9 +314,9 @@ export default function LandingPage() {
           <div>
             <Link className="lp-brand" to="/">
               <span className="lp-brand__mark" aria-hidden="true">
-                f
+                Z
               </span>
-              <span className="lp-brand__name">fengdu-ads</span>
+              <span className="lp-brand__name">{t.brand}</span>
             </Link>
             <p className="lp-footer__company">{t.company}</p>
             <p className="lp-footer__tag">{t.tagline}</p>
@@ -344,7 +347,7 @@ export default function LandingPage() {
         <p className="lp-footer__legal">
           温州市鹿城区志君电子商务商行 (Wenzhou Lucheng District Zhijun E-commerce Firm)
           <br />
-          © 2024 fengdu-ads. All rights reserved.
+          © 2024 {COMPANY_EN}. All rights reserved.
           {' · '}
           <Link to="/privacy">Privacy Policy</Link>
           {' · '}

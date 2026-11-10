@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { PLATFORM_ORIGIN, setCanonical } from '../utils/canonical';
+import { setCanonical } from '../utils/canonical';
 import './LandingPage.css';
 
 type LandingLang = 'zh' | 'en';
@@ -11,6 +11,10 @@ const COMPANY_EN = 'Wenzhou Lucheng District Zhijun E-commerce Firm';
 
 /** 审核与用户联系使用的可达邮箱。 */
 const CONTACT_EMAIL = 'marshallmarsxybasi01318@gmail.com';
+
+/** 公司官网。平台域名 zjads.top 不是这个地址。 */
+const COMPANY_SITE = 'https://www.zhijun-commerce.top/';
+const COMPANY_SITE_LABEL = 'www.zhijun-commerce.top';
 
 interface LandingCopy {
   badge: string;
@@ -105,7 +109,7 @@ const COPY: Record<LandingLang, LandingCopy> = {
     home: 'Home',
     privacy: '隐私政策',
     terms: '服务条款',
-    website: '公司官网',
+    website: COMPANY_SITE_LABEL,
     company: COMPANY_ZH,
     tagline: '联盟营销 + Google Ads 自动化',
     copyright: `© 2026 ${COMPANY_ZH} 版权所有`,
@@ -172,7 +176,7 @@ const COPY: Record<LandingLang, LandingCopy> = {
     home: 'Home',
     privacy: 'Privacy Policy',
     terms: 'Terms of Service',
-    website: 'Official site',
+    website: COMPANY_SITE_LABEL,
     company: COMPANY_EN,
     tagline: 'Affiliate marketing + Google Ads automation',
     copyright: `© 2026 ${COMPANY_EN}. All rights reserved.`,
@@ -206,7 +210,7 @@ export default function LandingPage() {
           </span>
         </Link>
         <div className="lp-header__actions">
-          <a className="lp-site" href={PLATFORM_ORIGIN} target="_blank" rel="noreferrer">
+          <a className="lp-site" href={COMPANY_SITE} target="_blank" rel="noreferrer">
             {t.website}
           </a>
           <button
@@ -231,7 +235,7 @@ export default function LandingPage() {
           <p className="lp-lead">{t.lead}</p>
           <p className="lp-note">
             {t.note}{' '}
-            <a href={PLATFORM_ORIGIN} target="_blank" rel="noreferrer">
+            <a href={COMPANY_SITE} target="_blank" rel="noreferrer">
               {t.about} <span aria-hidden="true">→</span>
             </a>
           </p>
@@ -332,7 +336,7 @@ export default function LandingPage() {
             <h2>{t.colProduct}</h2>
             <Link to="/">{t.home}</Link>
             <a href="#api">{t.demo}</a>
-            <a href={PLATFORM_ORIGIN} target="_blank" rel="noreferrer">
+            <a href={COMPANY_SITE} target="_blank" rel="noreferrer">
               {t.about}
             </a>
           </nav>
@@ -351,7 +355,7 @@ export default function LandingPage() {
             <h2>{t.colContact}</h2>
             <a href="#contact">{t.contact}</a>
             <a href={`mailto:${CONTACT_EMAIL}`}>{CONTACT_EMAIL}</a>
-            <a href={PLATFORM_ORIGIN} target="_blank" rel="noreferrer">
+            <a href={COMPANY_SITE} target="_blank" rel="noreferrer">
               {t.website}
             </a>
           </div>

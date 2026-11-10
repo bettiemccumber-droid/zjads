@@ -28,8 +28,8 @@ export default function PrivacyPage() {
           (Wenzhou Lucheng District Zhijun E-commerce Firm). It is used only by personnel
           authorized by the firm to manage the firm’s own Google Ads accounts. It is not offered
           to the public and it is not a service for outside clients. The company website is{' '}
-          <a href="https://zjads.top/" rel="noreferrer">
-            https://zjads.top/
+          <a href="https://www.zhijun-commerce.top/" rel="noreferrer">
+            https://www.zhijun-commerce.top/
           </a>
           .
         </p>

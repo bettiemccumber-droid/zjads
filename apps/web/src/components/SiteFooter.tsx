@@ -1,8 +1,8 @@
 import { Link } from 'react-router-dom';
 import './SiteFooter.css';
 
-/** 公司官网。 */
-const COMPANY_SITE = 'https://zjads.top/';
+/** 公司官网。平台域名 zjads.top 不是这个地址。 */
+const COMPANY_SITE = 'https://www.zhijun-commerce.top/';
 
 export type SiteFooterTone = 'light' | 'dark';
 
@@ -27,7 +27,7 @@ export default function SiteFooter({ tone = 'light' }: { tone?: SiteFooterTone }
           ·
         </span>
         <a href={COMPANY_SITE} target="_blank" rel="noreferrer">
-          公司官网
+          www.zhijun-commerce.top
         </a>
       </nav>
     </footer>

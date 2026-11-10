@@ -24,10 +24,12 @@ export default function TermsPage() {
 
         <h2>Internal tool</h2>
         <p>
-          Zhijun Ads Manager is an internal tool operated by 温州市鹿城区志君电子商务商行 (Wenzhou
-          Lucheng District Zhijun E-commerce Firm). It is provided only to employees and other
-          personnel authorized by the firm. It is not a public service. You may not offer the
-          platform to outside parties, resell access, or use it on behalf of another organization.
+          Zhijun Ads Manager is an internal Google Ads management tool operated by 温州市鹿城区志君电子商务商行
+          (Wenzhou Lucheng District Zhijun E-commerce Firm). This application is published at{' '}
+          <a href="https://www.zjads.top/">https://www.zjads.top/</a>. It is provided only to
+          employees and other personnel authorized by the firm. It is not a public service. You may
+          not offer the platform to outside parties, resell access, or use it on behalf of another
+          organization.
         </p>
 
         <h2>No AI-generated content</h2>
@@ -91,7 +93,7 @@ export default function TermsPage() {
         <p>
           We may update these terms when the tool or the policies it must follow change. The
           current version is always published at{' '}
-          <a href="https://zjads.top/terms">https://zjads.top/terms</a>. Continued use of the tool
+          <a href="https://www.zjads.top/terms">https://www.zjads.top/terms</a>. Continued use of the tool
           after the date shown above means you accept the updated terms.
         </p>
 

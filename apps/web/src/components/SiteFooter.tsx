@@ -1,14 +1,11 @@
 import { Link } from 'react-router-dom';
 import './SiteFooter.css';
 
-/** 公司官网。平台域名 zjads.top 不是这个地址。 */
-const COMPANY_SITE = 'https://www.zhijun-commerce.top/';
-
 export type SiteFooterTone = 'light' | 'dark';
 
 /**
- * 公开页与登录页共用的页脚。
- * 展示公司主体、版权，以及隐私政策和服务条款入口。
+ * 登录页、隐私政策和服务条款的页脚。
+ * 这里只放产品站自己的法律入口，不放公司官网，避免审核页出现第二个域名。
  */
 export default function SiteFooter({ tone = 'light' }: { tone?: SiteFooterTone }) {
   return (
@@ -23,12 +20,6 @@ export default function SiteFooter({ tone = 'light' }: { tone?: SiteFooterTone }
           ·
         </span>
         <Link to="/terms">Terms of Service</Link>
-        <span className="site-footer__sep" aria-hidden="true">
-          ·
-        </span>
-        <a href={COMPANY_SITE} target="_blank" rel="noreferrer">
-          www.zhijun-commerce.top
-        </a>
       </nav>
     </footer>
   );

@@ -24,14 +24,12 @@ export default function PrivacyPage() {
 
         <h2>Who we are</h2>
         <p>
-          Zhijun Ads Manager is an internal advertising automation tool operated by 温州市鹿城区志君电子商务商行
-          (Wenzhou Lucheng District Zhijun E-commerce Firm). It is used only by personnel
+          Zhijun Ads Manager is an internal Google Ads management tool operated by 温州市鹿城区志君电子商务商行
+          (Wenzhou Lucheng District Zhijun E-commerce Firm). This application and this privacy
+          policy are published at{' '}
+          <a href="https://www.zjads.top/">https://www.zjads.top/</a>. It is used only by personnel
           authorized by the firm to manage the firm’s own Google Ads accounts. It is not offered
-          to the public and it is not a service for outside clients. The company website is{' '}
-          <a href="https://www.zhijun-commerce.top/" rel="noreferrer">
-            https://www.zhijun-commerce.top/
-          </a>
-          .
+          to the public and it is not a service for outside clients.
         </p>
 
         <h2>Google Ads data we collect</h2>
@@ -163,7 +161,7 @@ export default function PrivacyPage() {
           If we change how Zhijun Ads Manager uses Google Ads data, we will update this page and
           the date above before the change takes effect. The current version is always linked
           from the homepage at{' '}
-          <a href="https://zjads.top/privacy">https://zjads.top/privacy</a>.
+          <a href="https://www.zjads.top/privacy">https://www.zjads.top/privacy</a>.
         </p>
 
         <h2>No AI-generated content</h2>

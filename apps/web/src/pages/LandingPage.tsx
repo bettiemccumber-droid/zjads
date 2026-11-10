@@ -119,7 +119,7 @@ const COPY: Record<LandingLang, LandingCopy> = {
     badge: 'Affiliate marketing · Google Ads automation',
     title: 'Internal Google Ads management tool',
     purpose:
-      'Zhijun Ads Manager is an internal advertising automation tool used only to manage our own Google Ads accounts. It is used for advertising data analysis and campaign management. It does not generate AI content, including non-consensual intimate imagery (NCII).',
+      'Zhijun Ads Manager is an internal Google Ads management tool used only to manage our own Google Ads accounts. This site is https://www.zjads.top/. It is used for advertising data analysis and campaign management. It does not generate AI content, including non-consensual intimate imagery (NCII).',
     lead: `${COMPANY_EN} is an affiliate marketing company. Our internal ads team uses this platform to manage Google Search and Performance Max campaigns under our own Google Ads manager account (MCC). All ad budgets are paid by the company directly to Google. We do not manage advertising for any third-party client.`,
     note: 'This platform is for the company’s internal ads team only and is not offered to any third party. Every campaign follows the Google Ads affiliate program policy.',
     about: 'About the company',

@@ -210,6 +210,9 @@ export default function LandingPage() {
           </span>
         </Link>
         <div className="lp-header__actions">
+          <Link className="lp-site" to="/privacy">
+            Privacy Policy
+          </Link>
           <a className="lp-site" href={COMPANY_SITE} target="_blank" rel="noreferrer">
             {t.website}
           </a>

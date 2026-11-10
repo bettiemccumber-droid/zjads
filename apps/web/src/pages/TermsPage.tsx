@@ -35,7 +35,8 @@ export default function TermsPage() {
         <h2>No AI-generated content</h2>
         <p>
           Zhijun Ads Manager does not generate or distribute AI content. It does not create
-          images, video, or non-consensual intimate imagery (NCII). The platform is limited to
+          images, video, or non-consensual intimate imagery (NCII). The application will not use
+          Google APIs to generate non-consensual intimate imagery. The platform is limited to
           advertising data analysis and the management of the firm’s own Google Ads campaigns.
         </p>
 

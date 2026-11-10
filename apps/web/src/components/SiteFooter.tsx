@@ -1,6 +1,9 @@
 import { Link } from 'react-router-dom';
 import './SiteFooter.css';
 
+/** 公司官网。 */
+const COMPANY_SITE = 'https://zhijun-e-commerce-firm.vercel.app/';
+
 export type SiteFooterTone = 'light' | 'dark';
 
 /**
@@ -20,6 +23,12 @@ export default function SiteFooter({ tone = 'light' }: { tone?: SiteFooterTone }
           ·
         </span>
         <Link to="/terms">Terms of Service</Link>
+        <span className="site-footer__sep" aria-hidden="true">
+          ·
+        </span>
+        <a href={COMPANY_SITE} target="_blank" rel="noreferrer">
+          公司官网
+        </a>
       </nav>
     </footer>
   );

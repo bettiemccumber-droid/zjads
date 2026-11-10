@@ -64,6 +64,11 @@ export default function PrivacyPage() {
           Questions about this policy may be directed to the operator of fengdu-ads: 温州市鹿城区志君电子商务商行
           (Wenzhou Lucheng District Zhijun E-commerce Firm), at{' '}
           <a href="mailto:marshallmarsxybasi01318@gmail.com">marshallmarsxybasi01318@gmail.com</a>.
+          The company website is{' '}
+          <a href="https://zhijun-e-commerce-firm.vercel.app/" rel="noreferrer">
+            https://zhijun-e-commerce-firm.vercel.app/
+          </a>
+          .
         </p>
       </article>
     </PublicShell>

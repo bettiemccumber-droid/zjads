@@ -11,6 +11,9 @@ const COMPANY_EN = 'Wenzhou Lucheng District Zhijun E-commerce Firm';
 /** 审核与用户联系使用的可达邮箱。 */
 const CONTACT_EMAIL = 'marshallmarsxybasi01318@gmail.com';
 
+/** 公司官网。 */
+const COMPANY_SITE = 'https://zhijun-e-commerce-firm.vercel.app/';
+
 interface LandingCopy {
   badge: string;
   title: string;
@@ -38,6 +41,7 @@ interface LandingCopy {
   home: string;
   privacy: string;
   terms: string;
+  website: string;
   company: string;
   tagline: string;
   copyright: string;
@@ -99,6 +103,7 @@ const COPY: Record<LandingLang, LandingCopy> = {
     home: 'Home',
     privacy: '隐私政策',
     terms: '服务条款',
+    website: '公司官网',
     company: COMPANY_ZH,
     tagline: '联盟营销 + Google Ads 自动化',
     copyright: `© 2026 ${COMPANY_ZH} 版权所有`,
@@ -162,6 +167,7 @@ const COPY: Record<LandingLang, LandingCopy> = {
     home: 'Home',
     privacy: 'Privacy Policy',
     terms: 'Terms of Service',
+    website: 'Official site',
     company: COMPANY_EN,
     tagline: 'Affiliate marketing + Google Ads automation',
     copyright: `© 2026 ${COMPANY_EN}. All rights reserved.`,
@@ -191,13 +197,18 @@ export default function LandingPage() {
             <span className="lp-brand__sub">{t.title}</span>
           </span>
         </Link>
-        <button
-          type="button"
-          className="lp-lang"
-          onClick={() => setLang((current) => (current === 'zh' ? 'en' : 'zh'))}
-        >
-          {lang === 'zh' ? 'EN' : '中文'}
-        </button>
+        <div className="lp-header__actions">
+          <a className="lp-site" href={COMPANY_SITE} target="_blank" rel="noreferrer">
+            {t.website}
+          </a>
+          <button
+            type="button"
+            className="lp-lang"
+            onClick={() => setLang((current) => (current === 'zh' ? 'en' : 'zh'))}
+          >
+            {lang === 'zh' ? 'EN' : '中文'}
+          </button>
+        </div>
       </header>
 
       <main>
@@ -210,7 +221,7 @@ export default function LandingPage() {
           <p className="lp-lead">{t.lead}</p>
           <p className="lp-note">
             {t.note}{' '}
-            <a href="#about">
+            <a href={COMPANY_SITE} target="_blank" rel="noreferrer">
               {t.about} <span aria-hidden="true">→</span>
             </a>
           </p>
@@ -311,7 +322,9 @@ export default function LandingPage() {
             <h2>{t.colProduct}</h2>
             <Link to="/">{t.home}</Link>
             <a href="#api">{t.demo}</a>
-            <a href="#about">{t.about}</a>
+            <a href={COMPANY_SITE} target="_blank" rel="noreferrer">
+              {t.about}
+            </a>
           </nav>
           <nav aria-label={t.colLegal}>
             <h2>{t.colLegal}</h2>
@@ -322,8 +335,8 @@ export default function LandingPage() {
             <h2>{t.colContact}</h2>
             <a href="#contact">{t.contact}</a>
             <a href={`mailto:${CONTACT_EMAIL}`}>{CONTACT_EMAIL}</a>
-            <a href="https://fengdu-ads.top" target="_blank" rel="noreferrer">
-              fengdu-ads.top
+            <a href={COMPANY_SITE} target="_blank" rel="noreferrer">
+              {t.website}
             </a>
           </div>
         </div>

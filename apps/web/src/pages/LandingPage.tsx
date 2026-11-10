@@ -4,6 +4,13 @@ import './LandingPage.css';
 
 type LandingLang = 'zh' | 'en';
 
+/** Google Ads / Cloud 后台登记的公司主体，页面各处必须使用同一名称。 */
+const COMPANY_ZH = '温州市鹿城区志君电子商务商行';
+const COMPANY_EN = 'Wenzhou Lucheng District Zhijun E-commerce Firm';
+
+/** 审核与用户联系使用的可达邮箱。 */
+const CONTACT_EMAIL = 'marshallmarsxybasi01318@gmail.com';
+
 interface LandingCopy {
   badge: string;
   title: string;
@@ -40,7 +47,7 @@ const COPY: Record<LandingLang, LandingCopy> = {
   zh: {
     badge: '联盟营销 · Google Ads 自动化',
     title: '广告自动化平台',
-    lead: '温州丰度广告传媒有限公司是一家联盟营销公司。公司内部广告团队通过本平台在我们自有的 Google Ads 经理账户（MCC）下管理 Google 搜索广告与效果最大化广告。所有广告预算均由本公司直接向 Google 支付。我们不为任何第三方客户管理广告。',
+    lead: `${COMPANY_ZH}是一家联盟营销公司。公司内部广告团队通过本平台在我们自有的 Google Ads 经理账户（MCC）下管理 Google 搜索广告与效果最大化广告。所有广告预算均由本公司直接向 Google 支付。我们不为任何第三方客户管理广告。`,
     note: '本平台仅供公司内部广告团队使用，不向任何第三方提供产品或服务。所有广告均遵守 Google Ads 联盟营销计划政策（Affiliate Program Policy）。',
     about: '了解公司背景',
     pills: ['Google Ads API v23 认证', '自有 MCC · Google 直接扣款', '符合联盟营销计划政策'],
@@ -92,14 +99,14 @@ const COPY: Record<LandingLang, LandingCopy> = {
     home: 'Home',
     privacy: '隐私政策',
     terms: '服务条款',
-    company: '温州丰度广告传媒有限公司',
+    company: COMPANY_ZH,
     tagline: '联盟营销 + Google Ads 自动化',
-    copyright: '© 2026 温州丰度广告传媒有限公司 版权所有',
+    copyright: `© 2026 ${COMPANY_ZH} 版权所有`,
   },
   en: {
     badge: 'Affiliate marketing · Google Ads automation',
     title: 'Advertising automation platform',
-    lead: 'Wenzhou Fengdu Advertising Media Co., Ltd. is an affiliate marketing company. Our internal ads team uses this platform to manage Google Search and Performance Max campaigns under our own Google Ads manager account (MCC). All ad budgets are paid by the company directly to Google. We do not manage advertising for any third-party client.',
+    lead: `${COMPANY_EN} is an affiliate marketing company. Our internal ads team uses this platform to manage Google Search and Performance Max campaigns under our own Google Ads manager account (MCC). All ad budgets are paid by the company directly to Google. We do not manage advertising for any third-party client.`,
     note: 'This platform is for the company’s internal ads team only and is not offered to any third party. Every campaign follows the Google Ads affiliate program policy.',
     about: 'About the company',
     pills: [
@@ -155,9 +162,9 @@ const COPY: Record<LandingLang, LandingCopy> = {
     home: 'Home',
     privacy: 'Privacy Policy',
     terms: 'Terms of Service',
-    company: 'Wenzhou Fengdu Advertising Media Co., Ltd.',
+    company: COMPANY_EN,
     tagline: 'Affiliate marketing + Google Ads automation',
-    copyright: '© 2026 Wenzhou Fengdu Advertising Media Co., Ltd. All rights reserved.',
+    copyright: `© 2026 ${COMPANY_EN}. All rights reserved.`,
   },
 };
 
@@ -314,7 +321,7 @@ export default function LandingPage() {
           <div id="contact">
             <h2>{t.colContact}</h2>
             <a href="#contact">{t.contact}</a>
-            <a href="mailto:connect@fengdu-ads.top">connect@fengdu-ads.top</a>
+            <a href={`mailto:${CONTACT_EMAIL}`}>{CONTACT_EMAIL}</a>
             <a href="https://fengdu-ads.top" target="_blank" rel="noreferrer">
               fengdu-ads.top
             </a>

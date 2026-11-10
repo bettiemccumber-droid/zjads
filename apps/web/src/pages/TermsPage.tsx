@@ -1,13 +1,15 @@
 import { useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import PublicShell from '../components/PublicShell';
+import { setCanonical } from '../utils/canonical';
 
 /**
  * 服务条款页。声明 Zhijun 为内部工具，并要求遵守 Google Ads API 与联盟营销计划政策。
  */
 export default function TermsPage() {
   useEffect(() => {
-    document.title = 'Terms of Service · Zhijun';
+    document.title = 'Terms of Service · Zhijun Ads Manager';
+    setCanonical('/terms');
   }, []);
 
   return (
@@ -16,16 +18,23 @@ export default function TermsPage() {
         <Link className="legal-page__back" to="/">
           ← Zhijun
         </Link>
-        <p className="legal-page__eyebrow">Zhijun</p>
+        <p className="legal-page__eyebrow">Zhijun Ads Manager</p>
         <h1>Terms of Service</h1>
         <p className="legal-page__updated">Last updated: November 10, 2026</p>
 
         <h2>Internal tool</h2>
         <p>
-          Zhijun is an internal tool operated by 温州市鹿城区志君电子商务商行 (Wenzhou Lucheng
-          District Zhijun E-commerce Firm). It is provided only to employees and other personnel
-          authorized by the firm. It is not a public service. You may not offer the platform to
-          outside parties, resell access, or use it on behalf of another organization.
+          Zhijun Ads Manager is an internal tool operated by 温州市鹿城区志君电子商务商行 (Wenzhou
+          Lucheng District Zhijun E-commerce Firm). It is provided only to employees and other
+          personnel authorized by the firm. It is not a public service. You may not offer the
+          platform to outside parties, resell access, or use it on behalf of another organization.
+        </p>
+
+        <h2>No AI-generated content</h2>
+        <p>
+          Zhijun Ads Manager does not generate or distribute AI content. It does not create
+          images, video, or non-consensual intimate imagery (NCII). The platform is limited to
+          advertising data analysis and the management of the firm’s own Google Ads campaigns.
         </p>
 
         <h2>Google Ads API policies</h2>

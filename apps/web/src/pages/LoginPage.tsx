@@ -5,6 +5,7 @@ import { useNavigate } from 'react-router-dom';
 import { api, setToken, type ApiResult } from '../api/client';
 import SiteFooter from '../components/SiteFooter';
 import { useAuth } from '../hooks/useAuth';
+import { setCanonical } from '../utils/canonical';
 
 export default function LoginPage() {
   const navigate = useNavigate();
@@ -12,6 +13,7 @@ export default function LoginPage() {
 
   useEffect(() => {
     document.title = 'ZJADS 工作台';
+    setCanonical('/login');
   }, []);
 
   const onFinish = async (values: { email: string; password: string }) => {

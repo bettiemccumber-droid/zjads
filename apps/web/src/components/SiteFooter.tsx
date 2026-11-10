@@ -2,7 +2,7 @@ import { Link } from 'react-router-dom';
 import './SiteFooter.css';
 
 /** 公司官网。 */
-const COMPANY_SITE = 'https://zhijun-e-commerce-firm.vercel.app/';
+const COMPANY_SITE = 'https://www.zhijun-commerce.top/';
 
 export type SiteFooterTone = 'light' | 'dark';
 

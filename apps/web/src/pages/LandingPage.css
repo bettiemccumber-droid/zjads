@@ -130,6 +130,27 @@
   line-height: 1.25;
 }
 
+.lp-kicker {
+  margin: -8px 0 16px;
+  color: #374151;
+  font-size: 18px;
+  font-weight: 600;
+}
+
+.lp-purpose {
+  max-width: 760px;
+  margin: 0 auto;
+  color: #1f2937;
+  font-size: 16px;
+  line-height: 1.7;
+}
+
+.lp-purpose--en {
+  margin-top: 8px;
+  color: #374151;
+  font-size: 15px;
+}
+
 .lp-lead,
 .lp-note {
   max-width: 760px;

@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
+import { setCanonical } from '../utils/canonical';
 import './LandingPage.css';
 
 type LandingLang = 'zh' | 'en';
@@ -12,7 +13,7 @@ const COMPANY_EN = 'Wenzhou Lucheng District Zhijun E-commerce Firm';
 const CONTACT_EMAIL = 'marshallmarsxybasi01318@gmail.com';
 
 /** 公司官网。 */
-const COMPANY_SITE = 'https://zhijun-e-commerce-firm.vercel.app/';
+const COMPANY_SITE = 'https://www.zhijun-commerce.top/';
 
 interface LandingCopy {
   badge: string;
@@ -94,8 +95,8 @@ const COPY: Record<LandingLang, LandingCopy> = {
         body: '实时可视化看板，费用、点击、展示、转化、佣金、ROI 一目了然。',
       },
       {
-        title: '内容与发布自动化',
-        body: 'AI 自动生成 SEO 文章，支持多站点一键发布，配合付费搜索广告提升自然流量。',
+        title: '内部效果复盘',
+        body: '汇总自有账户的花费、点击、展示与转化，供内部预算和效果复盘。本平台不生成图片、视频或其他 AI 内容。',
       },
     ],
     colProduct: '产品',
@@ -108,7 +109,7 @@ const COPY: Record<LandingLang, LandingCopy> = {
     company: COMPANY_ZH,
     tagline: '联盟营销 + Google Ads 自动化',
     copyright: `© 2026 ${COMPANY_ZH} 版权所有`,
-    brand: '志君',
+    brand: 'Zhijun Ads Manager',
   },
   en: {
     badge: 'Affiliate marketing · Google Ads automation',
@@ -159,8 +160,8 @@ const COPY: Record<LandingLang, LandingCopy> = {
         body: 'Live dashboards for cost, clicks, impressions, conversions, commission, and ROI.',
       },
       {
-        title: 'Content publishing',
-        body: 'Generate SEO articles with AI and publish them across sites, alongside paid search.',
+        title: 'Internal performance review',
+        body: 'Summarize cost, clicks, impressions, and conversions from our own accounts for internal budget and performance review. The platform does not generate images, video, or other AI content.',
       },
     ],
     colProduct: 'Product',
@@ -173,7 +174,7 @@ const COPY: Record<LandingLang, LandingCopy> = {
     company: COMPANY_EN,
     tagline: 'Affiliate marketing + Google Ads automation',
     copyright: `© 2026 ${COMPANY_EN}. All rights reserved.`,
-    brand: 'Zhijun',
+    brand: 'Zhijun Ads Manager',
   },
 };
 
@@ -185,8 +186,9 @@ export default function LandingPage() {
   const t = COPY[lang];
 
   useEffect(() => {
-    document.title = lang === 'zh' ? '志君 · 广告自动化平台' : 'Zhijun · Advertising automation';
-  }, [lang]);
+    document.title = 'Zhijun Ads Manager';
+    setCanonical('/');
+  }, []);
 
   return (
     <div className="lp">
@@ -220,7 +222,17 @@ export default function LandingPage() {
             <ShieldIcon />
             {t.badge}
           </p>
-          <h1>{t.title}</h1>
+          <h1>Zhijun Ads Manager</h1>
+          <p className="lp-kicker">{t.title}</p>
+          <p className="lp-purpose">
+            本平台是内部广告自动化工具，用于管理自有 Google Ads 账户，只做广告数据分析和投放管理。
+          </p>
+          <p className="lp-purpose lp-purpose--en">
+            Zhijun Ads Manager is an internal advertising automation tool used only to manage our
+            own Google Ads accounts. It is used for advertising data analysis and campaign
+            management. It does not generate AI content, including non-consensual intimate imagery
+            (NCII).
+          </p>
           <p className="lp-lead">{t.lead}</p>
           <p className="lp-note">
             {t.note}{' '}

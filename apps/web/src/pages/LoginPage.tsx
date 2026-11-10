@@ -12,7 +12,7 @@ export default function LoginPage() {
   const { refresh } = useAuth();
 
   useEffect(() => {
-    document.title = 'ZJADS 工作台';
+    document.title = 'Zhijun Ads Manager';
     setCanonical('/login');
   }, []);
 
@@ -66,10 +66,10 @@ export default function LoginPage() {
       >
         <Card style={{ width: 400 }}>
           <Typography.Title level={3} style={{ textAlign: 'center' }}>
-            ZJADS 工作台
+            Zhijun Ads Manager
           </Typography.Title>
           <Typography.Paragraph type="secondary" style={{ textAlign: 'center' }}>
-            公司内部联盟数据采集与分析
+            内部工作台，仅限本公司授权人员登录
           </Typography.Paragraph>
           <Form layout="vertical" onFinish={onFinish}>
             <Form.Item name="email" label="邮箱" rules={[{ required: true, type: 'email' }]}>

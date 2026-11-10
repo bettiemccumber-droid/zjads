@@ -28,8 +28,8 @@ export default function PrivacyPage() {
           (Wenzhou Lucheng District Zhijun E-commerce Firm). It is used only by personnel
           authorized by the firm to manage the firm’s own Google Ads accounts. It is not offered
           to the public and it is not a service for outside clients. The company website is{' '}
-          <a href="https://www.zhijun-commerce.top/" rel="noreferrer">
-            https://www.zhijun-commerce.top/
+          <a href="https://zjads.top/" rel="noreferrer">
+            https://zjads.top/
           </a>
           .
         </p>
@@ -50,10 +50,29 @@ export default function PrivacyPage() {
           <li>Ad assets needed to operate those campaigns, such as sitelinks and callouts</li>
         </ul>
         <p>
+          Authorized users can also ask the tool to change the firm’s own campaigns through the
+          Google Ads API. Those changes are limited to creating or updating campaigns, budgets,
+          ad groups, responsive search ads, keywords, and ad assets such as sitelinks and
+          callouts, and to adjusting budget or CPC bid settings. The tool does not change
+          accounts the firm is not authorized to manage.
+        </p>
+        <p>
           We request only the Google Ads data required to analyze and manage those accounts. We
           do not use the platform to access Google Ads accounts the firm is not authorized to
           manage. We do not collect Google user data for advertising to consumers, and we do not
           collect data from people who merely visit this public website.
+        </p>
+
+        <h2>How a Google account is connected</h2>
+        <p>
+          An employee authorized by the firm connects a Google Ads account on Google’s own
+          consent screen and grants the Google Ads scope (
+          <code>https://www.googleapis.com/auth/adwords</code>
+          ). We store the resulting refresh token only so the tool can call the Google Ads API
+          for that account. The token is not used to open Gmail, Drive, Calendar, Photos,
+          contacts, location, or YouTube. The employee can revoke the grant at any time from
+          their Google Account. When the account is disconnected or the grant is revoked, we
+          stop calling the API for it and delete the stored token within 30 days.
         </p>
 
         <h2>How we use the data</h2>
@@ -67,28 +86,84 @@ export default function PrivacyPage() {
 
         <h2>No sale or sharing with third parties</h2>
         <p>
-          We do not sell Google Ads data or any other data collected by Zhijun Ads Manager. We
-          do not share that data with any third party. Access stays inside the firm and is
-          limited to authorized personnel for the internal purposes described in this policy.
+          We do not sell, rent, or share Google Ads data or any other data collected by Zhijun
+          Ads Manager. We do not transfer that data to advertisers, data brokers, or other
+          companies for their own use, including for retargeting or interest-based advertising.
+          Access stays inside the firm and is limited to authorized personnel for the internal
+          purposes described in this policy.
+        </p>
+        <p>
+          The application and its database are hosted by an infrastructure provider. That
+          provider stores and transmits the data only to operate the tool on our instructions. It
+          may not use Google Ads data for its own products, for advertising, or to train models.
+          Hosting the application is not a sale of data.
+        </p>
+
+        <h2>Limited Use of Google API data</h2>
+        <p>
+          Zhijun Ads Manager’s use of information received from Google APIs adheres to the{' '}
+          <a href="https://developers.google.com/terms/api-services-user-data-policy" rel="noreferrer">
+            Google API Services User Data Policy
+          </a>
+          , including the Limited Use requirements. In particular:
+        </p>
+        <ul>
+          <li>
+            We use Google Ads data only to provide and improve the internal campaign-management
+            and performance-analysis features that are visible in this application.
+          </li>
+          <li>
+            We do not transfer Google Ads data to others, except to the infrastructure provider
+            that hosts the tool and may use the data only on our instructions, where necessary to
+            secure the service, where required by applicable law, or as part of a merger or
+            acquisition with notice to the authorized users.
+          </li>
+          <li>
+            Humans at the firm read this data only when an authorized user asks for support, when
+            it is necessary for security, or when it is required by law. We do not allow outside
+            parties to read it.
+          </li>
+          <li>
+            We do not use Google Ads data to serve advertisements, to determine
+            creditworthiness, or to train generalized artificial-intelligence or machine-learning
+            models.
+          </li>
+        </ul>
+
+        <h2>Data we do not collect</h2>
+        <p>
+          This application does not request Gmail, Google Drive, Google Photos, contacts,
+          location, or YouTube data. Visitors to this public website are not asked to sign in
+          with Google, and we do not collect their Google account data.
         </p>
 
         <h2>How data is stored</h2>
         <p>
           Google Ads data and the internal login records needed to operate the tool are stored
-          on systems controlled by the firm. Only authorized personnel can access them. We do
-          not place this data in a public repository, and we do not make it available for
-          download by outside parties.
+          on systems controlled by the firm. Traffic to the application is encrypted in transit
+          with HTTPS. Only authorized personnel can access stored data. We do not place this
+          data in a public repository, and we do not make it available for download by outside
+          parties.
         </p>
 
         <h2>Retention and deletion</h2>
         <p>
-          We keep Google Ads data only for as long as it is needed for the firm’s internal
-          budget review and performance analysis. When a Google Ads account is disconnected, we
-          stop collecting new data from that account. Authorized personnel can ask us to delete
-          stored Google Ads data for an account the firm manages. We delete that data within 30
-          days of a verified request sent to the email below, unless a longer period is required
-          by law. Internal login records are deleted when the person’s access to the tool ends,
-          or sooner on request, subject to the same legal exception.
+          While a Google Ads account stays connected, we keep its performance and campaign records
+          so the firm can review budgets and results. When the account is disconnected, we stop
+          collecting new data immediately. We do not keep Google Ads data for more than 24 months
+          after disconnection. Authorized personnel can ask us to delete it sooner. We delete the
+          requested Google Ads data, including stored API tokens, within 30 days of a verified
+          request sent to the email below, unless a longer period is required by law. Internal
+          login records are deleted when the person’s access to the tool ends, or sooner on
+          request, subject to the same legal exception.
+        </p>
+
+        <h2>Changes to this policy</h2>
+        <p>
+          If we change how Zhijun Ads Manager uses Google Ads data, we will update this page and
+          the date above before the change takes effect. The current version is always linked
+          from the homepage at{' '}
+          <a href="https://zjads.top/privacy">https://zjads.top/privacy</a>.
         </p>
 
         <h2>No AI-generated content</h2>

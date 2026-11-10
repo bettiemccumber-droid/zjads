@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { setCanonical } from '../utils/canonical';
+import { PLATFORM_ORIGIN, setCanonical } from '../utils/canonical';
 import './LandingPage.css';
 
 type LandingLang = 'zh' | 'en';
@@ -12,12 +12,10 @@ const COMPANY_EN = 'Wenzhou Lucheng District Zhijun E-commerce Firm';
 /** 审核与用户联系使用的可达邮箱。 */
 const CONTACT_EMAIL = 'marshallmarsxybasi01318@gmail.com';
 
-/** 公司官网。 */
-const COMPANY_SITE = 'https://www.zhijun-commerce.top/';
-
 interface LandingCopy {
   badge: string;
   title: string;
+  purpose: string;
   lead: string;
   note: string;
   about: string;
@@ -52,14 +50,16 @@ interface LandingCopy {
 const COPY: Record<LandingLang, LandingCopy> = {
   zh: {
     badge: '联盟营销 · Google Ads 自动化',
-    title: '广告自动化平台',
+    title: '内部 Google Ads 管理工具',
+    purpose:
+      '本平台是内部广告自动化工具，用于管理自有 Google Ads 账户，只做广告数据分析和投放管理。本平台不生成 AI 内容，包括非自愿私密影像（NCII）。',
     lead: `${COMPANY_ZH}是一家联盟营销公司。公司内部广告团队通过本平台在我们自有的 Google Ads 经理账户（MCC）下管理 Google 搜索广告与效果最大化广告。所有广告预算均由本公司直接向 Google 支付。我们不为任何第三方客户管理广告。`,
-    note: '本平台仅供公司内部广告团队使用，不向任何第三方提供产品或服务。所有广告均遵守 Google Ads 联盟营销计划政策（Affiliate Program Policy）。',
+    note: '本平台仅供公司内部广告团队使用，不向任何第三方提供产品或服务。所有广告均遵守 Google Ads 联盟营销计划政策。',
     about: '了解公司背景',
-    pills: ['Google Ads API v23 认证', '自有 MCC · Google 直接扣款', '符合联盟营销计划政策'],
+    pills: ['使用 Google Ads API', '自有 MCC · Google 直接扣款', '符合联盟营销计划政策'],
     enterUser: '进入用户平台',
     enterAdmin: '进入总控制台',
-    demo: '平台演示',
+    demo: 'API 使用说明',
     contact: '联系我们',
     apiTitle: 'Google Ads API v23 — 使用方式',
     readLabel: '读操作',
@@ -78,7 +78,7 @@ const COPY: Record<LandingLang, LandingCopy> = {
     ],
     apiNote:
       '在自有 MCC 下管理多个 Google Ads 子账户。所有广告费用由本公司直接向 Google 支付。需要 Basic Access（15,000 ops/天）——日常操作早已超出 Explorer Access 配额。',
-    apiMore: '查看平台演示与案例',
+    apiMore: '查看 API 使用说明',
     capTitle: '平台能力',
     capLead: '为联盟营销驱动的 Google Ads 运营提供端到端能力。',
     caps: [
@@ -87,7 +87,7 @@ const COPY: Record<LandingLang, LandingCopy> = {
         body: '从国际联盟网络发展合作商家，分配给内部团队成员进行端到端的广告管理。',
       },
       {
-        title: 'Google Ads 智能投放',
+        title: 'Google Ads 投放管理',
         body: '自动化 Google 搜索广告与效果最大化广告全流程 — 广告系列创建、关键词设置、出价策略、地域/语言定向、RSA 组合及素材管理。',
       },
       {
@@ -113,18 +113,20 @@ const COPY: Record<LandingLang, LandingCopy> = {
   },
   en: {
     badge: 'Affiliate marketing · Google Ads automation',
-    title: 'Advertising automation platform',
+    title: 'Internal Google Ads management tool',
+    purpose:
+      'Zhijun Ads Manager is an internal advertising automation tool used only to manage our own Google Ads accounts. It is used for advertising data analysis and campaign management. It does not generate AI content, including non-consensual intimate imagery (NCII).',
     lead: `${COMPANY_EN} is an affiliate marketing company. Our internal ads team uses this platform to manage Google Search and Performance Max campaigns under our own Google Ads manager account (MCC). All ad budgets are paid by the company directly to Google. We do not manage advertising for any third-party client.`,
     note: 'This platform is for the company’s internal ads team only and is not offered to any third party. Every campaign follows the Google Ads affiliate program policy.',
     about: 'About the company',
     pills: [
-      'Google Ads API v23',
+      'Uses the Google Ads API',
       'Own MCC · billed by Google',
       'Affiliate program policy',
     ],
     enterUser: 'User platform',
     enterAdmin: 'Admin console',
-    demo: 'Platform demo',
+    demo: 'How the API is used',
     contact: 'Contact us',
     apiTitle: 'Google Ads API v23 — how we use it',
     readLabel: 'Read',
@@ -143,7 +145,7 @@ const COPY: Record<LandingLang, LandingCopy> = {
     ],
     apiNote:
       'Multiple Google Ads sub-accounts are managed under our own MCC. All ad spend is paid by the company directly to Google. Basic Access (15,000 ops/day) is required — daily operations already exceed the Explorer Access quota.',
-    apiMore: 'View the platform demo',
+    apiMore: 'See how the API is used',
     capTitle: 'Platform capabilities',
     capLead: 'End-to-end tooling for affiliate-driven Google Ads operations.',
     caps: [
@@ -182,13 +184,14 @@ const COPY: Record<LandingLang, LandingCopy> = {
  * 营销展示页。版式与文案对齐 fengdu-ads 参考首页，登录入口统一指向 /login。
  */
 export default function LandingPage() {
-  const [lang, setLang] = useState<LandingLang>('zh');
+  const [lang, setLang] = useState<LandingLang>('en');
   const t = COPY[lang];
 
   useEffect(() => {
     document.title = 'Zhijun Ads Manager';
+    document.documentElement.lang = lang === 'zh' ? 'zh-CN' : 'en';
     setCanonical('/');
-  }, []);
+  }, [lang]);
 
   return (
     <div className="lp">
@@ -203,7 +206,7 @@ export default function LandingPage() {
           </span>
         </Link>
         <div className="lp-header__actions">
-          <a className="lp-site" href={COMPANY_SITE} target="_blank" rel="noreferrer">
+          <a className="lp-site" href={PLATFORM_ORIGIN} target="_blank" rel="noreferrer">
             {t.website}
           </a>
           <button
@@ -224,19 +227,11 @@ export default function LandingPage() {
           </p>
           <h1>Zhijun Ads Manager</h1>
           <p className="lp-kicker">{t.title}</p>
-          <p className="lp-purpose">
-            本平台是内部广告自动化工具，用于管理自有 Google Ads 账户，只做广告数据分析和投放管理。
-          </p>
-          <p className="lp-purpose lp-purpose--en">
-            Zhijun Ads Manager is an internal advertising automation tool used only to manage our
-            own Google Ads accounts. It is used for advertising data analysis and campaign
-            management. It does not generate AI content, including non-consensual intimate imagery
-            (NCII).
-          </p>
+          <p className="lp-purpose">{t.purpose}</p>
           <p className="lp-lead">{t.lead}</p>
           <p className="lp-note">
             {t.note}{' '}
-            <a href={COMPANY_SITE} target="_blank" rel="noreferrer">
+            <a href={PLATFORM_ORIGIN} target="_blank" rel="noreferrer">
               {t.about} <span aria-hidden="true">→</span>
             </a>
           </p>
@@ -337,7 +332,7 @@ export default function LandingPage() {
             <h2>{t.colProduct}</h2>
             <Link to="/">{t.home}</Link>
             <a href="#api">{t.demo}</a>
-            <a href={COMPANY_SITE} target="_blank" rel="noreferrer">
+            <a href={PLATFORM_ORIGIN} target="_blank" rel="noreferrer">
               {t.about}
             </a>
           </nav>
@@ -345,25 +340,31 @@ export default function LandingPage() {
             <h2>{t.colLegal}</h2>
             <Link to="/privacy">{t.privacy}</Link>
             <Link to="/terms">{t.terms}</Link>
+            {lang === 'zh' ? (
+              <>
+                <Link to="/privacy">Privacy Policy</Link>
+                <Link to="/terms">Terms of Service</Link>
+              </>
+            ) : null}
           </nav>
           <div id="contact">
             <h2>{t.colContact}</h2>
             <a href="#contact">{t.contact}</a>
             <a href={`mailto:${CONTACT_EMAIL}`}>{CONTACT_EMAIL}</a>
-            <a href={COMPANY_SITE} target="_blank" rel="noreferrer">
+            <a href={PLATFORM_ORIGIN} target="_blank" rel="noreferrer">
               {t.website}
             </a>
           </div>
         </div>
         <p className="lp-footer__copy">{t.copyright}</p>
         <p className="lp-footer__legal">
-          温州市鹿城区志君电子商务商行 (Wenzhou Lucheng District Zhijun E-commerce Firm)
+          {lang === 'zh' ? COMPANY_ZH : COMPANY_EN}
           <br />
-          © 2024 {COMPANY_EN}. All rights reserved.
+          {lang === 'zh' ? `© 2026 ${COMPANY_ZH} 版权所有` : `© 2026 ${COMPANY_EN}. All rights reserved.`}
           {' · '}
-          <Link to="/privacy">Privacy Policy</Link>
+          <Link to="/privacy">{t.privacy}</Link>
           {' · '}
-          <Link to="/terms">Terms of Service</Link>
+          <Link to="/terms">{t.terms}</Link>
         </p>
       </footer>
     </div>

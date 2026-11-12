@@ -10,6 +10,7 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import { AuthGuard } from '@nestjs/passport';
+import { Type } from 'class-transformer';
 import { IsDateString, IsInt, IsOptional, IsString, IsUrl, MaxLength } from 'class-validator';
 import { ok } from '../common/api-response';
 import { CurrentUser } from '../auth/current-user.decorator';
@@ -42,6 +43,7 @@ class CreateAdDataSourceBody {
 
 class ListQuery {
   @IsOptional()
+  @Type(() => Number)
   @IsInt()
   userId?: number;
 }

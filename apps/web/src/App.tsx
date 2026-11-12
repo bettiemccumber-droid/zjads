@@ -102,7 +102,7 @@ export default function App() {
             }
           />
           <Route path="ads-automation" element={<AdsAutomationRoute />} />
-          <Route path="ads/merchants" element={<EmployeeOnlyRoute><MyMerchantsPage /></EmployeeOnlyRoute>} />
+          <Route path="ads/merchants" element={<MyMerchantsPage />} />
           <Route path="ads/accounts" element={<EmployeeOnlyRoute><AccountStatusPage /></EmployeeOnlyRoute>} />
           <Route path="ads/articles/publish" element={<EmployeeOnlyRoute><ArticlePublishPage /></EmployeeOnlyRoute>} />
           <Route path="ads/articles" element={<EmployeeOnlyRoute><ArticlesPage /></EmployeeOnlyRoute>} />

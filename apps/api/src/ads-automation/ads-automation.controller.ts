@@ -25,7 +25,7 @@ import {
 } from 'class-validator';
 import { CurrentUser } from '../auth/current-user.decorator';
 import { ok } from '../common/api-response';
-import { AuthUser } from '../common/ownership.util';
+import { AuthUser, resolveOwnerUserId } from '../common/ownership.util';
 import { AdDraft, AdKeyword, AdSitelink } from './ads-automation.util';
 import { AdsAutomationService } from './ads-automation.service';
 
@@ -207,14 +207,16 @@ export class AdsAutomationController {
   }
 
   @Get('catalog-merchants')
-  async listMerchants(@CurrentUser() user: AuthUser) {
-    return ok(await this.ads.listMerchants(user.id));
+  async listMerchants(@CurrentUser() user: AuthUser, @Query('userId') userId?: string) {
+    const ownerUserId = resolveOwnerUserId(user, userId ? Number(userId) : undefined, 'read');
+    return ok(await this.ads.listMerchants(ownerUserId));
   }
 
-  /** 已经投过广告的商家。 */
+  /** 已经投过广告的商家。管理员可以带 userId 查看某位员工。 */
   @Get('catalog-merchants/advertised')
-  async listAdvertisedMerchants(@CurrentUser() user: AuthUser) {
-    return ok(await this.ads.listAdvertisedMerchants(user.id));
+  async listAdvertisedMerchants(@CurrentUser() user: AuthUser, @Query('userId') userId?: string) {
+    const ownerUserId = resolveOwnerUserId(user, userId ? Number(userId) : undefined, 'read');
+    return ok(await this.ads.listAdvertisedMerchants(ownerUserId));
   }
 
   /** 从联盟商家库翻页查找，结果里带商家网址。 */
@@ -225,9 +227,11 @@ export class AdsAutomationController {
     @Query('q') q?: string,
     @Query('page') page?: string,
     @Query('pageSize') pageSize?: string,
+    @Query('userId') userId?: string,
   ) {
+    const ownerUserId = resolveOwnerUserId(user, userId ? Number(userId) : undefined, 'read');
     return ok(
-      await this.ads.discoverMerchants(user.id, {
+      await this.ads.discoverMerchants(ownerUserId, {
         channelAccountId: channelAccountId ? Number(channelAccountId) : undefined,
         q,
         page: page ? Number(page) : 1,

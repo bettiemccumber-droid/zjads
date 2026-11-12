@@ -11,6 +11,285 @@
   gap: 16px;
 }
 
+.merchant-page__title {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.merchant-page__title > .anticon {
+  margin-top: 4px;
+  color: #1677ff;
+  font-size: 18px;
+}
+
+.merchant-page__sub {
+  margin-top: 4px;
+  color: #98a2b3;
+  font-size: 13px;
+}
+
+.merchant-dash {
+  display: grid;
+  grid-template-columns: 0.9fr 1.45fr 1.05fr 0.8fr;
+  gap: 12px;
+}
+
+.merchant-panel {
+  min-height: 196px;
+  padding: 14px 14px 12px;
+  border: 1px solid #e7ebf0;
+  border-radius: 10px;
+  background: #fff;
+}
+
+.merchant-panel--ai {
+  background: #f7f5ff;
+  border-color: #e4dcff;
+}
+
+.merchant-panel__bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.merchant-panel__title {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: #1f2937;
+  font-size: 14px;
+  font-weight: 650;
+}
+
+.merchant-panel__title > .anticon {
+  color: #1677ff;
+}
+
+.merchant-panel__bar .merchant-panel__title {
+  margin: 0;
+}
+
+.merchant-stat__num {
+  margin-top: 8px;
+  color: #1f2329;
+  font-size: 32px;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.merchant-stat__label {
+  margin-top: 6px;
+  color: #cf1322;
+  font-size: 13px;
+}
+
+.merchant-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 12px;
+  min-height: 28px;
+}
+
+.merchant-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: #475467;
+  font-size: 12px;
+}
+
+.merchant-chip b {
+  font-weight: 650;
+}
+
+.merchant-stat__foot {
+  margin-top: 12px;
+  color: #98a2b3;
+  font-size: 12px;
+}
+
+.merchant-save.ant-btn {
+  height: 26px;
+  padding-inline: 10px;
+  border-radius: 6px;
+  font-size: 12px;
+}
+
+.merchant-setting-line {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+  color: #667085;
+  font-size: 12px;
+}
+
+.merchant-setting-line .ant-select,
+.merchant-setting-line .ant-input {
+  width: 118px;
+}
+
+.merchant-setting-line .ant-form-item {
+  margin: 0;
+}
+
+.merchant-ecpc {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: #344054;
+}
+
+.merchant-nets {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.merchant-nets .ant-checkbox-wrapper {
+  color: #667085;
+  font-size: 12px;
+}
+
+.merchant-eu.ant-tag {
+  margin: 0;
+  color: #1677ff;
+  background: #e6f4ff;
+  border-color: #91caff;
+}
+
+.merchant-settings .ant-form-item {
+  margin-bottom: 6px;
+}
+
+.merchant-settings .ant-form-item-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: nowrap;
+}
+
+.merchant-settings .ant-form-item-label {
+  flex: 0 0 76px;
+  padding: 0;
+  text-align: left;
+}
+
+.merchant-settings .ant-form-item-label > label {
+  height: 22px;
+  color: #667085;
+  font-size: 12px;
+}
+
+.merchant-settings__note {
+  color: #98a2b3;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.merchant-engine {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 14px;
+}
+
+.merchant-engine__name {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: #1f2937;
+  font-size: 13px;
+  font-weight: 650;
+}
+
+.merchant-engine__name > .anticon {
+  color: #98a2b3;
+}
+
+.merchant-engine__bolt {
+  color: #1677ff !important;
+}
+
+.merchant-engine__text {
+  margin-top: 2px;
+  color: #98a2b3;
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.merchant-ai__empty {
+  margin-top: 18px;
+  color: #667085;
+  font-size: 14px;
+}
+
+.merchant-ai__counts {
+  display: flex;
+  gap: 24px;
+  margin-top: 22px;
+}
+
+.merchant-ai__counts b {
+  display: block;
+  color: #1f2329;
+  font-size: 22px;
+  line-height: 1;
+}
+
+.merchant-ai__counts span {
+  color: #98a2b3;
+  font-size: 12px;
+}
+
+.merchant-ai__btn {
+  margin-top: 16px;
+}
+
+.merchant-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.merchant-tab__icon--shop { color: #1677ff; }
+.merchant-tab__icon--star { color: #52c41a; }
+.merchant-tab__icon--warn { color: #fa8c16; }
+.merchant-tab__icon--hot { color: #f5222d; }
+.merchant-tab__icon--node { color: #1677ff; }
+.merchant-tab__icon--run { color: #722ed1; }
+.merchant-tab__icon--back { color: #fa541c; }
+
+.ant-tabs-tab-active .merchant-tab__icon {
+  color: #1677ff;
+}
+
+.merchant-empty {
+  padding: 48px 0;
+  color: #98a2b3;
+  text-align: center;
+}
+
+.merchant-rate {
+  color: #389e0d;
+  font-variant-numeric: tabular-nums;
+}
+
+.merchant-rate--bad {
+  color: #cf1322;
+}
+
+@media (max-width: 1280px) {
+  .merchant-dash {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
 .merchant-page__stats {
   display: flex;
   align-items: center;

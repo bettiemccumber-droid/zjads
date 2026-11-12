@@ -142,6 +142,11 @@ export function buildAdminSidebarMenu(): MenuProps['items'] {
     ]),
     group('商家管理', [
       item(
+        '/ads/merchants',
+        <ShopOutlined />,
+        <Link to="/ads/merchants">我的商家</Link>,
+      ),
+      item(
         MERCHANT_HUB_STATUS_KEY,
         <SafetyCertificateOutlined />,
         <Link to="/merchants/status">商家状态</Link>,

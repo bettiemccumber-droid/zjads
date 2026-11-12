@@ -304,6 +304,12 @@ export class AdsAutomationController {
     return ok(await this.ads.publishArticle(user.id, id), '已提交到内容站');
   }
 
+  @Delete('articles/:id')
+  async deleteArticle(@CurrentUser() user: AuthUser, @Param('id', ParseIntPipe) id: number) {
+    this.assertWriter(user);
+    return ok(await this.ads.deleteArticle(user.id, id), '文章已删除');
+  }
+
   @Get('google-ads/customers')
   async listCustomers(@CurrentUser() user: AuthUser, @Query('mccCustomerId') mccCustomerId: string) {
     return ok(await this.ads.listCustomers(user.id, mccCustomerId));

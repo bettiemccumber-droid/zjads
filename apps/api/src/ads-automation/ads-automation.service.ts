@@ -83,6 +83,33 @@ export class ArticlePublisher {
     }
     return { articleUrl: readPublishedUrl(response.data) };
   }
+
+  /**
+   * 按文章地址里的 slug 通知内容站删掉这篇。404 视为已经不在站上。
+   * 没有公开地址、地址或密钥时不发请求。
+   */
+  async remove(input: { publishUrl: string; token: string; articleUrl: string }): Promise<void> {
+    const publishUrl = input.publishUrl.trim().replace(/\/$/, '');
+    const token = input.token.trim();
+    const slug = slugFromArticleUrl(input.articleUrl);
+    if (!publishUrl || !token || !slug) return;
+    let response;
+    try {
+      response = await axios.delete(`${publishUrl}/${encodeURIComponent(slug)}`, {
+        headers: { Authorization: `Bearer ${token}` },
+        timeout: 20000,
+        validateStatus: () => true,
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : '内容站没有响应';
+      throw new BadRequestException(`内容站没有响应：${message}`);
+    }
+    if (response.status === 404) return;
+    if (response.status < 200 || response.status >= 300) {
+      const detail = publishErrorText(response.data);
+      throw new BadRequestException(detail ? `内容站没能删除这篇文章：${detail}` : `内容站没能删除这篇文章（${response.status}）`);
+    }
+  }
 }
 
 @Injectable()
@@ -333,6 +360,25 @@ export class AdsAutomationService implements OnModuleInit {
       siteDomain: updated.site.domain,
       accepted: Boolean(articleUrl),
     };
+  }
+
+  /**
+   * 删掉员工自己的文章。已发布的先从内容站撤下，撤不掉就不删本地记录。
+   * 只发文章、没有广告系列的任务一并删掉，避免留下空任务。
+   */
+  async deleteArticle(ownerUserId: number, id: number) {
+    const row = await this.prisma.article.findFirst({
+      where: { id, ownerUserId },
+      include: { site: true, job: { include: { campaign: true } } },
+    });
+    if (!row) throw new NotFoundException('文章不存在');
+    await this.removeFromSite(row.site, row.articleUrl);
+    if (row.job.step === 'ARTICLE_ONLY' && !row.job.campaign) {
+      await this.prisma.adJob.delete({ where: { id: row.adJobId } });
+    } else {
+      await this.prisma.article.delete({ where: { id: row.id } });
+    }
+    return { id };
   }
 
   /**
@@ -1296,8 +1342,16 @@ export class AdsAutomationService implements OnModuleInit {
   }
 
   /**
-   * 按站点配置把文章交出去。商家网址和跟踪链接分开传，文章地址只认对方返回的 url。
+   * 用站点上保存的地址和密钥，按文章公开地址删除对应 slug。
    */
+  private removeFromSite(site: { publishUrl: string; publishTokenEnc: string }, articleUrl: string) {
+    return this.articles.remove({
+      publishUrl: site.publishUrl,
+      token: this.readSiteToken(site.publishTokenEnc),
+      articleUrl,
+    });
+  }
+
   private publishToSite(
     site: { publishUrl: string; publishTokenEnc: string },
     article: { title: string; bodyHtml: string; trackUrl: string; merchantUrl: string; merchantName: string },
@@ -1582,6 +1636,23 @@ function excerptFromHtml(html: string): string {
 }
 
 /**
+ * 从文章公开地址取出 slug。内容站详情页用 ?slug=，也兼容路径最后一段。
+ */
+function slugFromArticleUrl(articleUrl: string): string {
+  const raw = articleUrl.trim();
+  if (!raw) return '';
+  try {
+    const url = new URL(raw);
+    const query = url.searchParams.get('slug')?.trim();
+    if (query) return query;
+    const parts = url.pathname.split('/').filter(Boolean);
+    return decodeURIComponent(parts[parts.length - 1] ?? '');
+  } catch {
+    return '';
+  }
+}
+
+/**
  * 内容站成功响应里的文章地址。商家网址不会被当成文章地址。
  */
 function readPublishedUrl(data: unknown): string {
@@ -1599,8 +1670,9 @@ function readPublishedUrl(data: unknown): string {
 function publishErrorText(data: unknown): string {
   if (!data) return '';
   if (typeof data === 'string') return data.slice(0, 200);
-  if (typeof data === 'object' && data && 'message' in data) {
-    const message = (data as { message?: unknown }).message;
+  if (typeof data === 'object' && data) {
+    const record = data as { message?: unknown; error?: unknown };
+    const message = record.message ?? record.error;
     if (typeof message === 'string') return message.slice(0, 200);
     if (Array.isArray(message)) return message.map((item) => String(item)).join('；').slice(0, 200);
   }

@@ -454,9 +454,12 @@ export default function ArticlePublishPage() {
               <>
                 <WarningOutlined style={{ fontSize: 48, color: '#faad14' }} />
                 <Typography.Title level={4} style={{ marginTop: 16, marginBottom: 8 }}>爬取未获取到图片</Typography.Title>
-                <Typography.Paragraph type="secondary" style={{ marginBottom: 24 }}>
+                <Typography.Paragraph type="secondary" style={{ marginBottom: imageError ? 8 : 24 }}>
                   商家站可能有企业级反爬保护，您可以手动输入产品页 URL 重试，或跳过爬取直接上传图片
                 </Typography.Paragraph>
+                {imageError ? (
+                  <Typography.Paragraph type="secondary" style={{ marginBottom: 24 }}>{imageError}</Typography.Paragraph>
+                ) : null}
                 <Space.Compact style={{ width: '100%', maxWidth: 640 }}>
                   <Input
                     prefix={<LinkOutlined />}

@@ -894,11 +894,9 @@ export default function MyMerchantsPage() {
               }
               setJob(res.data.data);
               message.success('已开始制作广告');
-              if (user) {
-                if (scopeUserId != null) {
-                  const next = readHiddenMids(scopeUserId).filter((mid) => mid !== launchMerchant.mid);
-                  localStorage.setItem(hiddenStorageKey(scopeUserId), JSON.stringify(next));
-                }
+              if (user && scopeUserId != null) {
+                const next = readHiddenMids(scopeUserId).filter((mid) => mid !== launchMerchant.mid);
+                localStorage.setItem(hiddenStorageKey(scopeUserId), JSON.stringify(next));
                 setHiddenMids(next);
               }
               await load();

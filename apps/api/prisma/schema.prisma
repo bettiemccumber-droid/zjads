@@ -609,7 +609,7 @@ model Article {
   siteId            Int      @map("site_id")
   adJobId           String   @unique @map("ad_job_id")
   title             String   @db.VarChar(255)
-  body              String   @db.Text
+  body              String   @db.MediumText
   trackUrl          String   @map("track_url") @db.VarChar(2048)
   merchantUrl       String   @map("merchant_url") @db.VarChar(2048)
   articleUrl        String   @default("") @map("article_url") @db.VarChar(2048)

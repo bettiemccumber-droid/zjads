@@ -17,6 +17,7 @@ import {
   buildSampleArticle,
   buildSampleDraft,
   buildTrackUrl,
+  acceptedArticleImage,
   sampleArticleHtml,
   isCustomerEligible,
   usdToMicros,
@@ -1474,7 +1475,7 @@ export class AdsAutomationService implements OnModuleInit {
     const sample = buildSampleArticle({ merchantName: name, merchantUrl, trackUrl, languageCode });
     const imageUrls = (input.imageUrls ?? [])
       .map((url) => url.trim())
-      .filter((url, index, all) => /^https?:\/\//i.test(url) && url.length <= 2048 && all.indexOf(url) === index)
+      .filter((url, index, all) => acceptedArticleImage(url) && all.indexOf(url) === index)
       .slice(0, 8);
     return { account, merchant, name, mid, countryCode, languageCode, trackUrl, merchantUrl, sample, imageUrls };
   }

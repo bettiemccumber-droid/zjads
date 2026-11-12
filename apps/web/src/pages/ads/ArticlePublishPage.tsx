@@ -1,7 +1,7 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Button, Card, Divider, Form, Input, Result, Select, Space, Spin, Steps, Tag, Typography, message } from 'antd';
-import { FileTextOutlined } from '@ant-design/icons';
+import { FileTextOutlined, LinkOutlined, WarningOutlined } from '@ant-design/icons';
 import { api, type ApiResult } from '../../api/client';
 
 interface ChannelAccount {
@@ -73,6 +73,37 @@ interface CrawledImage {
 }
 
 /**
+ * 把本地图片压成 jpeg，方便放进文章正文。
+ */
+function readUploadedImage(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const image = new Image();
+    const objectUrl = URL.createObjectURL(file);
+    image.onload = () => {
+      const longest = Math.max(image.width, image.height);
+      const scale = longest > 1280 ? 1280 / longest : 1;
+      const canvas = document.createElement('canvas');
+      canvas.width = Math.max(1, Math.round(image.width * scale));
+      canvas.height = Math.max(1, Math.round(image.height * scale));
+      const context = canvas.getContext('2d');
+      if (!context) {
+        URL.revokeObjectURL(objectUrl);
+        reject(new Error('无法读取图片'));
+        return;
+      }
+      context.drawImage(image, 0, 0, canvas.width, canvas.height);
+      URL.revokeObjectURL(objectUrl);
+      resolve(canvas.toDataURL('image/jpeg', 0.82));
+    };
+    image.onerror = () => {
+      URL.revokeObjectURL(objectUrl);
+      reject(new Error('无法读取图片'));
+    };
+    image.src = objectUrl;
+  });
+}
+
+/**
  * 国家代码对应的文章语言。未列出的国家先按英文处理。
  */
 function languageOf(countryCode: string): { code: string; label: string } {
@@ -113,6 +144,8 @@ export default function ArticlePublishPage() {
   const [imageError, setImageError] = useState('');
   const [crawling, setCrawling] = useState(false);
   const [imageAttempt, setImageAttempt] = useState(0);
+  const [retryUrl, setRetryUrl] = useState('');
+  const uploadRef = useRef<HTMLInputElement>(null);
   const [preview, setPreview] = useState<ArticlePreview | null>(null);
   const [generating, setGenerating] = useState(false);
   const [publishing, setPublishing] = useState(false);
@@ -126,6 +159,41 @@ export default function ArticlePublishPage() {
   /**
    * 表单卸掉后字段会被清掉，所以离开每一步时把值记在 draft 里。
    */
+  /**
+   * 用员工填的产品页重新抓一次。
+   */
+  const retryWithUrl = () => {
+    const next = retryUrl.trim();
+    if (!/^https?:\/\//i.test(next)) {
+      message.warning('请填写以 http 或 https 开头的产品页网址');
+      return;
+    }
+    setDraft((current) => ({ ...current, merchantUrl: next }));
+    setImageAttempt((current) => current + 1);
+  };
+
+  /**
+   * 读取电脑上的图片，放进配图列表。
+   */
+  const addUploadedImages = async (list: FileList | null) => {
+    const files = [...(list ?? [])].filter((file) => /^image\/(jpeg|png|webp)$/.test(file.type));
+    if (!files.length) {
+      message.warning('请选择 jpg、png 或 webp 图片');
+      return;
+    }
+    try {
+      const urls = (await Promise.all(files.map(readUploadedImage))).filter((url) => url.length <= 1_500_000);
+      if (!urls.length) {
+        message.warning('图片太大，请换一张小一些的');
+        return;
+      }
+      setImages((current) => [...current, ...urls.map((url) => ({ url, alt: '上传的图片' }))].slice(0, 8));
+      setSelectedImageUrls((current) => [...current, ...urls].filter((url, index, all) => all.indexOf(url) === index).slice(0, 8));
+    } catch {
+      message.error('这张图片读不出来');
+    }
+  };
+
   const currentPayload = () => ({
     channelAccountId: draft.channelAccountId,
     siteId: account?.siteId ?? undefined,
@@ -358,6 +426,7 @@ export default function ArticlePublishPage() {
             layout="vertical"
             onFinish={(values) => {
               setDraft((current) => ({ ...current, countryCode: values.countryCode }));
+              setRetryUrl(draft.merchantUrl || '');
               setStep(2);
             }}
           >
@@ -383,11 +452,27 @@ export default function ArticlePublishPage() {
               </>
             ) : (
               <>
-                <Typography.Paragraph>{imageError || '还没有抓到图片'}</Typography.Paragraph>
-                <Space>
-                  <Button onClick={() => setStep(1)}>上一步</Button>
-                  <Button type="primary" onClick={() => setImageAttempt((current) => current + 1)}>重新抓取</Button>
-                </Space>
+                <WarningOutlined style={{ fontSize: 48, color: '#faad14' }} />
+                <Typography.Title level={4} style={{ marginTop: 16, marginBottom: 8 }}>爬取未获取到图片</Typography.Title>
+                <Typography.Paragraph type="secondary" style={{ marginBottom: 24 }}>
+                  商家站可能有企业级反爬保护，您可以手动输入产品页 URL 重试，或跳过爬取直接上传图片
+                </Typography.Paragraph>
+                <Space.Compact style={{ width: '100%', maxWidth: 640 }}>
+                  <Input
+                    prefix={<LinkOutlined />}
+                    placeholder="输入商家产品页 URL，如 https://www..."
+                    value={retryUrl}
+                    onChange={(event) => setRetryUrl(event.target.value)}
+                    onPressEnter={retryWithUrl}
+                  />
+                  <Button type="primary" onClick={retryWithUrl}>用此 URL 重试爬取</Button>
+                </Space.Compact>
+                <div style={{ marginTop: 20 }}>
+                  <Space>
+                    <Button onClick={() => setStep(1)}>上一步</Button>
+                    <Button type="primary" onClick={() => setStep(3)}>跳过爬取，直接上传图片</Button>
+                  </Space>
+                </div>
               </>
             )}
           </div>
@@ -396,7 +481,19 @@ export default function ArticlePublishPage() {
         {step === 3 && (
           <Spin spinning={generating} tip="正在生成示例文章，请稍候...">
             <Typography.Text strong>选择文章配图（已选 {selectedImageUrls.length} 条）</Typography.Text>
-            <Typography.Paragraph type="secondary">这些图片来自商家页面。勾选要留在文章里的图片。本地上传还没接上。</Typography.Paragraph>
+            <Typography.Paragraph type="secondary">勾选要留在文章里的图片。没有抓到的话，可以从电脑上传。</Typography.Paragraph>
+            <input
+              ref={uploadRef}
+              type="file"
+              accept="image/jpeg,image/png,image/webp"
+              multiple
+              hidden
+              onChange={(event) => {
+                void addUploadedImages(event.target.files);
+                event.target.value = '';
+              }}
+            />
+            <Button style={{ marginBottom: 12 }} onClick={() => uploadRef.current?.click()}>上传图片</Button>
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 12 }}>
               {images.map((image) => {
                 const selected = selectedImageUrls.includes(image.url);
@@ -532,6 +629,7 @@ export default function ArticlePublishPage() {
                   setImages([]);
                   setSelectedImageUrls([]);
                   setImageError('');
+                  setRetryUrl('');
                   setDraft({ countryCode: 'US' });
                   form.resetFields();
                   form.setFieldsValue({ countryCode: 'US' });

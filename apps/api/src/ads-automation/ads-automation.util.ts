@@ -311,7 +311,7 @@ export function sampleArticleHtml(
 ): string {
   const figures = imageUrls
     .map((url) => url.trim())
-    .filter((url, index, all) => /^https?:\/\//i.test(url) && url.length <= 2048 && all.indexOf(url) === index)
+    .filter((url, index, all) => acceptedArticleImage(url) && all.indexOf(url) === index)
     .slice(0, 8)
     .map((url) => `<p><img src="${escapeHtml(url)}" alt=""></p>`)
     .join('');
@@ -319,6 +319,14 @@ export function sampleArticleHtml(
     .map((section) => `<h2>${escapeHtml(section.heading)}</h2><p>${escapeHtml(section.text)}</p>`)
     .join('');
   return `${figures}${blocks}<p><a href="${escapeHtml(trackUrl)}">${escapeHtml(merchantName)}</a></p>`;
+}
+
+/**
+ * 文章配图只接受商家页面上的网址，或员工上传后压出来的图片。
+ */
+export function acceptedArticleImage(url: string): boolean {
+  if (/^https?:\/\//i.test(url)) return url.length <= 2048;
+  return /^data:image\/(?:jpeg|png|webp);base64,[a-z0-9+/=\s]+$/i.test(url) && url.length <= 1_500_000;
 }
 
 /**

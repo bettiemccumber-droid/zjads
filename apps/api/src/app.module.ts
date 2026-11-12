@@ -1,4 +1,5 @@
-import { Module } from '@nestjs/common';
+import { MiddlewareConsumer, Module, NestModule } from '@nestjs/common';
+import { json, urlencoded } from 'express';
 import { ConfigModule } from '@nestjs/config';
 import { ScheduleModule } from '@nestjs/schedule';
 import { AdminModule } from './admin/admin.module';
@@ -36,4 +37,11 @@ import { AdsAutomationModule } from './ads-automation/ads-automation.module';
     AdminModule,
   ],
 })
-export class AppModule {}
+export class AppModule implements NestModule {
+  /**
+   * 文章配图会以压缩后的图片数据放进请求体，默认 100KB 装不下。
+   */
+  configure(consumer: MiddlewareConsumer) {
+    consumer.apply(json({ limit: '8mb' }), urlencoded({ extended: true, limit: '8mb' })).forRoutes('*');
+  }
+}

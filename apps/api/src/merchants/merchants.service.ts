@@ -535,12 +535,15 @@ export class MerchantsService {
   }
 
   /**
-   * 按账号和 MID 向联盟要商标。查不到或接口失败时返回空字符串，调用方继续用首字。
+   * 按账号和 MID 向联盟要商标。查不到或接口失败时不放进结果，调用方继续用首字。
+   * cacheOnly 只读 10 分钟内存缓存，避免商家列表被联盟接口拖住。
+   * fresh 表示这批 MID 都在缓存里，包括已经确认没有商标的。
    */
   async lookupMerchantLogos(
     ownerUserId: number,
     items: Array<{ channelAccountId: number; mid: string; platformCode: string }>,
-  ): Promise<Map<string, string>> {
+    options?: { cacheOnly?: boolean },
+  ): Promise<{ logos: Map<string, string>; fresh: boolean }> {
     const result = new Map<string, string>();
     const accounts = await this.prisma.channelAccount.findMany({
       where: { ownerUserId, isActive: true },
@@ -548,6 +551,7 @@ export class MerchantsService {
     });
     const byId = new Map(accounts.map((account) => [account.id, account]));
     const missing = new Map<number, string[]>();
+    let fresh = true;
     for (const item of items) {
       const mid = item.mid.trim();
       if (!mid) continue;
@@ -556,17 +560,24 @@ export class MerchantsService {
         const matched = accounts.filter((account) => account.platform.code === item.platformCode);
         accountId = matched.length === 1 ? matched[0].id : 0;
       }
-      if (!accountId) continue;
+      if (!accountId) {
+        fresh = false;
+        continue;
+      }
       const cacheKey = `${accountId}:${mid}`;
       const cached = this.logoCache.get(cacheKey);
       if (cached && Date.now() - cached.at < 10 * 60 * 1000) {
         if (cached.logo) result.set(mid, cached.logo);
         continue;
       }
+      fresh = false;
+      if (options?.cacheOnly) continue;
       const list = missing.get(accountId) ?? [];
       list.push(mid);
       missing.set(accountId, list);
     }
+
+    if (options?.cacheOnly || missing.size === 0) return { logos: result, fresh };
 
     await Promise.all([...missing.entries()].map(async ([accountId, mids]) => {
       const account = byId.get(accountId);
@@ -597,7 +608,7 @@ export class MerchantsService {
       }
     }));
 
-    return result;
+    return { logos: result, fresh: true };
   }
 
   /**

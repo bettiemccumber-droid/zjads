@@ -299,6 +299,7 @@ model AdCampaignDaily {
 
   @@unique([ownerUserId, date, customerId, campaignId])
   @@index([ownerUserId, date])
+  @@index([ownerUserId, merchantId])
   @@index([merchantId])
   @@map("ad_campaign_daily")
 }

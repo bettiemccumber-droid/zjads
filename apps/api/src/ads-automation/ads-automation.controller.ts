@@ -212,11 +212,18 @@ export class AdsAutomationController {
     return ok(await this.ads.listMerchants(ownerUserId));
   }
 
-  /** 已经投过广告的商家。管理员可以带 userId 查看某位员工。 */
+  /**
+   * 已经投过广告的商家。管理员可以带 userId 查看某位员工。
+   * logos=1 时再向联盟补商标，默认只读缓存，让列表先返回。
+   */
   @Get('catalog-merchants/advertised')
-  async listAdvertisedMerchants(@CurrentUser() user: AuthUser, @Query('userId') userId?: string) {
+  async listAdvertisedMerchants(
+    @CurrentUser() user: AuthUser,
+    @Query('userId') userId?: string,
+    @Query('logos') logos?: string,
+  ) {
     const ownerUserId = resolveOwnerUserId(user, userId ? Number(userId) : undefined, 'read');
-    return ok(await this.ads.listAdvertisedMerchants(ownerUserId));
+    return ok(await this.ads.listAdvertisedMerchants(ownerUserId, logos === '1'));
   }
 
   /** 从联盟商家库翻页查找，结果里带商家网址。 */

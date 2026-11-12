@@ -1,6 +1,6 @@
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { Alert, Button, Card, Checkbox, Form, Input, Modal, Popconfirm, Select, Space, Switch, Table, Tabs, Tag, Typography, message } from 'antd';
+import { Alert, Button, Card, Checkbox, Form, Input, Modal, Popconfirm, Select, Space, Spin, Switch, Table, Tabs, Tag, Typography, message } from 'antd';
 import {
   AlertOutlined,
   CalendarOutlined,
@@ -345,20 +345,44 @@ export default function MyMerchantsPage() {
   const [discover, setDiscover] = useState<DiscoverResult | null>(null);
   const [discoverLoading, setDiscoverLoading] = useState(false);
   const [claimingKey, setClaimingKey] = useState('');
+  const [merchantsLoaded, setMerchantsLoaded] = useState(false);
+  const loadGen = useRef(0);
 
   const load = useCallback(async () => {
+    const gen = ++loadGen.current;
     const params = viewUserId ? { userId: viewUserId } : undefined;
-    const [accountRes, advertisedRes, sourceRes, catalogRes] = await Promise.all([
+    const advertisedTask = api.get<ApiResult<AdvertisedMerchant[]>>('/catalog-merchants/advertised', { params })
+      .then((res) => {
+        if (gen !== loadGen.current) return;
+        if (!res.data.success) {
+          message.error('加载商家失败');
+          setMerchantsLoaded(true);
+          return;
+        }
+        setAdvertised(res.data.data);
+        setMerchantsLoaded(true);
+        void api.get<ApiResult<AdvertisedMerchant[]>>('/catalog-merchants/advertised', {
+          params: { ...params, logos: '1' },
+        }).then((logoRes) => {
+          if (gen !== loadGen.current || !logoRes.data.success) return;
+          setAdvertised(logoRes.data.data);
+        }).catch(() => undefined);
+      })
+      .catch(() => {
+        if (gen !== loadGen.current) return;
+        message.error('加载商家失败');
+        setMerchantsLoaded(true);
+      });
+    const [accountRes, sourceRes, catalogRes] = await Promise.all([
       api.get<ApiResult<Array<{ platformCode: string; accounts: ChannelAccount[] }>>>('/channel-accounts/by-platform', { params }).catch(() => null),
-      api.get<ApiResult<AdvertisedMerchant[]>>('/catalog-merchants/advertised', { params }).catch(() => null),
       api.get<ApiResult<AdSource[]>>('/ad-sources', { params }).catch(() => null),
       api.get<ApiResult<CatalogMerchant[]>>('/catalog-merchants', { params }).catch(() => null),
+      advertisedTask,
     ]);
+    if (gen !== loadGen.current) return;
     if (accountRes?.data.success) {
       setAccounts(accountRes.data.data.flatMap((group) => group.accounts.map((account) => ({ ...account, platformCode: group.platformCode }))));
     }
-    if (advertisedRes?.data.success) setAdvertised(advertisedRes.data.data);
-    else message.error('加载商家失败');
     if (sourceRes?.data.success) setSources(sourceRes.data.data.map((item) => ({ id: item.id, name: item.name })));
     if (catalogRes?.data.success) {
       setBlocked(catalogRes.data.data.filter((item) => item.blockReason && item.blockReason !== 'none'));
@@ -417,7 +441,7 @@ export default function MyMerchantsPage() {
     settingsForm.setFieldsValue(saved);
     setEngines(loadEngines(scopeUserId));
     setHiddenMids(readHiddenMids(scopeUserId));
-    void load().catch(() => message.error('加载商家失败'));
+    void load();
     const [start, end] = lastNDaysToYesterday(30);
     void api.get<ApiResult<{ items: SettlementRow[] }>>('/orders/settlement/merchant-summary', {
       params: {
@@ -428,6 +452,9 @@ export default function MyMerchantsPage() {
     }).then((res) => {
       if (res.data.success) setChargebacks(res.data.data.items ?? []);
     }).catch(() => setChargebacks([]));
+    return () => {
+      loadGen.current += 1;
+    };
   }, [user, scopeUserId, viewUserId, load, settingsForm]);
 
   useEffect(() => {
@@ -556,17 +583,17 @@ export default function MyMerchantsPage() {
       <div className="merchant-dash">
         <section className="merchant-panel">
           <div className="merchant-panel__title"><ShopOutlined /> 我的商家</div>
-          <div className="merchant-stat__num">{visibleAdvertised.length.toLocaleString('en-US')}</div>
+          <div className="merchant-stat__num">{merchantsLoaded ? visibleAdvertised.length.toLocaleString('en-US') : <Spin size="small" />}</div>
           <div className="merchant-stat__label">可投放</div>
           <div className="merchant-chips">
-            {platformCounts.length === 0 ? <span className="merchant-blank">还没有商家</span> : platformCounts.map(([code, count]) => (
+            {!merchantsLoaded ? <span className="merchant-blank">正在加载</span> : platformCounts.length === 0 ? <span className="merchant-blank">还没有商家</span> : platformCounts.map(([code, count]) => (
               <span key={code || 'unknown'} className="merchant-chip">
                 {platformTag(code)}
                 <b>{count}</b>
               </span>
             ))}
           </div>
-          <div className="merchant-stat__foot">已启用 {enabledCount} · 已暂停 {visibleAdvertised.length - enabledCount}</div>
+          <div className="merchant-stat__foot">{merchantsLoaded ? `已启用 ${enabledCount} · 已暂停 ${visibleAdvertised.length - enabledCount}` : '正在加载商家'}</div>
         </section>
 
         <section className="merchant-panel merchant-panel--settings">
@@ -671,7 +698,7 @@ export default function MyMerchantsPage() {
           items={[
             {
               key: 'mine',
-              label: tabLabel(<ShopOutlined />, `我的商家 (${visibleAdvertised.length})`, 'shop'),
+              label: tabLabel(<ShopOutlined />, merchantsLoaded ? `我的商家 (${visibleAdvertised.length})` : '我的商家', 'shop'),
               children: (
                 <>
                   <div className="merchant-toolbar">
@@ -699,9 +726,11 @@ export default function MyMerchantsPage() {
                     className="merchant-table"
                     rowKey={(row) => `${row.channelAccountId}:${row.mid}`}
                     size="middle"
+                    loading={!merchantsLoaded}
                     scroll={{ x: 1180 }}
                     pagination={{ pageSize: 10, showSizeChanger: true, pageSizeOptions: ['10', '20', '50'], showTotal: (total) => `共 ${total} 条` }}
                     dataSource={visibleAdvertised}
+                    locale={{ emptyText: merchantsLoaded ? '暂无数据' : '正在加载商家' }}
                     expandable={{
                       expandedRowRender: (row) => <CampaignList row={row} onStatus={setLocalStatus} />,
                     }}

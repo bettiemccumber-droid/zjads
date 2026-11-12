@@ -635,7 +635,7 @@ export class AdsAutomationService implements OnModuleInit {
    * 我的商家：这个员工已经投过广告的商家。日报里出现过的，以及在这里领取后生成过广告的。
    * 每个商家带上最近一天的广告系列，本地待提交系列挂在对应商家下面。
    */
-  async listAdvertisedMerchants(ownerUserId: number) {
+  async listAdvertisedMerchants(ownerUserId: number, includeLogos = false) {
     const [daily, running, jobs, accounts, catalogs, latestDay, localCampaigns] = await Promise.all([
       this.prisma.adCampaignDaily.findMany({
         where: {
@@ -768,11 +768,17 @@ export class AdsAutomationService implements OnModuleInit {
     }
 
     const listed = [...rows.values()];
-    const logos = await this.merchants.lookupMerchantLogos(
+    const logoItems = listed.map((row) => ({
+      channelAccountId: row.channelAccountId,
+      mid: row.mid,
+      platformCode: row.platformCode,
+    }));
+    const lookedUp = await this.merchants.lookupMerchantLogos(
       ownerUserId,
-      listed.map((row) => ({ channelAccountId: row.channelAccountId, mid: row.mid, platformCode: row.platformCode })),
+      logoItems,
+      includeLogos ? undefined : { cacheOnly: true },
     );
-    return listed.map((row) => ({ ...row, logo: logos.get(row.mid) || '' }));
+    return listed.map((row) => ({ ...row, logo: lookedUp.logos.get(row.mid) || '' }));
   }
 
   /**

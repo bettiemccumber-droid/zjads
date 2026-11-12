@@ -67,18 +67,10 @@ const COUNTRIES = [
   { value: 'CN', label: 'CN - 中国' },
 ];
 
-const SAMPLE_IMAGES = [
-  '主图',
-  '商品细节',
-  '穿搭',
-  '面料',
-  '场景',
-  '搭配',
-  '促销',
-  '补充',
-];
-
-const IMAGE_COLORS = ['#8aa4b5', '#c4b7a6', '#7f8c9b', '#b7c4ce', '#d7c8b4', '#9aa7b2', '#c9b59a', '#aeb8c2'];
+interface CrawledImage {
+  url: string;
+  alt: string;
+}
 
 /**
  * 国家代码对应的文章语言。未列出的国家先按英文处理。
@@ -105,7 +97,7 @@ function errorText(error: unknown, fallback: string): string {
 }
 
 /**
- * 快速发布文章。配图和正文是示例，三个网址分开保存。
+ * 快速发布文章。配图从商家页面抓取，正文仍是示例，三个网址分开保存。
  */
 export default function ArticlePublishPage() {
   const navigate = useNavigate();
@@ -116,7 +108,11 @@ export default function ArticlePublishPage() {
   const [picked, setPicked] = useState<MerchantOption | null>(null);
   const [draft, setDraft] = useState<PublishForm>({ countryCode: 'US' });
   const [query, setQuery] = useState('');
-  const [selectedImages, setSelectedImages] = useState<number[]>(SAMPLE_IMAGES.map((_, index) => index));
+  const [images, setImages] = useState<CrawledImage[]>([]);
+  const [selectedImageUrls, setSelectedImageUrls] = useState<string[]>([]);
+  const [imageError, setImageError] = useState('');
+  const [crawling, setCrawling] = useState(false);
+  const [imageAttempt, setImageAttempt] = useState(0);
   const [preview, setPreview] = useState<ArticlePreview | null>(null);
   const [generating, setGenerating] = useState(false);
   const [publishing, setPublishing] = useState(false);
@@ -139,6 +135,7 @@ export default function ArticlePublishPage() {
     merchantUrl: draft.merchantUrl?.trim(),
     countryCode: draft.countryCode,
     languageCode: languageOf(draft.countryCode || 'US').code,
+    imageUrls: selectedImageUrls,
   });
 
   useEffect(() => {
@@ -167,9 +164,42 @@ export default function ArticlePublishPage() {
 
   useEffect(() => {
     if (step !== 2) return;
-    const timer = window.setTimeout(() => setStep(3), 700);
-    return () => window.clearTimeout(timer);
-  }, [step]);
+    const merchantUrl = draft.merchantUrl?.trim();
+    if (!merchantUrl) {
+      setImageError('没有商家网址，无法抓取图片');
+      setCrawling(false);
+      return;
+    }
+    let cancelled = false;
+    setCrawling(true);
+    setImageError('');
+    setImages([]);
+    void api.get<ApiResult<{ pageUrl: string; images: CrawledImage[] }>>('/article-publish/images', { params: { merchantUrl } })
+      .then((res) => {
+        if (cancelled) return;
+        if (!res.data.success) {
+          setImageError(res.data.message || '抓取商家图片失败');
+          return;
+        }
+        const found = res.data.data.images ?? [];
+        setImages(found);
+        setSelectedImageUrls(found.map((item) => item.url));
+        if (!found.length) {
+          setImageError('这个商家页面上没有找到可用图片');
+          return;
+        }
+        setStep(3);
+      })
+      .catch((error: unknown) => {
+        if (!cancelled) setImageError(errorText(error, '抓取商家图片失败'));
+      })
+      .finally(() => {
+        if (!cancelled) setCrawling(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [step, draft.merchantUrl, imageAttempt]);
 
   return (
     <div style={{ maxWidth: 980, margin: '0 auto' }}>
@@ -178,7 +208,7 @@ export default function ArticlePublishPage() {
         <Typography.Title level={4} style={{ margin: 0 }}>快速发布文章</Typography.Title>
       </Space>
       <Typography.Paragraph type="secondary" style={{ marginBottom: 16 }}>
-        配图和正文是示例。商家页面爬取、模型和内容站回写还没接上。文章地址、商家网址、跟踪链接分开保存。
+        配图从商家页面抓取。正文仍是示例。文章地址、商家网址、跟踪链接分开保存。
       </Typography.Paragraph>
       <Steps current={step} size="small" items={STEPS.map((title) => ({ title }))} style={{ marginBottom: 20 }} />
       <Card>
@@ -346,45 +376,54 @@ export default function ArticlePublishPage() {
 
         {step === 2 && (
           <div style={{ textAlign: 'center', padding: 48 }}>
-            <Spin />
-            <div style={{ marginTop: 12 }}>正在准备示例配图...</div>
+            {crawling ? (
+              <>
+                <Spin />
+                <div style={{ marginTop: 12 }}>正在打开商家页面并抓取图片...</div>
+              </>
+            ) : (
+              <>
+                <Typography.Paragraph>{imageError || '还没有抓到图片'}</Typography.Paragraph>
+                <Space>
+                  <Button onClick={() => setStep(1)}>上一步</Button>
+                  <Button type="primary" onClick={() => setImageAttempt((current) => current + 1)}>重新抓取</Button>
+                </Space>
+              </>
+            )}
           </div>
         )}
 
         {step === 3 && (
           <Spin spinning={generating} tip="正在生成示例文章，请稍候...">
-            <Typography.Text strong>选择文章配图（已选 {selectedImages.length} 条）</Typography.Text>
-            <Typography.Paragraph type="secondary">示例配图，商家页面爬取还没接上。勾选要留在预览里的图片。</Typography.Paragraph>
-            <div
-              style={{
-                border: '1px dashed #d9d9d9',
-                borderRadius: 8,
-                padding: 28,
-                textAlign: 'center',
-                color: '#999',
-                marginBottom: 16,
-              }}
-            >
-              本地上传还没接上
-            </div>
+            <Typography.Text strong>选择文章配图（已选 {selectedImageUrls.length} 条）</Typography.Text>
+            <Typography.Paragraph type="secondary">这些图片来自商家页面。勾选要留在文章里的图片。本地上传还没接上。</Typography.Paragraph>
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 12 }}>
-              {SAMPLE_IMAGES.map((label, index) => {
-                const selected = selectedImages.includes(index);
+              {images.map((image) => {
+                const selected = selectedImageUrls.includes(image.url);
                 return (
                   <button
-                    key={label}
+                    key={image.url}
                     type="button"
-                    onClick={() => setSelectedImages((current) => current.includes(index) ? current.filter((item) => item !== index) : [...current, index])}
+                    title={image.alt || image.url}
+                    onClick={() => setSelectedImageUrls((current) => (
+                      current.includes(image.url) ? current.filter((item) => item !== image.url) : [...current, image.url]
+                    ))}
                     style={{
                       height: 110,
+                      padding: 0,
                       borderRadius: 8,
+                      overflow: 'hidden',
                       border: selected ? '2px solid #1677ff' : '1px solid #f0f0f0',
-                      background: IMAGE_COLORS[index],
-                      color: '#fff',
+                      background: '#f5f5f5',
                       cursor: 'pointer',
                     }}
                   >
-                    {label}
+                    <img
+                      src={image.url}
+                      alt={image.alt || '商家配图'}
+                      referrerPolicy="no-referrer"
+                      style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }}
+                    />
                   </button>
                 );
               })}
@@ -393,7 +432,7 @@ export default function ArticlePublishPage() {
               <Button onClick={() => setStep(1)}>上一步</Button>
               <Button
                 type="primary"
-                disabled={selectedImages.length === 0}
+                disabled={selectedImageUrls.length === 0}
                 onClick={() => {
                   setGenerating(true);
                   void api.post<ApiResult<ArticlePreview>>('/article-publish/preview', currentPayload())
@@ -419,10 +458,14 @@ export default function ArticlePublishPage() {
           <div>
             <Typography.Title level={3}>{preview.title}</Typography.Title>
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 12, marginBottom: 16 }}>
-              {selectedImages.map((index) => (
-                <div key={index} style={{ height: 140, borderRadius: 8, background: IMAGE_COLORS[index], color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                  示例配图 · {SAMPLE_IMAGES[index]}
-                </div>
+              {selectedImageUrls.map((url) => (
+                <img
+                  key={url}
+                  src={url}
+                  alt=""
+                  referrerPolicy="no-referrer"
+                  style={{ width: '100%', height: 180, objectFit: 'cover', borderRadius: 8, background: '#f5f5f5' }}
+                />
               ))}
             </div>
             {preview.sections.map((section) => (
@@ -486,7 +529,9 @@ export default function ArticlePublishPage() {
                   setStep(0);
                   setPicked(null);
                   setPreview(null);
-                  setSelectedImages(SAMPLE_IMAGES.map((_, index) => index));
+                  setImages([]);
+                  setSelectedImageUrls([]);
+                  setImageError('');
                   setDraft({ countryCode: 'US' });
                   form.resetFields();
                   form.setFieldsValue({ countryCode: 'US' });

@@ -22,6 +22,7 @@ import {
   usdToMicros,
   validateDraft,
 } from './ads-automation.util';
+import { crawlMerchantImages } from './merchant-page-images';
 import { buildCreateCampaignPayload } from './mutate-payload';
 
 interface SitePublishInput {
@@ -492,6 +493,18 @@ export class AdsAutomationService implements OnModuleInit {
   }
 
   /**
+   * 打开商家网址，返回页面上能用的配图。没有图片时列表为空。
+   */
+  async crawlArticleImages(merchantUrl: string) {
+    try {
+      return await crawlMerchantImages(merchantUrl);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : '抓取商家页面失败';
+      throw new BadRequestException(message);
+    }
+  }
+
+  /**
    * 选中在投商家后，向对应联盟平台要商家网址。
    */
   async lookupArticleMerchant(ownerUserId: number, channelAccountId: number, mid: string) {
@@ -547,7 +560,7 @@ export class AdsAutomationService implements OnModuleInit {
       update: {},
     });
     if (catalog.blockReason !== 'none') throw new BadRequestException('这个商家不能发文');
-    const body = sampleArticleHtml(prepared.sample, prepared.name, prepared.trackUrl);
+    const body = sampleArticleHtml(prepared.sample, prepared.name, prepared.trackUrl, prepared.imageUrls);
     const published = await this.publishToSite(prepared.account.site, {
       title: prepared.sample.title,
       bodyHtml: body,
@@ -1459,7 +1472,11 @@ export class AdsAutomationService implements OnModuleInit {
     const languageCode = input.languageCode.trim() || 'en';
     const trackUrl = buildTrackUrl(account.platform.code, merchantUrl, account.trackLinkPrefix);
     const sample = buildSampleArticle({ merchantName: name, merchantUrl, trackUrl, languageCode });
-    return { account, merchant, name, mid, countryCode, languageCode, trackUrl, merchantUrl, sample };
+    const imageUrls = (input.imageUrls ?? [])
+      .map((url) => url.trim())
+      .filter((url, index, all) => /^https?:\/\//i.test(url) && url.length <= 2048 && all.indexOf(url) === index)
+      .slice(0, 8);
+    return { account, merchant, name, mid, countryCode, languageCode, trackUrl, merchantUrl, sample, imageUrls };
   }
 }
 
@@ -1512,6 +1529,7 @@ interface ArticleComposeInput {
   merchantUrl: string;
   countryCode: string;
   languageCode: string;
+  imageUrls?: string[];
 }
 
 /**

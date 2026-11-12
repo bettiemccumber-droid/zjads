@@ -148,6 +148,11 @@ class ArticlePublishBody {
 
   @IsString()
   languageCode!: string;
+
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  imageUrls?: string[];
 }
 
 /**
@@ -273,6 +278,12 @@ export class AdsAutomationController {
   @Get('article-publish/merchants')
   async searchArticleMerchants(@CurrentUser() user: AuthUser, @Query('q') q?: string) {
     return ok(await this.ads.searchArticleMerchants(user.id, q ?? ''));
+  }
+
+  @Get('article-publish/images')
+  async crawlArticleImages(@CurrentUser() user: AuthUser, @Query('merchantUrl') merchantUrl?: string) {
+    this.assertWriter(user);
+    return ok(await this.ads.crawlArticleImages(merchantUrl ?? ''));
   }
 
   @Get('article-publish/merchant-profile')

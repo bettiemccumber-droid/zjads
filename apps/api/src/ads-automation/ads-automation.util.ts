@@ -301,13 +301,24 @@ export function buildSampleArticle(input: {
 }
 
 /**
- * 把示例正文收成 HTML。超链接只指向联盟跟踪链接。
+ * 把示例正文收成 HTML。配图用商家页面上的地址，超链接只指向联盟跟踪链接。
  */
-export function sampleArticleHtml(article: SampleArticle, merchantName: string, trackUrl: string): string {
+export function sampleArticleHtml(
+  article: SampleArticle,
+  merchantName: string,
+  trackUrl: string,
+  imageUrls: string[] = [],
+): string {
+  const figures = imageUrls
+    .map((url) => url.trim())
+    .filter((url, index, all) => /^https?:\/\//i.test(url) && url.length <= 2048 && all.indexOf(url) === index)
+    .slice(0, 8)
+    .map((url) => `<p><img src="${escapeHtml(url)}" alt=""></p>`)
+    .join('');
   const blocks = article.sections
     .map((section) => `<h2>${escapeHtml(section.heading)}</h2><p>${escapeHtml(section.text)}</p>`)
     .join('');
-  return `${blocks}<p><a href="${escapeHtml(trackUrl)}">${escapeHtml(merchantName)}</a></p>`;
+  return `${figures}${blocks}<p><a href="${escapeHtml(trackUrl)}">${escapeHtml(merchantName)}</a></p>`;
 }
 
 /**

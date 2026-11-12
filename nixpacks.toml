@@ -1,4 +1,8 @@
 # Railway / Nixpacks：构建阶段需要 devDependencies（@nestjs/cli、typescript、prisma CLI）
+# curl 用来在商家站点拦住 Node 请求时再抓一次页面。
+[variables]
+NIXPACKS_APT_PACKAGES = "curl"
+
 [phases.install]
 cmds = ["npm ci --include=dev"]
 

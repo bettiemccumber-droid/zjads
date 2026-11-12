@@ -1,7 +1,8 @@
 import { spawn } from 'child_process';
 import { lookup } from 'dns/promises';
+import http from 'http';
+import https from 'https';
 import { isIP } from 'net';
-import { Readable } from 'stream';
 import axios from 'axios';
 
 export interface MerchantPageImage {
@@ -120,32 +121,53 @@ const PAGE_HEADERS = {
   'Accept-Language': 'en-US,en;q=0.9,zh-CN;q=0.8',
 };
 
+const ipv4Http = new http.Agent({ family: 4 });
+const ipv4Https = new https.Agent({ family: 4 });
+
 /**
- * 先直接请求。页面很大时保留前面一段，里面通常已经有主图。
- * 被验证页拦住时再改用系统 curl。
+ * 先用 IPv4 直接请求。页面很大时只保留前面一段。
+ * 被验证页拦住、或服务器没有 curl 时，不把已经打开的页面丢掉。
  */
 async function requestMerchantPage(url: string): Promise<PageResponse> {
-  let response = emptyPage();
+  const first = await requestWithNode(url);
+  if (isRedirect(first.status) || (pageLooksUsable(first) && !isBotChallenge(first.status, first.data))) {
+    return first;
+  }
   try {
-    const viaAxios = await axios.get(url, {
-      timeout: 15000,
+    const second = await requestMerchantPageWithCurl(url);
+    if (second.data || second.status) return second;
+  } catch {
+    // 线上镜像不一定有 curl。没有的话沿用第一次的结果。
+  }
+  if (first.data || first.status) return first;
+  throw new Error('商家页面没有打开');
+}
+
+/**
+ * 走 IPv4。部分服务器优先连 IPv6，商家站连不上就会变成打不开。
+ */
+async function requestWithNode(url: string): Promise<PageResponse> {
+  try {
+    const viaAxios = await axios.get<string>(url, {
+      timeout: 20000,
       maxRedirects: 0,
-      responseType: 'stream',
+      responseType: 'text',
+      maxContentLength: 8_000_000,
+      maxBodyLength: 8_000_000,
+      httpAgent: ipv4Http,
+      httpsAgent: ipv4Https,
       headers: PAGE_HEADERS,
       validateStatus: () => true,
     });
-    response = {
+    const data = typeof viaAxios.data === 'string' ? viaAxios.data : '';
+    return {
       status: viaAxios.status,
       headers: viaAxios.headers as PageResponse['headers'],
-      data: await readLimitedStream(viaAxios.data as Readable),
+      data: data.slice(0, MAX_HTML_BYTES),
     };
   } catch {
-    response = emptyPage();
+    return emptyPage();
   }
-  if (isRedirect(response.status) || (pageLooksUsable(response) && !isBotChallenge(response.status, response.data))) {
-    return response;
-  }
-  return requestMerchantPageWithCurl(url);
 }
 
 /**
@@ -173,36 +195,6 @@ function pageLooksUsable(response: PageResponse): boolean {
 }
 
 /**
- * 读到上限就停，不把超长页面当成失败。
- * @param {Readable} stream
- */
-function readLimitedStream(stream: Readable): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const chunks: Buffer[] = [];
-    let size = 0;
-    let settled = false;
-    const finish = () => {
-      if (settled) return;
-      settled = true;
-      resolve(Buffer.concat(chunks).toString('utf8').slice(0, MAX_HTML_BYTES));
-    };
-    stream.on('data', (chunk: Buffer) => {
-      chunks.push(chunk);
-      size += chunk.length;
-      if (size >= MAX_HTML_BYTES) {
-        stream.destroy();
-        finish();
-      }
-    });
-    stream.on('end', finish);
-    stream.on('error', () => {
-      if (chunks.length) finish();
-      else reject(new Error('商家页面没有打开'));
-    });
-  });
-}
-
-/**
  * 验证页不是商家内容，不能从里面挑图片。
  */
 function isBotChallenge(status: number, body: string): boolean {
@@ -219,6 +211,7 @@ function requestMerchantPageWithCurl(url: string): Promise<PageResponse> {
     const child = spawn(bin, [
       '-sS',
       '-D', '-',
+      '--ipv4',
       '--compressed',
       '--max-redirs', '0',
       '--max-time', '15',

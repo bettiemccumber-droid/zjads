@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { Alert, Button, Card, Form, Input, Modal, Space, Switch, Table, Tabs, Tag, message } from 'antd';
+import { Alert, Button, Card, Form, Input, Modal, Select, Space, Switch, Table, Tabs, Tag, message } from 'antd';
 import { useSearchParams } from 'react-router-dom';
 import { api, type ApiResult } from '../api/client';
 import { useAuth } from '../hooks/useAuth';
@@ -25,6 +25,15 @@ interface ChannelAccount {
   settlementBankAccount?: string;
   tokenPreview: string;
   isActive?: boolean;
+  siteId?: number | null;
+  siteName?: string | null;
+  siteDomain?: string | null;
+}
+
+interface PublishSite {
+  id: number;
+  name: string;
+  domain: string;
 }
 
 export default function ChannelAccountsPage() {
@@ -44,16 +53,21 @@ export default function ChannelAccountsPage() {
   const [activePlatform, setActivePlatform] = useState<Platform | null>(null);
   const [form] = Form.useForm();
   const [importAccount, setImportAccount] = useState<ChannelAccount | null>(null);
+  const [sites, setSites] = useState<PublishSite[]>([]);
+  const [testId, setTestId] = useState<number | null>(null);
+  const [testing, setTesting] = useState(false);
 
   const load = useCallback(async () => {
-    const [pRes, aRes] = await Promise.all([
+    const [pRes, aRes, siteRes] = await Promise.all([
       api.get<ApiResult<Platform[]>>('/platforms'),
       api.get<ApiResult<typeof grouped>>('/channel-accounts/by-platform', {
         params: scopeUserId != null ? { userId: scopeUserId } : undefined,
       }),
+      api.get<ApiResult<PublishSite[]>>('/publish-sites'),
     ]);
     if (pRes.data.success) setPlatforms(pRes.data.data);
     if (aRes.data.success) setGrouped(aRes.data.data);
+    if (siteRes.data.success) setSites(siteRes.data.data);
   }, [scopeUserId]);
 
   useEffect(() => {
@@ -74,6 +88,7 @@ export default function ChannelAccountsPage() {
     }
     setEditingAccount(null);
     setActivePlatform(platform);
+    setTestId(null);
     form.resetFields();
     form.setFieldsValue({ platformId: platform.id, isActive: true });
     setModalOpen(true);
@@ -91,6 +106,7 @@ export default function ChannelAccountsPage() {
     const platform = platforms.find((p) => p.code === account.platformCode) ?? null;
     setEditingAccount(account);
     setActivePlatform(platform);
+    setTestId(null);
     form.resetFields();
     form.setFieldsValue({
       displayName: account.displayName,
@@ -98,13 +114,57 @@ export default function ChannelAccountsPage() {
       affiliateAlias: account.affiliateAlias,
       settlementPayeeName: account.settlementPayeeName ?? '',
       settlementBankAccount: account.settlementBankAccount ?? '',
+      siteId: account.siteId ?? undefined,
       isActive: account.isActive ?? true,
     });
     setModalOpen(true);
   };
 
+  /**
+   * 绑定或更换内容站前先测通 Key。编辑时 Key 留空则用已保存的 Key。
+   */
+  const testConnection = async () => {
+    const platformId = editingAccount?.platformId ?? form.getFieldValue('platformId');
+    const apiToken = String(form.getFieldValue('apiToken') ?? '').trim();
+    if (!platformId) {
+      message.error('请选择平台');
+      return;
+    }
+    if (!apiToken && !editingAccount) {
+      message.error('请填写 API Key');
+      return;
+    }
+    setTesting(true);
+    try {
+      const res = await api.post<ApiResult<{ id: number; ok: boolean; message: string }>>('/channel-accounts/test', {
+        platformId,
+        apiToken,
+        accountId: editingAccount?.id,
+      });
+      if (!res.data.success || !res.data.data?.ok) {
+        setTestId(null);
+        message.error(res.data.data?.message || res.data.message || '测试连接失败');
+        return;
+      }
+      setTestId(res.data.data.id);
+      message.success(res.data.data.message || '连接成功');
+    } catch {
+      setTestId(null);
+      message.error('测试连接失败');
+    } finally {
+      setTesting(false);
+    }
+  };
+
   const onSubmit = async () => {
     const values = await form.validateFields();
+    const nextSiteId = (values.siteId ?? null) as number | null;
+    const previousSiteId = editingAccount?.siteId ?? null;
+    const siteChanged = nextSiteId !== previousSiteId;
+    if (nextSiteId != null && siteChanged && !testId) {
+      message.error('绑定内容站前需要先测试连接');
+      return;
+    }
 
     if (editingAccount) {
       const payload: Record<string, unknown> = {
@@ -117,6 +177,10 @@ export default function ChannelAccountsPage() {
       };
       if (values.apiToken?.trim()) {
         payload.apiToken = values.apiToken.trim();
+      }
+      if (siteChanged) {
+        payload.siteId = nextSiteId;
+        if (testId) payload.testId = testId;
       }
       const { data } = await api.patch<ApiResult<ChannelAccount>>(
         `/channel-accounts/${editingAccount.id}`,
@@ -132,7 +196,11 @@ export default function ChannelAccountsPage() {
       return;
     }
 
-    const { data } = await api.post<ApiResult<ChannelAccount>>('/channel-accounts', values);
+    const { data } = await api.post<ApiResult<ChannelAccount>>('/channel-accounts', {
+      ...values,
+      siteId: nextSiteId ?? undefined,
+      testId: nextSiteId != null ? testId : undefined,
+    });
     if (data.success) {
       message.success('添加成功');
       setModalOpen(false);
@@ -215,6 +283,12 @@ export default function ChannelAccountsPage() {
                 render: (v: string | undefined) => v?.trim() || '—',
               },
               {
+                title: '内容站',
+                dataIndex: 'siteDomain',
+                render: (v: string | null | undefined, row: ChannelAccount) =>
+                  v ? `${row.siteName ?? v} (${v})` : '未绑定',
+              },
+              {
                 title: '收款卡号',
                 dataIndex: 'settlementBankAccount',
                 render: (v: string | undefined) => {
@@ -292,11 +366,22 @@ export default function ChannelAccountsPage() {
               : '添加账号'
         }
         open={modalOpen}
-        onOk={onSubmit}
         onCancel={() => setModalOpen(false)}
         destroyOnClose
+        styles={{ body: { maxHeight: '60vh', overflowY: 'auto' } }}
+        footer={[
+          <Button key="cancel" onClick={() => setModalOpen(false)}>取消</Button>,
+          <Button key="test" loading={testing} onClick={() => void testConnection()}>测试连接</Button>,
+          <Button key="save" type="primary" onClick={() => void onSubmit()}>保存</Button>,
+        ]}
       >
-        <Form form={form} layout="vertical">
+        <Form
+          form={form}
+          layout="vertical"
+          onValuesChange={(changed) => {
+            if ('apiToken' in changed || 'siteId' in changed) setTestId(null);
+          }}
+        >
           {!isEdit && (
             <Form.Item name="platformId" hidden>
               <Input />
@@ -338,10 +423,17 @@ export default function ChannelAccountsPage() {
           </Form.Item>
           <Form.Item
             name="apiToken"
-            label={isEdit ? 'API Token（留空不修改）' : 'API Token'}
-            rules={isEdit ? [] : [{ required: true, message: '请填写 API Token' }]}
+            label={isEdit ? 'API Key（留空不修改）' : 'API Key'}
+            rules={isEdit ? [] : [{ required: true, message: '请填写 API Key' }]}
           >
-            <Input.Password placeholder={isEdit ? '不修改请留空' : undefined} />
+            <Input.Password placeholder={isEdit ? '已保存，留空则不修改' : undefined} />
+          </Form.Item>
+          <Form.Item name="siteId" label="绑定站点" extra="内容站由管理员添加。选择后需先测试连接再保存。">
+            <Select
+              allowClear
+              placeholder="选择内容站"
+              options={sites.map((site) => ({ value: site.id, label: `${site.name} (${site.domain})` }))}
+            />
           </Form.Item>
           {isEdit && (
             <Form.Item name="isActive" label="启用" valuePropName="checked">

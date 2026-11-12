@@ -113,6 +113,7 @@ export class AdSourcesService {
     const result = await this.prisma.adCampaignDaily.deleteMany({
       where: {
         ownerUserId,
+        source: 'sheet',
         ...(dateRange ? { date: dateRange } : {}),
       },
     });
@@ -353,6 +354,7 @@ export class AdSourcesService {
           ownerUserId,
           date: buildOrderDateRangeFilter(dateStr, dateStr),
           customerId: { in: customerIdsInBatch },
+          source: 'sheet',
         },
       });
     }
@@ -386,6 +388,7 @@ export class AdSourcesService {
           avgCpc: row.avgCpc,
           maxCpc: row.maxCpc,
           currency: row.currency,
+          source: 'sheet',
         },
         update: {
           campaignName: row.campaignName,

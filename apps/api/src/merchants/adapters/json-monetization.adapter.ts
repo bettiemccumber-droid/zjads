@@ -97,7 +97,7 @@ async function fetchJsonMonetizationPageWithMeta_(
   source: string,
   apiToken: string,
   extra: Record<string, string | number>,
-): Promise<{ rows: MonetizationBrandRow[]; pages: number }> {
+): Promise<{ rows: MonetizationBrandRow[]; pages: number; total: number }> {
   const response = await axios.post(
     url,
     {
@@ -124,9 +124,37 @@ async function fetchJsonMonetizationPageWithMeta_(
     throw new Error(response.data?.message ?? 'Monetization API 错误');
   }
 
-  const list = (response.data?.data?.list ?? []) as MonetizationBrandRow[];
-  const pages = Number(response.data?.data?.total_page ?? 1) || 1;
-  return { rows: list, pages };
+  const data = (response.data?.data ?? {}) as {
+    list?: MonetizationBrandRow[];
+    total_page?: number | string;
+    total_mcid?: number | string;
+    total?: number | string;
+  };
+  const list = data.list ?? [];
+  const pages = Number(data.total_page ?? 1) || 1;
+  const total = Number(data.total_mcid ?? data.total ?? list.length) || list.length;
+  return { rows: list, pages, total };
+}
+
+/**
+ * 只取商家库的一页，用来浏览和选取。
+ */
+export async function browseJsonMonetization(
+  platformCode: string,
+  apiToken: string,
+  page: number,
+  perPage: number,
+  relationship = '',
+): Promise<{ rows: MonetizationBrandRow[]; total: number; pages: number }> {
+  const cfg = JSON_MONETIZATION[platformCode];
+  if (!cfg) {
+    throw new Error(`平台 ${platformCode} 不支持 JSON Monetization API`);
+  }
+  return fetchJsonMonetizationPageWithMeta_(cfg.url, cfg.source, apiToken, {
+    curPage: page,
+    perPage,
+    ...(relationship ? { relationship } : {}),
+  });
 }
 
 function dedupeMonetizationRows_(rows: MonetizationBrandRow[]): MonetizationBrandRow[] {

@@ -1,13 +1,21 @@
 import {
+  browseJsonMonetization,
   fetchJsonMonetizationBrands,
   JSON_MONETIZATION_PLATFORMS,
 } from './adapters/json-monetization.adapter';
 import {
+  browsePhpMonetization,
   fetchPhpMonetizationBrands,
   PHP_MONETIZATION_PLATFORMS,
 } from './adapters/php-monetization.adapter';
-import { fetchLinkHaitaoAdvertiserStatus } from './adapters/linkhaitao-advertiser-status.adapter';
-import { fetchRewardooMerchantDetails } from './adapters/rewardoo-merchant-details.adapter';
+import {
+  browseLinkHaitaoMonetization,
+  fetchLinkHaitaoAdvertiserStatus,
+} from './adapters/linkhaitao-advertiser-status.adapter';
+import {
+  browseRewardooMerchantDetails,
+  fetchRewardooMerchantDetails,
+} from './adapters/rewardoo-merchant-details.adapter';
 import {
   buildActionLabel,
   isMerchantActionable,
@@ -147,6 +155,33 @@ function buildNotFoundStatus_(): Partial<ReturnType<typeof mapMonetizationBrandR
     merchantAvailability: 'unknown',
     availabilityRaw: null,
   };
+}
+
+/**
+ * 商家库翻一页。名称搜索时用较大的 perPage，浏览时用当前页。
+ */
+export async function browseMonetizationPage(
+  platformCode: string,
+  apiToken: string,
+  page: number,
+  perPage: number,
+  relationship = '',
+): Promise<{ rows: MonetizationBrandRow[]; total: number; pages: number }> {
+  const safePage = Math.max(1, Math.floor(page) || 1);
+  const safeSize = Math.min(2000, Math.max(1, Math.floor(perPage) || 20));
+  if (JSON_MONETIZATION_PLATFORMS.has(platformCode)) {
+    return browseJsonMonetization(platformCode, apiToken, safePage, safeSize, relationship);
+  }
+  if (platformCode === REWARDOO_MERCHANT_DETAILS) {
+    return browseRewardooMerchantDetails(apiToken, safePage, safeSize, relationship);
+  }
+  if (platformCode === LINKHAITAO_ADVERTISER_STATUS) {
+    return browseLinkHaitaoMonetization(apiToken, safePage, safeSize, relationship);
+  }
+  if (PHP_MONETIZATION_PLATFORMS.has(platformCode)) {
+    return browsePhpMonetization(platformCode, apiToken, safePage, safeSize, relationship);
+  }
+  throw new Error(`平台 ${platformCode} 暂不支持商家库`);
 }
 
 async function loadMonetizationBrands_(

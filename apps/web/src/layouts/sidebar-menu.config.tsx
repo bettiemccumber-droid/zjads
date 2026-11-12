@@ -4,9 +4,14 @@ import {
   CrownOutlined,
   DashboardOutlined,
   FileExcelOutlined,
+  FileTextOutlined,
+  FormOutlined,
+  IdcardOutlined,
   PieChartOutlined,
   AlertOutlined,
   SafetyCertificateOutlined,
+  ShopOutlined,
+  RocketOutlined,
   SyncOutlined,
   TeamOutlined,
   UserOutlined,
@@ -32,6 +37,11 @@ export function buildEmployeeSidebarMenu(): MenuProps['items'] {
   return [
     group('商家管理', [
       item(
+        '/ads/merchants',
+        <ShopOutlined />,
+        <Link to="/ads/merchants">我的商家</Link>,
+      ),
+      item(
         MERCHANT_HUB_STATUS_KEY,
         <SafetyCertificateOutlined />,
         <Link to="/merchants/status">商家状态</Link>,
@@ -40,6 +50,25 @@ export function buildEmployeeSidebarMenu(): MenuProps['items'] {
         MERCHANT_HUB_CHARGEBACKS_KEY,
         <AlertOutlined />,
         <Link to="/merchants/chargebacks">拒付商家</Link>,
+      ),
+    ]),
+    group('投放', [
+      item(
+        '/ads/accounts',
+        <IdcardOutlined />,
+        <Link to="/ads/accounts">账户状态</Link>,
+      ),
+    ]),
+    group('文章管理', [
+      item(
+        '/ads/articles/publish',
+        <FormOutlined />,
+        <Link to="/ads/articles/publish">文章发布</Link>,
+      ),
+      item(
+        '/ads/articles',
+        <FileTextOutlined />,
+        <Link to="/ads/articles">文章管理</Link>,
       ),
     ]),
     group('数据中心', [
@@ -92,6 +121,11 @@ export function buildAdminSidebarMenu(): MenuProps['items'] {
         <FileExcelOutlined />,
         <Link to="/admin/ad-sources">广告数据源</Link>,
       ),
+      item(
+        '/admin/publish-sites',
+        <RocketOutlined />,
+        <Link to="/admin/publish-sites">内容站</Link>,
+      ),
     ]),
     group('数据中心', [
       item('/settlement', <BarChartOutlined />, <Link to="/settlement">结算查询</Link>),
@@ -136,6 +170,7 @@ export function resolveSidebarSelectedKey(pathname: string, isAdmin: boolean): s
     if (pathname === '/admin/stats') return '/admin/stats';
     if (pathname.startsWith('/admin/sync')) return '/admin/sync';
     if (pathname.startsWith('/admin/ad-sources')) return '/admin/ad-sources';
+    if (pathname.startsWith('/admin/publish-sites')) return '/admin/publish-sites';
     if (pathname === '/admin' || pathname === '/admin/') return '/admin';
     return pathname;
   }
@@ -143,6 +178,9 @@ export function resolveSidebarSelectedKey(pathname: string, isAdmin: boolean): s
   if (pathname.startsWith('/settlement-report')) return '/settlement-report';
   if (pathname.startsWith('/settlement')) return '/settlement';
   if (pathname.startsWith('/channel-accounts')) return '/channel-accounts';
-  if (pathname.startsWith('/ad-sources')) return '/ad-sources';
+  if (pathname.startsWith('/ads/accounts')) return '/ads/accounts';
+  if (pathname.startsWith('/ads/articles/publish')) return '/ads/articles/publish';
+  if (pathname.startsWith('/ads/articles')) return '/ads/articles';
+  if (pathname.startsWith('/ads/merchants') || pathname.startsWith('/ads-automation')) return '/ads/merchants';
   return pathname;
 }

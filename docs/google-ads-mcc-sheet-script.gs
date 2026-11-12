@@ -54,9 +54,20 @@
  *   - raw_daily_report 去重主键改为 date|customer|campaign_id（不再含 ad 列）。
  *   - 默认 lookback_days=7（全量 init 完成后日常采集）。
  *
+ * 【v11.12 变更】
+ *   - MCC 在线枚举为 0 时（如账户中止），回退 whitelist + Sheet 历史 CID 仍尝试拉历史报告。
+ *
+ * 【v11.13 变更】
+ *   - 新增 importGoogleCampaignCsv()：将 Google 后台导出的广告系列报告粘贴到 manual_import_staging 后一键写入 raw_daily_report。
+ *   - 支持 B1/B2 填日期、账号名/系列后缀回退匹配、导入结果回写 staging 表。
+ *   - config.manual_run_action=import_google_campaign_csv 时，点「运行」即执行手动导入（Google Ads 无函数下拉）。
+ *
  *   4. 也可单独运行 runMonthlyCostSummary()，根据 lookback_days 自动切换模式：
  *      - lookback_days=0 → 初始化：从 2025-01-01 至今天全量按月汇总
  *      - lookback_days>0 → 日常：回溯窗口所涉月份的广告费汇总
+ *   5. 账户中止等无法自动采集时：将 Google「广告系列报告」CSV 粘贴到 manual_import_staging 表 A3 起，
+ *      config 表设 manual_run_action=import_google_campaign_csv，点脚本「运行」写入 raw_daily_report，
+ *      完成后将 manual_run_action 改回空。
  */
 
 // =====================================================================
@@ -85,6 +96,7 @@ var SHEET_MONTHLY_STATE = 'monthly_resume_state';
 var SHEET_LOG = 'run_log';
 var SHEET_CONFIG = 'config';
 var SHEET_STATE = 'resume_state';
+var SHEET_MANUAL_IMPORT = 'manual_import_staging';
 
 // =====================================================================
 // 各数据表统一约定：列 0 = date，列 1 = customer_id
@@ -188,6 +200,13 @@ function main() {
     console.log('[3/7] Sheet 就绪');
 
     var cfg = loadConfig_(ss);
+    if (cfg.manualRunAction === 'import_google_campaign_csv') {
+      console.log('[手动模式] config.manual_run_action=import_google_campaign_csv');
+      importGoogleCampaignCsv();
+      console.log('========== 手动导入结束 ==========');
+      return;
+    }
+
     var isInitMode = (cfg.lookbackDays === 0);
 
     var mainStateSheet = ss.getSheetByName(SHEET_STATE);
@@ -742,7 +761,7 @@ function runMonthlyCostSummary() {
     var tz = cfg.timezone || AdsApp.currentAccount().getTimeZone();
     var isInitMode = (cfg.lookbackDays === 0);
     var mode = isManagerScript_() ? 'MCC' : 'SINGLE';
-    var accountIds = listAccountIds_(cfg.accountWhitelist, mode);
+    var accountIds = resolveAccountIds_(ss, cfg.accountWhitelist, mode);
 
     var today = formatDate_(new Date(), tz);
     var startDate;
@@ -2242,7 +2261,7 @@ function getOrInitState_(ss, cfg, isInitMode) {
   var tz = cfg.timezone || AdsApp.currentAccount().getTimeZone();
   var win = getWindow_(cfg.lookbackDays, tz);
   var mode = isManagerScript_() ? 'MCC' : 'SINGLE';
-  var ids = listAccountIds_(cfg.accountWhitelist, mode);
+  var ids = resolveAccountIds_(ss, cfg.accountWhitelist, mode);
   var retCutoff = '';
   if (!isInitMode && cfg.maxRetentionDays > 0) {
     var cutDate = new Date();
@@ -2432,6 +2451,80 @@ function listAccountIds_(whitelist, mode) {
   return out;
 }
 
+/**
+ * 从 Sheet 历史数据中提取已知 customer_id（用于账户中止后 MCC 枚举为空的回退）。
+ * @param {!SpreadsheetApp.Spreadsheet} ss 表格。
+ * @param {number=} maxRows 最多扫描尾部行数。
+ * @return {!Array<string>}
+ */
+function readKnownAccountIdsFromSheet_(ss, maxRows) {
+  var limit = maxRows || 5000;
+  var seen = {};
+  var out = [];
+  var sources = [SHEET_REPORT, SHEET_BUDGET_SNAPSHOTS];
+  for (var s = 0; s < sources.length; s++) {
+    var sheet = ss.getSheetByName(sources[s]);
+    if (!sheet || sheet.getLastRow() < 2) { continue; }
+    var lastRow = sheet.getLastRow();
+    var startRow = Math.max(2, lastRow - limit + 1);
+    var vals = sheet.getRange(startRow, 2, lastRow, 1).getValues();
+    for (var i = 0; i < vals.length; i++) {
+      var cid = normalizeCustomerId_(vals[i][0]);
+      if (!cid || seen[cid]) { continue; }
+      seen[cid] = true;
+      out.push(cid);
+    }
+  }
+  return out;
+}
+
+/**
+ * 解析本次运行应处理的账户 ID。
+ * MCC 在线枚举为 0 时回退 whitelist + Sheet 历史 CID，避免中止账户漏写当日已有花费。
+ * @param {!SpreadsheetApp.Spreadsheet} ss 表格。
+ * @param {!Array<string>} whitelist config 白名单。
+ * @param {string} mode MCC 或 SINGLE。
+ * @return {!Array<string>}
+ */
+function resolveAccountIds_(ss, whitelist, mode) {
+  var live = listAccountIds_(whitelist, mode);
+  if (live.length > 0 || mode === 'SINGLE') {
+    return live;
+  }
+
+  var fallback = [];
+  var seen = {};
+  function pushId(id) {
+    var cid = normalizeCustomerId_(id);
+    if (!cid || seen[cid]) { return; }
+    seen[cid] = true;
+    fallback.push(cid);
+  }
+
+  if (whitelist && whitelist.length > 0) {
+    for (var w = 0; w < whitelist.length; w++) { pushId(whitelist[w]); }
+  }
+  var fromSheet = readKnownAccountIdsFromSheet_(ss);
+  for (var i = 0; i < fromSheet.length; i++) { pushId(fromSheet[i]); }
+
+  if (fallback.length === 0) {
+    return [];
+  }
+
+  var accessible = [];
+  var sel = AdsManagerApp.accounts().withIds(fallback).get();
+  while (sel.hasNext()) {
+    accessible.push(String(sel.next().getCustomerId()));
+  }
+  if (accessible.length > 0) {
+    console.log('  ⚠️ MCC 在线枚举为 0，回退可访问账户 ' + accessible.length + ' 个');
+    return accessible;
+  }
+
+  console.log('  ⚠️ MCC 在线枚举为 0，强制尝试历史账户 ' + fallback.length + ' 个');
+  return fallback;
+}
+
 /** @param {string} accountId @param {string} mode */
 function selectAccountById_(accountId, mode) {
   if (mode === 'SINGLE') { return; }
@@ -2462,6 +2555,7 @@ function loadConfig_(ss) {
     ['enable_search_term_report', 'true', '是否采集搜索字词报告（true/false）'],
     ['search_term_min_impressions', '1', '搜索字词最小展示次数过滤（0=不过滤）'],
     ['search_term_lookback_days', '7', '搜索字词回溯天数（1=仅当天，7=最近7天）'],
+    ['manual_run_action', '', '手动任务：import_google_campaign_csv=导入 staging CSV；完成后改回空'],
     ['_schema_version', String(DATA_SCHEMA_VER), '数据表schema版本（勿改）']
   ];
 
@@ -2530,7 +2624,8 @@ function loadConfig_(ss) {
     enableKeywordReport: enableKw,
     enableSearchTermReport: enableSt,
     searchTermMinImpressions: stMinImpr,
-    searchTermLookbackDays: stLookbackDays
+    searchTermLookbackDays: stLookbackDays,
+    manualRunAction: safeStr_(m.manual_run_action || '').trim().toLowerCase()
   };
 }
 
@@ -2587,6 +2682,7 @@ function ensureSheets_(ss, opts) {
   ensureSheet_(ss, SHEET_MONTHLY_COST, MONTHLY_COST_HEADERS, false);
   ensureSheet_(ss, SHEET_MONTHLY_SUMMARY, MONTHLY_SUMMARY_HEADERS, false);
   ensureSheet_(ss, SHEET_LOG, LOG_HEADERS, false);
+  ensureManualImportSheet_(ss);
   if (forceClear) {
     clearStateSheet_(ss);
     clearMonthlyStateSheet_(ss);
@@ -3310,4 +3406,610 @@ function findNearestBudget_(entries, targetDate) {
   }
 
   return bestBefore !== null ? bestBefore : bestAfter;
+}
+
+// =====================================================================
+// 手动导入：Google 后台广告系列报告 CSV
+// =====================================================================
+
+/**
+ * 初始化 manual_import_staging 表（仅首次创建时写入说明）。
+ * @param {!SpreadsheetApp.Spreadsheet} ss 表格。
+ */
+function ensureManualImportSheet_(ss) {
+  var sheet = ss.getSheetByName(SHEET_MANUAL_IMPORT);
+  if (sheet) { return; }
+  sheet = ss.insertSheet(SHEET_MANUAL_IMPORT);
+  sheet.getRange(1, 1, 1, 3).setValues([[
+    '用法：1) 导出广告系列报告 CSV；2) 从 A3 粘贴；3) B2 填日期(可选)；' +
+    '4) config.manual_run_action 填 import_google_campaign_csv；5) 脚本点「运行」',
+    '',
+    '导入结果'
+  ]]);
+  sheet.getRange(2, 1, 2, 2).setValues([['目标日期(可选，填B2纯文本)', '']]);
+}
+
+/**
+ * 将 Google 后台中文/英文广告系列报告导入 raw_daily_report。
+ * 在脚本编辑器单独运行；需先将 CSV 粘贴到 manual_import_staging 表。
+ */
+function importGoogleCampaignCsv() {
+  var ss = SpreadsheetApp.openByUrl(SPREADSHEET_URL);
+  ensureSheets_(ss, { skipDataClear: true });
+  var cfg = loadConfig_(ss);
+  var tz = cfg.timezone || 'Asia/Shanghai';
+  var staging = ss.getSheetByName(SHEET_MANUAL_IMPORT);
+
+  try {
+    if (!staging || staging.getLastRow() < 3) {
+      throw new Error('请先将 Google 广告系列报告粘贴到 ' + SHEET_MANUAL_IMPORT + ' 表（从 A3 起）');
+    }
+
+    console.log('===== Google 广告系列报告手动导入 =====');
+    console.log('目标表格: ' + ss.getName());
+
+    var stagingData = staging.getDataRange().getValues();
+    var parsed = parseGoogleCampaignExportRows_(stagingData, '', tz);
+    var resolved = resolveManualImportDate_(stagingData, parsed.titleDate, tz);
+    if (resolved.date) { parsed.date = resolved.date; }
+    if (!parsed.date) {
+      throw new Error('无法解析目标日期，请在 B2 填 yyyy-MM-dd（纯文本）或确保粘贴内容含「2026年7月10日」标题');
+    }
+    if (!parsed.rows.length) {
+      throw new Error('未解析到有效广告系列行，请确认已粘贴完整 CSV 且含表头「广告系列」');
+    }
+
+    parsed.date = toDateStr_(parsed.date);
+    console.log('目标日期: ' + parsed.date + '（来源: ' + resolved.source + '）');
+    console.log('解析系列: ' + parsed.rows.length + ' 条');
+
+    var templateMap = buildCampaignTemplateMap_(ss);
+    var suffixMap = buildCampaignSuffixTemplateMap_(templateMap);
+    var accountMap = buildAccountTemplateMap_(ss);
+    console.log('历史模板: 系列' + Object.keys(templateMap).length +
+      ' 后缀' + Object.keys(suffixMap).length +
+      ' 账号' + Object.keys(accountMap).length);
+
+    var newRows = [];
+    var campaignIds = [];
+    var skipped = [];
+    var matchNotes = [];
+    var updatedAt = formatDateTime_(new Date(), tz);
+
+    for (var i = 0; i < parsed.rows.length; i++) {
+      var src = parsed.rows[i];
+      var matched = lookupCampaignTemplate_(templateMap, suffixMap, accountMap, src);
+      if (!matched) {
+        skipped.push(src.campaignName + (src.accountShortName ? ('[' + src.accountShortName + ']') : ''));
+        continue;
+      }
+      var row = padReportRow_(matched.row);
+      row[COL_DATE] = parsed.date;
+      row[6] = src.campaignName;
+      if (matched.campaignId) { row[COL_REPORT_CAMPAIGN_ID] = matched.campaignId; }
+      if (src.campaignStatus) { row[7] = src.campaignStatus; }
+      if (src.channelType) { row[8] = src.channelType; }
+      if (src.budget !== '' && src.budget !== 0) { row[9] = src.budget; }
+      if (src.currency) { row[4] = src.currency; }
+      row[17] = src.impressions;
+      row[18] = src.clicks;
+      row[19] = src.cost;
+      row[20] = Math.round(src.cost * 1000000);
+      row[21] = src.conversions || 0;
+      row[22] = 0;
+      row[23] = src.ctr !== '' ? src.ctr : '';
+      row[24] = src.avgCpc !== '' ? src.avgCpc : '';
+      row[28] = updatedAt;
+      newRows.push(row);
+      campaignIds.push(safeStr_(row[COL_REPORT_CAMPAIGN_ID]).trim());
+      matchNotes.push(src.campaignName + ' ← ' + matched.via);
+    }
+
+    if (!newRows.length) {
+      throw new Error('无匹配模板行，请确认 raw_daily_report 中已有同系列/同账号历史数据。未匹配: ' +
+        skipped.join(' | '));
+    }
+
+    var removed = removeReportRowsByDateAndCampaignIds_(ss, parsed.date, campaignIds);
+    appendRowsToSheet_(ss, SHEET_REPORT, REPORT_HEADERS, newRows);
+    SpreadsheetApp.flush();
+
+    var summary = '✅ ' + parsed.date + ' 写入 ' + newRows.length + ' 行，移除旧行 ' + removed;
+    staging.getRange(1, 3).setValue(summary);
+
+    console.log('移除旧行: ' + removed);
+    console.log('写入新行: ' + newRows.length);
+    for (var n = 0; n < matchNotes.length; n++) {
+      console.log('  ' + matchNotes[n]);
+    }
+    if (skipped.length) {
+      console.log('⚠️ 未匹配模板(' + skipped.length + '): ' + skipped.join(' | '));
+      staging.getRange(2, 3).setValue('未匹配: ' + skipped.join(' | '));
+    } else {
+      staging.getRange(2, 3).setValue('');
+    }
+    console.log('✅ 导入完成，请到 ZJads 广告数据源重新导入 ' + parsed.date);
+  } catch (err) {
+    if (staging) {
+      staging.getRange(1, 3).setValue('❌ ' + toErrMsg_(err));
+    }
+    throw err;
+  }
+}
+
+/**
+ * 读取 staging B2 可选日期（仅 B2，避免 B1 日期单元格时区偏移）。
+ * @param {*} raw 单元格值。
+ * @param {string} tz 时区。
+ * @return {string}
+ */
+function parseSheetDateCell_(raw, tz) {
+  if (raw === null || raw === undefined || raw === '') { return ''; }
+  if (raw instanceof Date) {
+    return formatDate_(raw, tz || 'Asia/Shanghai');
+  }
+  var text = safeStr_(raw).trim();
+  if (/^\d{4}-\d{2}-\d{2}$/.test(text)) {
+    return text;
+  }
+  return toDateStr_(text);
+}
+
+/**
+ * 从粘贴区标题行提取日期（如 2026年7月10日 - 2026年7月10日）。
+ * @param {!Array<!Array<*>>} stagingData 粘贴区数据。
+ * @return {string}
+ */
+function extractTitleDateFromStaging_(stagingData) {
+  var found = '';
+  for (var r = 0; r < stagingData.length; r++) {
+    var rowText = rowToSearchText_(stagingData[r]);
+    var dateMatch = rowText.match(/(\d{4})\s*年\s*(\d{1,2})\s*月\s*(\d{1,2})\s*日/);
+    if (dateMatch) {
+      found = toDateStr_(dateMatch[1] + '-' + dateMatch[2] + '-' + dateMatch[3]);
+    }
+  }
+  return found;
+}
+
+/**
+ * 确定手动导入目标日期：优先 CSV 标题，其次 B2 纯文本/按账户时区解析。
+ * @param {!Array<!Array<*>>} stagingData 粘贴区数据。
+ * @param {string} titleDate 从 CSV 标题解析的日期。
+ * @param {string} tz 时区。
+ * @return {{date:string, source:string}}
+ */
+function resolveManualImportDate_(stagingData, titleDate, tz) {
+  if (titleDate) {
+    return { date: toDateStr_(titleDate), source: 'CSV标题' };
+  }
+  var b2Date = '';
+  if (stagingData.length > 1) {
+    b2Date = parseSheetDateCell_(stagingData[1][1], tz);
+  }
+  if (b2Date) {
+    return { date: toDateStr_(b2Date), source: 'B2' };
+  }
+  return { date: '', source: '无' };
+}
+
+/**
+ * @deprecated 仅保留兼容；请用 resolveManualImportDate_。
+ * @param {!Array<!Array<*>>} stagingData 粘贴区数据。
+ * @return {string}
+ */
+function parseManualImportOverrideDate_(stagingData) {
+  if (stagingData.length > 1) {
+    return parseSheetDateCell_(stagingData[1][1], 'Asia/Shanghai');
+  }
+  return '';
+}
+
+/**
+ * 解析 Google 后台粘贴的广告系列报告（中文/英文表头均可）。
+ * @param {!Array<!Array<*>>} stagingData 粘贴区数据。
+ * @param {string=} overrideDate 已废弃，请留空；日期由 resolveManualImportDate_ 决定。
+ * @param {string=} tz 时区（保留参数位兼容）。
+ * @return {{date:string, titleDate:string, rows:!Array<!Object>}}
+ */
+function parseGoogleCampaignExportRows_(stagingData, overrideDate, tz) {
+  var titleDate = extractTitleDateFromStaging_(stagingData);
+  var dateStr = overrideDate ? toDateStr_(overrideDate) : '';
+  var headerRow = -1;
+  var colMap = {};
+
+  for (var r = 0; r < stagingData.length; r++) {
+    if (headerRow < 0 && isGoogleCampaignExportHeaderRow_(stagingData[r])) {
+      headerRow = r;
+      colMap = mapGoogleCampaignExportColumns_(stagingData[r]);
+    }
+  }
+
+  var out = [];
+  if (headerRow < 0) {
+    return { date: dateStr || titleDate, titleDate: titleDate, rows: out };
+  }
+
+  for (var i = headerRow + 1; i < stagingData.length; i++) {
+    var cells = stagingData[i];
+    if (!cells || !cells.length) { continue; }
+    var first = safeStr_(cells[0]).trim();
+    if (!first || first.indexOf('总计') === 0 || first.toLowerCase().indexOf('total') === 0) {
+      continue;
+    }
+
+    var campaignName = safeStr_(getCellByMap_(cells, colMap.campaignName)).trim();
+    if (!campaignName || campaignName === '--' || campaignName === ' --') { continue; }
+
+    var impressions = parseLocalizedInt_(getCellByMap_(cells, colMap.impressions));
+    var clicks = parseLocalizedInt_(getCellByMap_(cells, colMap.clicks));
+    var cost = parseLocalizedMoney_(getCellByMap_(cells, colMap.cost));
+    if (impressions === 0 && clicks === 0 && cost === 0) { continue; }
+
+    out.push({
+      campaignName: campaignName,
+      accountShortName: safeStr_(getCellByMap_(cells, colMap.accountShortName)).trim(),
+      campaignStatus: mapGoogleCampaignStatus_(getCellByMap_(cells, colMap.campaignStatus)),
+      channelType: mapGoogleChannelType_(getCellByMap_(cells, colMap.channelType)),
+      budget: parseLocalizedMoney_(getCellByMap_(cells, colMap.budget)),
+      currency: safeStr_(getCellByMap_(cells, colMap.currency)).trim(),
+      impressions: impressions,
+      clicks: clicks,
+      cost: cost,
+      ctr: parseLocalizedPercent_(getCellByMap_(cells, colMap.ctr)),
+      avgCpc: parseLocalizedMoney_(getCellByMap_(cells, colMap.avgCpc)),
+      conversions: parseLocalizedFloat_(getCellByMap_(cells, colMap.conversions))
+    });
+  }
+
+  return { date: dateStr || titleDate, titleDate: titleDate, rows: out };
+}
+
+/**
+ * @param {!Array<*>} row 行数据。
+ * @return {string}
+ */
+function rowToSearchText_(row) {
+  var parts = [];
+  for (var i = 0; i < row.length; i++) {
+    parts.push(safeStr_(row[i]));
+  }
+  return parts.join(' ');
+}
+
+/**
+ * @param {!Array<*>} row 行数据。
+ * @return {boolean}
+ */
+function isGoogleCampaignExportHeaderRow_(row) {
+  var normalized = [];
+  for (var i = 0; i < row.length; i++) {
+    normalized.push(normalizeGoogleExportHeader_(row[i]));
+  }
+  var hasCampaign = false;
+  var hasMetric = false;
+  for (var j = 0; j < normalized.length; j++) {
+    var h = normalized[j];
+    if (h === 'campaign' || h === '广告系列' || h === 'campaign name') { hasCampaign = true; }
+    if (h === 'impressions' || h === '展示次数' || h === 'clicks' || h === '点击次数') { hasMetric = true; }
+  }
+  return hasCampaign && hasMetric;
+}
+
+/**
+ * @param {*} v 表头单元格。
+ * @return {string}
+ */
+function normalizeGoogleExportHeader_(v) {
+  return safeStr_(v).trim().toLowerCase().replace(/\s+/g, ' ');
+}
+
+/**
+ * @param {!Array<*>} headerRow 表头行。
+ * @return {!Object<string, number>}
+ */
+function mapGoogleCampaignExportColumns_(headerRow) {
+  var map = {};
+  for (var i = 0; i < headerRow.length; i++) {
+    var h = normalizeGoogleExportHeader_(headerRow[i]);
+    if (!h) { continue; }
+    if (h === '广告系列' || h === 'campaign' || h === 'campaign name') { map.campaignName = i; }
+    else if (h === '广告系列状态' || h === 'campaign state' || h === 'campaign status') { map.campaignStatus = i; }
+    else if (h === '预算' || h === 'budget') { map.budget = i; }
+    else if (h === '货币代码' || h === 'currency' || h === 'currency code') { map.currency = i; }
+    else if (h === '账号' || h === 'account' || h === 'customer name' || h === '账户') { map.accountShortName = i; }
+    else if (h === '广告系列类型' || h === 'campaign type') { map.channelType = i; }
+    else if (h === '展示次数' || h === 'impressions') { map.impressions = i; }
+    else if (h === '点击次数' || h === 'clicks') { map.clicks = i; }
+    else if (h === '费用' || h === 'cost' || h === 'spend') { map.cost = i; }
+    else if (h === '点击率' || h === 'ctr' || h === 'click rate') { map.ctr = i; }
+    else if (h === '平均每次点击费用' || h === 'avg. cpc' || h === 'average cpc') { map.avgCpc = i; }
+    else if (h === '转化次数' || h === 'conversions') { map.conversions = i; }
+  }
+  return map;
+}
+
+/**
+ * @param {!Array<*>} cells 行。
+ * @param {number|undefined} idx 列索引。
+ * @return {*}
+ */
+function getCellByMap_(cells, idx) {
+  if (idx === undefined || idx === null || idx < 0 || idx >= cells.length) { return ''; }
+  return cells[idx];
+}
+
+/**
+ * @param {*} v 数值。
+ * @return {number}
+ */
+function parseLocalizedInt_(v) {
+  var s = safeStr_(v).replace(/,/g, '').replace(/"/g, '').trim();
+  if (!s || s === '--' || s === '-') { return 0; }
+  var n = parseInt(s, 10);
+  return isNaN(n) ? 0 : n;
+}
+
+/**
+ * @param {*} v 金额。
+ * @return {number}
+ */
+function parseLocalizedMoney_(v) {
+  var s = safeStr_(v).replace(/,/g, '').replace(/[^\d.\-]/g, '').trim();
+  if (!s || s === '--' || s === '-') { return 0; }
+  var n = parseFloat(s);
+  return isNaN(n) ? 0 : n;
+}
+
+/**
+ * @param {*} v 浮点。
+ * @return {number}
+ */
+function parseLocalizedFloat_(v) {
+  return parseLocalizedMoney_(v);
+}
+
+/**
+ * @param {*} v 百分比（33.61% → 0.3361）。
+ * @return {number|string}
+ */
+function parseLocalizedPercent_(v) {
+  var s = safeStr_(v).trim();
+  if (!s || s === '--') { return ''; }
+  if (s.indexOf('%') >= 0) {
+    var n = parseFloat(s.replace('%', '').replace(/,/g, ''));
+    return isNaN(n) ? '' : n / 100;
+  }
+  var plain = parseFloat(s.replace(/,/g, ''));
+  return isNaN(plain) ? '' : plain;
+}
+
+/**
+ * @param {*} v Google 中文状态。
+ * @return {string}
+ */
+function mapGoogleCampaignStatus_(v) {
+  var s = safeStr_(v).trim();
+  if (s === '已启用' || s.toLowerCase() === 'enabled') { return 'ENABLED'; }
+  if (s === '已暂停' || s.toLowerCase() === 'paused') { return 'PAUSED'; }
+  return s ? s.toUpperCase() : 'ENABLED';
+}
+
+/**
+ * @param {*} v Google 中文渠道类型。
+ * @return {string}
+ */
+function mapGoogleChannelType_(v) {
+  var s = safeStr_(v).trim();
+  if (s === '搜索' || s.toLowerCase() === 'search') { return 'SEARCH'; }
+  return s ? s.toUpperCase() : 'SEARCH';
+}
+
+/**
+ * 将模板行补齐到 raw_daily_report 列数。
+ * @param {!Array<*>} row 原始行。
+ * @return {!Array<*>}
+ */
+function padReportRow_(row) {
+  var out = row.slice();
+  while (out.length < REPORT_HEADERS.length) { out.push(''); }
+  return out;
+}
+
+/**
+ * 从 raw_daily_report 构建 campaign_name → 最近一行模板。
+ * @param {!SpreadsheetApp.Spreadsheet} ss 表格。
+ * @return {!Object<string, {row:!Array<*>, date:string, campaignId:string}>}
+ */
+function buildCampaignTemplateMap_(ss) {
+  var sheet = ss.getSheetByName(SHEET_REPORT);
+  var map = {};
+  if (!sheet || sheet.getLastRow() <= 1) { return map; }
+
+  var data = sheet.getRange(2, 1, sheet.getLastRow() - 1, REPORT_HEADERS.length).getValues();
+  for (var i = 0; i < data.length; i++) {
+    var campName = safeStr_(data[i][6]).trim();
+    if (!campName) { continue; }
+    var rowDate = toDateStr_(data[i][COL_DATE]);
+    var key = normalizeCampaignNameKey_(campName);
+    var campId = safeStr_(data[i][COL_REPORT_CAMPAIGN_ID]).trim();
+    if (!map[key] || (rowDate && (!map[key].date || rowDate > map[key].date))) {
+      map[key] = { row: data[i], date: rowDate, campaignId: campId };
+    }
+  }
+  return map;
+}
+
+/**
+ * 构建系列名后缀 ID（如 115343）→ 模板。
+ * @param {!Object<string, {row:!Array<*>, date:string, campaignId:string}>} templateMap 系列模板。
+ * @return {!Object<string, {row:!Array<*>, date:string, campaignId:string}>}
+ */
+function buildCampaignSuffixTemplateMap_(templateMap) {
+  var map = {};
+  for (var key in templateMap) {
+    if (!Object.prototype.hasOwnProperty.call(templateMap, key)) { continue; }
+    var campName = safeStr_(templateMap[key].row[6]).trim();
+    var suffix = extractCampaignSuffixId_(campName);
+    if (!suffix) { continue; }
+    if (!map[suffix] || (templateMap[key].date && (!map[suffix].date || templateMap[key].date > map[suffix].date))) {
+      map[suffix] = templateMap[key];
+    }
+  }
+  return map;
+}
+
+/**
+ * 构建账号短名 → 最近一行模板。
+ * @param {!SpreadsheetApp.Spreadsheet} ss 表格。
+ * @return {!Object<string, {row:!Array<*>, date:string, campaignId:string}>}
+ */
+function buildAccountTemplateMap_(ss) {
+  var sheet = ss.getSheetByName(SHEET_REPORT);
+  var map = {};
+  if (!sheet || sheet.getLastRow() <= 1) { return map; }
+
+  var data = sheet.getRange(2, 1, sheet.getLastRow() - 1, REPORT_HEADERS.length).getValues();
+  for (var i = 0; i < data.length; i++) {
+    var accountName = safeStr_(data[i][2]).trim();
+    if (!accountName) { continue; }
+    var rowDate = toDateStr_(data[i][COL_DATE]);
+    var key = normalizeAccountNameKey_(accountName);
+    var campId = safeStr_(data[i][COL_REPORT_CAMPAIGN_ID]).trim();
+    if (!map[key] || (rowDate && (!map[key].date || rowDate > map[key].date))) {
+      map[key] = { row: data[i], date: rowDate, campaignId: campId };
+    }
+  }
+  return map;
+}
+
+/**
+ * @param {string} name 系列名。
+ * @return {string}
+ */
+function normalizeCampaignNameKey_(name) {
+  return safeStr_(name).trim().toLowerCase();
+}
+
+/**
+ * @param {string} name 账号名。
+ * @return {string}
+ */
+function normalizeAccountNameKey_(name) {
+  return safeStr_(name).trim().toLowerCase().replace(/\s+/g, ' ');
+}
+
+/**
+ * 提取系列名末尾商户 ID（如 ...-115343 → 115343）。
+ * @param {string} name 系列名。
+ * @return {string}
+ */
+function extractCampaignSuffixId_(name) {
+  var m = safeStr_(name).match(/-(\d{5,6})$/);
+  return m ? m[1] : '';
+}
+
+/**
+ * @param {!Object<string, {row:!Array<*>, date:string, campaignId:string}>} templateMap 系列模板。
+ * @param {!Object<string, {row:!Array<*>, date:string, campaignId:string}>} suffixMap 后缀模板。
+ * @param {!Object<string, {row:!Array<*>, date:string, campaignId:string}>} accountMap 账号模板。
+ * @param {!Object} src 导入源行。
+ * @return {{row:!Array<*>, campaignId:string, via:string}|null}
+ */
+function lookupCampaignTemplate_(templateMap, suffixMap, accountMap, src) {
+  var campaignName = safeStr_(src.campaignName).trim();
+  var key = normalizeCampaignNameKey_(campaignName);
+  if (templateMap[key]) {
+    return {
+      row: templateMap[key].row,
+      campaignId: templateMap[key].campaignId,
+      via: '系列名精确'
+    };
+  }
+
+  for (var k in templateMap) {
+    if (!Object.prototype.hasOwnProperty.call(templateMap, k)) { continue; }
+    if (safeStr_(templateMap[k].row[6]).trim() === campaignName) {
+      return {
+        row: templateMap[k].row,
+        campaignId: templateMap[k].campaignId,
+        via: '系列名原样'
+      };
+    }
+  }
+
+  var suffix = extractCampaignSuffixId_(campaignName);
+  if (suffix && suffixMap[suffix]) {
+    return {
+      row: suffixMap[suffix].row,
+      campaignId: suffixMap[suffix].campaignId,
+      via: '系列后缀' + suffix
+    };
+  }
+
+  var accountKey = normalizeAccountNameKey_(src.accountShortName || '');
+  if (accountKey && accountMap[accountKey]) {
+    return {
+      row: accountMap[accountKey].row,
+      campaignId: accountMap[accountKey].campaignId,
+      via: '账号名' + src.accountShortName
+    };
+  }
+
+  return null;
+}
+
+/**
+ * 删除 raw_daily_report 中指定日期+系列 ID 的旧行（幂等导入）。
+ * @param {!SpreadsheetApp.Spreadsheet} ss 表格。
+ * @param {string} targetDate 目标日期。
+ * @param {!Array<string>} campaignIds 系列 ID 列表。
+ * @return {number}
+ */
+function removeReportRowsByDateAndCampaignIds_(ss, targetDate, campaignIds) {
+  var sheet = ss.getSheetByName(SHEET_REPORT);
+  if (!sheet || sheet.getLastRow() <= 1) { return 0; }
+
+  var idSet = {};
+  for (var i = 0; i < campaignIds.length; i++) {
+    var cid = safeStr_(campaignIds[i]).trim();
+    if (cid) { idSet[cid] = true; }
+  }
+  if (!Object.keys(idSet).length) { return 0; }
+
+  var lastRow = sheet.getLastRow();
+  var oldRows = sheet.getRange(2, 1, lastRow - 1, REPORT_HEADERS.length).getValues();
+  var kept = [];
+  var removed = 0;
+
+  for (var r = 0; r < oldRows.length; r++) {
+    var rowDate = toDateStr_(oldRows[r][COL_DATE]);
+    var campId = safeStr_(oldRows[r][COL_REPORT_CAMPAIGN_ID]).trim();
+    if (rowDate === targetDate && idSet[campId]) {
+      removed++;
+      continue;
+    }
+    kept.push(oldRows[r]);
+  }
+
+  if (removed === 0) { return 0; }
+  sheet.getRange(1, 1, 1, REPORT_HEADERS.length).setValues([REPORT_HEADERS]);
+  if (kept.length > 0) {
+    sheet.getRange(2, 1, kept.length, REPORT_HEADERS.length).setValues(kept);
+  }
+  var expectedLastRow = 1 + kept.length;
+  var actualLastRow = sheet.getLastRow();
+  if (actualLastRow > expectedLastRow) {
+    sheet.deleteRows(expectedLastRow + 1, actualLastRow - expectedLastRow);
+  }
+  return removed;
+}
+
+/**
+ * @param {Date} d 时间。
+ * @param {string} tz 时区。
+ * @return {string}
+ */
+function formatDateTime_(d, tz) {
+  return Utilities.formatDate(d, tz || 'Asia/Shanghai', 'yyyy-MM-dd HH:mm:ss');
 }

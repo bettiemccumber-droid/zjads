@@ -57,6 +57,24 @@ export async function fetchRewardooMerchantDetails(
   return dedupeRows_(all);
 }
 
+/**
+ * 只取商家库的一页，用来浏览和选取。
+ */
+export async function browseRewardooMerchantDetails(
+  apiToken: string,
+  page: number,
+  perPage: number,
+  relationship = '',
+): Promise<{ rows: MonetizationBrandRow[]; total: number; pages: number }> {
+  const { rows, pages } = await fetchRewardooMerchantDetailsPageWithMeta_(apiToken, {
+    page: String(page),
+    limit: String(perPage),
+    ...(relationship ? { relationship } : {}),
+  });
+  const total = pages > 1 ? pages * perPage : rows.length;
+  return { rows, pages, total };
+}
+
 async function fetchRewardooMerchantDetailsPage_(
   apiToken: string,
   extra: Record<string, string>,

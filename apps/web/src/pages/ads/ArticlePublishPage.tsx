@@ -1,0 +1,503 @@
+import { useEffect, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
+import { Button, Card, Divider, Form, Input, Result, Select, Space, Spin, Steps, Tag, Typography, message } from 'antd';
+import { FileTextOutlined } from '@ant-design/icons';
+import { api, type ApiResult } from '../../api/client';
+
+interface ChannelAccount {
+  id: number;
+  displayName: string;
+  platformCode: string;
+  siteId?: number | null;
+  siteName?: string | null;
+  siteDomain?: string | null;
+}
+
+interface MerchantOption {
+  key: string;
+  catalogMerchantId: number | null;
+  channelAccountId: number;
+  name: string;
+  mid: string;
+  merchantUrl: string;
+  countryCode: string;
+  platformCode: string;
+  siteId: number | null;
+  siteName: string | null;
+  siteDomain: string | null;
+  label: string;
+}
+
+interface ArticleSection {
+  heading: string;
+  text: string;
+}
+
+interface ArticlePreview {
+  title: string;
+  sections: ArticleSection[];
+  merchantUrl: string;
+  trackUrl: string;
+  articleUrl?: string;
+  siteName?: string;
+  siteDomain?: string;
+  accepted?: boolean;
+}
+
+interface PublishForm {
+  channelAccountId?: number;
+  merchantUrl?: string;
+  name?: string;
+  mid?: string;
+  countryCode?: string;
+}
+
+const STEPS = ['选择商家', '确认国家', '爬取数据', '确认图片', '预览文章', '发布'];
+
+const COUNTRIES = [
+  { value: 'US', label: 'US - 美国' },
+  { value: 'GB', label: 'GB - 英国' },
+  { value: 'CA', label: 'CA - 加拿大' },
+  { value: 'AU', label: 'AU - 澳大利亚' },
+  { value: 'DE', label: 'DE - 德国' },
+  { value: 'FR', label: 'FR - 法国' },
+  { value: 'JP', label: 'JP - 日本' },
+  { value: 'HK', label: 'HK - 香港' },
+  { value: 'SG', label: 'SG - 新加坡' },
+  { value: 'CN', label: 'CN - 中国' },
+];
+
+const SAMPLE_IMAGES = [
+  '主图',
+  '商品细节',
+  '穿搭',
+  '面料',
+  '场景',
+  '搭配',
+  '促销',
+  '补充',
+];
+
+const IMAGE_COLORS = ['#8aa4b5', '#c4b7a6', '#7f8c9b', '#b7c4ce', '#d7c8b4', '#9aa7b2', '#c9b59a', '#aeb8c2'];
+
+/**
+ * 国家代码对应的文章语言。未列出的国家先按英文处理。
+ */
+function languageOf(countryCode: string): { code: string; label: string } {
+  const country = countryCode.toUpperCase();
+  if (country === 'HK' || country === 'CN' || country === 'TW') return { code: 'zh', label: '中文' };
+  if (country === 'JP') return { code: 'ja', label: '日本語' };
+  if (country === 'DE') return { code: 'de', label: 'Deutsch' };
+  if (country === 'FR') return { code: 'fr', label: 'Français' };
+  return { code: 'en', label: 'English' };
+}
+
+/**
+ * 取出接口错误里的提示。
+ */
+function errorText(error: unknown, fallback: string): string {
+  if (typeof error === 'object' && error && 'response' in error) {
+    const messageText = (error as { response?: { data?: { message?: string | string[] } } }).response?.data?.message;
+    if (Array.isArray(messageText)) return messageText.join('；');
+    if (messageText) return messageText;
+  }
+  return fallback;
+}
+
+/**
+ * 快速发布文章。配图和正文是示例，三个网址分开保存。
+ */
+export default function ArticlePublishPage() {
+  const navigate = useNavigate();
+  const [form] = Form.useForm<PublishForm>();
+  const [step, setStep] = useState(0);
+  const [accounts, setAccounts] = useState<ChannelAccount[]>([]);
+  const [merchants, setMerchants] = useState<MerchantOption[]>([]);
+  const [picked, setPicked] = useState<MerchantOption | null>(null);
+  const [draft, setDraft] = useState<PublishForm>({ countryCode: 'US' });
+  const [query, setQuery] = useState('');
+  const [selectedImages, setSelectedImages] = useState<number[]>(SAMPLE_IMAGES.map((_, index) => index));
+  const [preview, setPreview] = useState<ArticlePreview | null>(null);
+  const [generating, setGenerating] = useState(false);
+  const [publishing, setPublishing] = useState(false);
+  const [profileLoading, setProfileLoading] = useState(false);
+  const [profileNote, setProfileNote] = useState('');
+  const countryCode = Form.useWatch('countryCode', form) || 'US';
+  const channelAccountId = Form.useWatch('channelAccountId', form);
+  const language = languageOf(countryCode);
+  const account = accounts.find((item) => item.id === (draft.channelAccountId ?? channelAccountId)) ?? null;
+
+  /**
+   * 表单卸掉后字段会被清掉，所以离开每一步时把值记在 draft 里。
+   */
+  const currentPayload = () => ({
+    channelAccountId: draft.channelAccountId,
+    siteId: account?.siteId ?? undefined,
+    catalogMerchantId: picked?.catalogMerchantId ?? undefined,
+    name: draft.name?.trim(),
+    mid: draft.mid?.trim(),
+    merchantUrl: draft.merchantUrl?.trim(),
+    countryCode: draft.countryCode,
+    languageCode: languageOf(draft.countryCode || 'US').code,
+  });
+
+  useEffect(() => {
+    if (step === 0 || step === 1) form.setFieldsValue(draft);
+  }, [step, draft, form]);
+
+  useEffect(() => {
+    void api.get<ApiResult<Array<{ platformCode: string; accounts: ChannelAccount[] }>>>('/channel-accounts/by-platform')
+      .then((res) => {
+        if (!res.data.success) return;
+        setAccounts(res.data.data.flatMap((group) => group.accounts.map((item) => ({ ...item, platformCode: group.platformCode }))));
+      })
+      .catch(() => message.error('加载联盟账号失败'));
+  }, []);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      void api.get<ApiResult<MerchantOption[]>>('/article-publish/merchants', { params: { q: query } })
+        .then((res) => {
+          if (res.data.success) setMerchants(res.data.data);
+        })
+        .catch(() => message.error('加载商家失败'));
+    }, 250);
+    return () => window.clearTimeout(timer);
+  }, [query]);
+
+  useEffect(() => {
+    if (step !== 2) return;
+    const timer = window.setTimeout(() => setStep(3), 700);
+    return () => window.clearTimeout(timer);
+  }, [step]);
+
+  return (
+    <div style={{ maxWidth: 980, margin: '0 auto' }}>
+      <Space style={{ marginBottom: 8 }}>
+        <FileTextOutlined />
+        <Typography.Title level={4} style={{ margin: 0 }}>快速发布文章</Typography.Title>
+      </Space>
+      <Typography.Paragraph type="secondary" style={{ marginBottom: 16 }}>
+        配图和正文是示例。商家页面爬取、模型和内容站回写还没接上。文章地址、商家网址、跟踪链接分开保存。
+      </Typography.Paragraph>
+      <Steps current={step} size="small" items={STEPS.map((title) => ({ title }))} style={{ marginBottom: 20 }} />
+      <Card>
+        {step === 0 && (
+          <Form
+            form={form}
+            layout="vertical"
+            initialValues={{ countryCode: 'US' }}
+            onFinish={(values) => {
+              const next = {
+                channelAccountId: picked?.channelAccountId || values.channelAccountId,
+                merchantUrl: picked?.merchantUrl || values.merchantUrl,
+                name: picked?.name || values.name,
+                mid: picked?.mid || values.mid,
+                countryCode: values.countryCode || picked?.countryCode || 'US',
+              };
+              if (profileLoading) {
+                message.info('正在从联盟平台获取商家网址');
+                return;
+              }
+              if (!next.channelAccountId) {
+                message.warning('请选择联盟账号');
+                return;
+              }
+              if (!next.name?.trim() && next.merchantUrl) {
+                try {
+                  next.name = new URL(next.merchantUrl).hostname.replace(/^www\./, '');
+                } catch {
+                  next.name = '';
+                }
+              }
+              if (!next.name?.trim()) {
+                message.warning('请填写商家名称');
+                return;
+              }
+              if (!next.merchantUrl || !/^https?:\/\//i.test(next.merchantUrl)) {
+                message.warning(picked ? '平台没有返回商家网址，请清空商家后按 URL 创建' : '请填写商家网址');
+                return;
+              }
+              setDraft(next);
+              setStep(1);
+            }}
+          >
+            <Form.Item label="选择推广商家" required>
+              <Select
+                showSearch
+                allowClear
+                filterOption={false}
+                value={picked?.key}
+                placeholder="从在投广告里选，输入名称或 MID"
+                options={merchants.map((item) => ({ value: item.key, label: item.label }))}
+                onSearch={setQuery}
+                onChange={(key) => {
+                  const row = merchants.find((item) => item.key === key) ?? null;
+                  setPicked(row);
+                  setProfileNote('');
+                  if (!row) {
+                    form.setFieldsValue({ merchantUrl: undefined, name: undefined, mid: undefined });
+                    return;
+                  }
+                  form.setFieldsValue({
+                    ...(row.channelAccountId ? { channelAccountId: row.channelAccountId } : {}),
+                    name: row.name,
+                    mid: row.mid,
+                    countryCode: row.countryCode || 'US',
+                    merchantUrl: undefined,
+                  });
+                  if (!row.channelAccountId || !row.mid) return;
+                  setProfileLoading(true);
+                  setProfileNote('');
+                  void api.get<ApiResult<{ siteUrl: string; merchantName: string | null; error: string | null }>>('/article-publish/merchant-profile', {
+                    params: { channelAccountId: row.channelAccountId, mid: row.mid },
+                  })
+                    .then((res) => {
+                      if (!res.data.success) return;
+                      const siteUrl = res.data.data.siteUrl;
+                      const name = res.data.data.merchantName || row.name;
+                      setPicked((current) => current?.key === row.key ? { ...current, merchantUrl: siteUrl, name } : current);
+                      form.setFieldsValue({ merchantUrl: siteUrl || undefined, name });
+                      setProfileNote(siteUrl ? '' : '联盟平台没有返回这个商家的网址');
+                    })
+                    .catch(() => {
+                      setProfileNote('联盟平台没有返回这个商家的网址');
+                      message.error('获取商家网址失败');
+                    })
+                    .finally(() => setProfileLoading(false));
+                }}
+              />
+            </Form.Item>
+            {picked && (
+              <Card size="small" style={{ marginBottom: 16, background: '#fafafa' }}>
+                <Typography.Text strong>{picked.name}</Typography.Text>
+                <div style={{ marginTop: 6 }}>
+                  <Tag>{picked.platformCode}</Tag>
+                  <Typography.Text type="secondary">MID: {picked.mid || '未填写'}</Typography.Text>
+                </div>
+                <div style={{ marginTop: 6 }}>
+                  {profileLoading ? '正在从联盟平台获取网址...' : (picked.merchantUrl || profileNote || '联盟平台没有返回这个商家的网址')}
+                </div>
+              </Card>
+            )}
+            <Divider plain>或</Divider>
+            <Typography.Text strong>按 URL 创建</Typography.Text>
+            <Typography.Paragraph type="secondary" style={{ marginBottom: 12 }}>
+              平台查不到这个商家时，再在这里手填。已经选了上面的商家，这一块就不能改。
+            </Typography.Paragraph>
+            <div style={picked ? { opacity: 0.55, pointerEvents: 'none' } : undefined}>
+            <Form.Item
+              name="merchantUrl"
+              label="商家 URL"
+              rules={picked ? [] : [{ required: true, message: '请填写商家网址' }, { pattern: /^https?:\/\//i, message: '需要以 http 或 https 开头' }]}
+            >
+              <Input placeholder="https://shop.example.com/" disabled={Boolean(picked)} />
+            </Form.Item>
+            <Form.Item name="channelAccountId" label="平台账号" rules={picked ? [] : [{ required: true, message: '请选择联盟账号' }]}>
+              <Select
+                disabled={Boolean(picked)}
+                placeholder="选择用于跟踪链接的联盟账号"
+                options={accounts.map((item) => ({ value: item.id, label: `${item.displayName} / ${item.platformCode}` }))}
+              />
+            </Form.Item>
+            <Form.Item name="countryCode" label="目标国家" rules={[{ required: true, message: '请选择国家' }]}>
+              <Select showSearch optionFilterProp="label" options={COUNTRIES} disabled={Boolean(picked)} />
+            </Form.Item>
+            <Form.Item label="发布站点">
+              <Select
+                disabled
+                value={account?.siteId ?? undefined}
+                placeholder={account ? '这个账号还没有绑定内容站' : '先选择平台账号'}
+                options={account?.siteId ? [{ value: account.siteId, label: `${account.siteName} (${account.siteDomain})` }] : []}
+              />
+            </Form.Item>
+            <Form.Item name="name" label="商家名称（选填）">
+              <Input placeholder="留空则用网址域名" disabled={Boolean(picked)} />
+            </Form.Item>
+            <Form.Item name="mid" label="商家 MID（选填）">
+              <Input placeholder="平台有就填，没有留空" disabled={Boolean(picked)} />
+            </Form.Item>
+            </div>
+            <Button type="primary" htmlType="submit" loading={profileLoading}>下一步</Button>
+          </Form>
+        )}
+
+        {step === 1 && (
+          <Form
+            form={form}
+            layout="vertical"
+            onFinish={(values) => {
+              setDraft((current) => ({ ...current, countryCode: values.countryCode }));
+              setStep(2);
+            }}
+          >
+            <Form.Item name="countryCode" label="目标国家" rules={[{ required: true, message: '请选择国家' }]}>
+              <Select showSearch optionFilterProp="label" options={COUNTRIES} />
+            </Form.Item>
+            <Form.Item label="文章语言">
+              <Input value={language.label} disabled />
+            </Form.Item>
+            <Space>
+              <Button onClick={() => setStep(0)}>上一步</Button>
+              <Button type="primary" htmlType="submit">开始爬取</Button>
+            </Space>
+          </Form>
+        )}
+
+        {step === 2 && (
+          <div style={{ textAlign: 'center', padding: 48 }}>
+            <Spin />
+            <div style={{ marginTop: 12 }}>正在准备示例配图...</div>
+          </div>
+        )}
+
+        {step === 3 && (
+          <Spin spinning={generating} tip="正在生成示例文章，请稍候...">
+            <Typography.Text strong>选择文章配图（已选 {selectedImages.length} 条）</Typography.Text>
+            <Typography.Paragraph type="secondary">示例配图，商家页面爬取还没接上。勾选要留在预览里的图片。</Typography.Paragraph>
+            <div
+              style={{
+                border: '1px dashed #d9d9d9',
+                borderRadius: 8,
+                padding: 28,
+                textAlign: 'center',
+                color: '#999',
+                marginBottom: 16,
+              }}
+            >
+              本地上传还没接上
+            </div>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 12 }}>
+              {SAMPLE_IMAGES.map((label, index) => {
+                const selected = selectedImages.includes(index);
+                return (
+                  <button
+                    key={label}
+                    type="button"
+                    onClick={() => setSelectedImages((current) => current.includes(index) ? current.filter((item) => item !== index) : [...current, index])}
+                    style={{
+                      height: 110,
+                      borderRadius: 8,
+                      border: selected ? '2px solid #1677ff' : '1px solid #f0f0f0',
+                      background: IMAGE_COLORS[index],
+                      color: '#fff',
+                      cursor: 'pointer',
+                    }}
+                  >
+                    {label}
+                  </button>
+                );
+              })}
+            </div>
+            <Space style={{ marginTop: 16 }}>
+              <Button onClick={() => setStep(1)}>上一步</Button>
+              <Button
+                type="primary"
+                disabled={selectedImages.length === 0}
+                onClick={() => {
+                  setGenerating(true);
+                  void api.post<ApiResult<ArticlePreview>>('/article-publish/preview', currentPayload())
+                    .then((res) => {
+                      if (!res.data.success) {
+                        message.error(res.data.message || '生成失败');
+                        return;
+                      }
+                      setPreview(res.data.data);
+                      setStep(4);
+                    })
+                    .catch((error: unknown) => message.error(errorText(error, '生成失败')))
+                    .finally(() => setGenerating(false));
+                }}
+              >
+                生成文章
+              </Button>
+            </Space>
+          </Spin>
+        )}
+
+        {step === 4 && preview && (
+          <div>
+            <Typography.Title level={3}>{preview.title}</Typography.Title>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 12, marginBottom: 16 }}>
+              {selectedImages.map((index) => (
+                <div key={index} style={{ height: 140, borderRadius: 8, background: IMAGE_COLORS[index], color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                  示例配图 · {SAMPLE_IMAGES[index]}
+                </div>
+              ))}
+            </div>
+            {preview.sections.map((section) => (
+              <div key={section.heading} style={{ marginBottom: 16 }}>
+                <Typography.Title level={5}>{section.heading}</Typography.Title>
+                <Typography.Paragraph>{section.text}</Typography.Paragraph>
+              </div>
+            ))}
+            <div style={{ background: '#f6ffed', border: '1px solid #b7eb8f', borderRadius: 8, padding: 12, marginBottom: 8 }}>
+              <div>跟踪链接</div>
+              <a href={preview.trackUrl} target="_blank" rel="noreferrer">{preview.trackUrl}</a>
+              {preview.trackUrl === preview.merchantUrl && (
+                <div style={{ marginTop: 4 }}>这个联盟账号还没有跟踪链接前缀，正文链接暂时和商家网址相同。</div>
+              )}
+            </div>
+            <Typography.Text type="secondary">商家网址 {preview.merchantUrl}</Typography.Text>
+            <div style={{ marginTop: 16 }}>
+              <Space>
+                <Button onClick={() => setStep(3)}>上一步</Button>
+                <Button
+                  type="primary"
+                  loading={publishing}
+                  onClick={() => {
+                    if (!account?.siteId) {
+                      message.warning('请先在我的平台账号里绑定内容站');
+                      return;
+                    }
+                    setPublishing(true);
+                    void api.post<ApiResult<ArticlePreview>>('/article-publish/publish', currentPayload())
+                      .then((res) => {
+                        if (!res.data.success) {
+                          message.error(res.data.message || '保存失败');
+                          return;
+                        }
+                        setPreview(res.data.data);
+                        message.success(res.data.data.accepted ? '内容站已回写文章地址' : '文章已保存，等待内容站回写');
+                        setStep(5);
+                      })
+                      .catch((error: unknown) => message.error(errorText(error, '保存失败')))
+                      .finally(() => setPublishing(false));
+                  }}
+                >
+                  发布文章
+                </Button>
+              </Space>
+            </div>
+          </div>
+        )}
+
+        {step === 5 && preview && (
+          <Result
+            status="success"
+            title="文章已保存"
+            subTitle={preview.articleUrl ? `文章地址：${preview.articleUrl}` : `内容站还没有回写文章地址。${preview.siteDomain ? `绑定站点 ${preview.siteDomain}。` : ''}`}
+            extra={[
+              <Button key="view" type="primary" onClick={() => setStep(4)}>查看文章</Button>,
+              <Button key="list" onClick={() => navigate('/ads/articles')}>文章列表</Button>,
+              <Button
+                key="again"
+                onClick={() => {
+                  setStep(0);
+                  setPicked(null);
+                  setPreview(null);
+                  setSelectedImages(SAMPLE_IMAGES.map((_, index) => index));
+                  setDraft({ countryCode: 'US' });
+                  form.resetFields();
+                  form.setFieldsValue({ countryCode: 'US' });
+                }}
+              >
+                继续发布
+              </Button>,
+            ]}
+          />
+        )}
+      </Card>
+    </div>
+  );
+}

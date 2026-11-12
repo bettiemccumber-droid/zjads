@@ -9,8 +9,9 @@ import { resolveOwnerUserId } from '../common/ownership.util';
 import { CryptoService } from '../common/crypto.service';
 import { AuthUser, isAdmin } from '../common/ownership.util';
 import { PrismaService } from '../prisma/prisma.service';
-import { parseMerchantQueryText } from './merchant-status-normalizer';
+import { mapCatalogOffer, monetizationRowMatchesText, parseMerchantQueryText } from './merchant-status-normalizer';
 import {
+  browseMonetizationPage,
   buildMerchantQueryKey,
   isMerchantStatusPlatformSupported,
   matchMerchantStatusFromPreload,
@@ -22,7 +23,9 @@ import {
   MerchantStatusAdminSummaryResult,
   MerchantStatusQueryResult,
   MerchantStatusRow,
+  MonetizationBrandRow,
   PlatformPassSummary,
+  RelationshipStatus,
   UserMerchantPassSummary,
 } from './merchant-status.types';
 
@@ -37,8 +40,47 @@ export interface MerchantStatusSummaryDto {
   userIds?: number[];
 }
 
+export interface DiscoverMerchantQuery {
+  channelAccountId?: number;
+  q?: string;
+  page?: number;
+  pageSize?: number;
+}
+
+export interface DiscoverMerchantRow {
+  channelAccountId: number;
+  platformCode: string;
+  platformName: string;
+  accountName: string;
+  mid: string;
+  mcid: string | null;
+  name: string;
+  merchantUrl: string;
+  commRate: string;
+  categories: string;
+  countryCode: string;
+  supportRegion: string;
+  tags: string;
+  logo: string;
+  relationship: RelationshipStatus;
+  relationshipLabel: string;
+  claimed: boolean;
+}
+
+export interface DiscoverMerchantResult {
+  total: number;
+  page: number;
+  pageSize: number;
+  rows: DiscoverMerchantRow[];
+  errors: Array<{ channelAccountId: number; platformCode: string; message: string }>;
+  hint: string;
+}
+
 @Injectable()
 export class MerchantsService {
+  /** 名称搜索只扫每个账号商家库的前 2000 条，避免每次把全库拉下来。 */
+  private readonly discoverScanCache = new Map<number, { at: number; rows: MonetizationBrandRow[]; truncated: boolean }>();
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly crypto: CryptoService,
@@ -336,6 +378,216 @@ export class MerchantsService {
     return rows;
   }
 
+  /**
+   * 按联盟账号和 MID 向平台要商家网址。选中在投商家后用来自动带出网址。
+   */
+  /**
+   * 从员工的联盟账号里翻已经通过审核的商家。领取这些商家会直接做广告。
+   */
+  async browseMerchantCatalog(ownerUserId: number, query: DiscoverMerchantQuery): Promise<DiscoverMerchantResult> {
+    const page = Math.max(1, Math.floor(query.page ?? 1) || 1);
+    const pageSize = Math.min(50, Math.max(1, Math.floor(query.pageSize ?? 20) || 20));
+    const q = (query.q ?? '').trim();
+    const accounts = await this.loadAccountsForQuery_(
+      ownerUserId,
+      query.channelAccountId ? [query.channelAccountId] : undefined,
+    );
+    const errors: DiscoverMerchantResult['errors'] = [];
+    const collected: Array<DiscoverMerchantRow & { sort: number }> = [];
+    let total = 0;
+    let truncated = false;
+    let pendingOnly = 0;
+
+    if (!query.channelAccountId && page > 1) {
+      throw new BadRequestException('翻页请先选择一个联盟账号');
+    }
+
+    for (const account of accounts) {
+      if (!isMerchantStatusPlatformSupported(account.platform.code)) {
+        errors.push({
+          channelAccountId: account.id,
+          platformCode: account.platform.code,
+          message: `${account.platform.name} 暂不支持商家库`,
+        });
+        continue;
+      }
+      let apiToken = '';
+      try {
+        apiToken = this.crypto.decrypt<{ apiToken: string }>(account.credentialsEnc).apiToken;
+      } catch {
+        errors.push({
+          channelAccountId: account.id,
+          platformCode: account.platform.code,
+          message: `${account.displayName} 的 Token 解密失败`,
+        });
+        continue;
+      }
+      if (!apiToken) {
+        errors.push({
+          channelAccountId: account.id,
+          platformCode: account.platform.code,
+          message: `${account.displayName} 没有 API Token`,
+        });
+        continue;
+      }
+
+      try {
+        if (/^\d+$/.test(q)) {
+          const brands = await preloadMonetizationBrandsForAccount(account.platform.code, apiToken, [{ merchantId: q }]);
+          const approved = brands.filter((row) => this.isApprovedMerchant_(row));
+          pendingOnly += brands.length - approved.length;
+          total += approved.length;
+          approved.forEach((row, index) => {
+            const mapped = this.toDiscoverRow_(account, row);
+            if (mapped) collected.push({ ...mapped, sort: index });
+          });
+          continue;
+        }
+
+        if (q) {
+          const scanned = await this.loadDiscoverScan_(account.platform.code, account.id, apiToken);
+          if (scanned.truncated) truncated = true;
+          const matched = scanned.rows.filter((row) => this.isApprovedMerchant_(row) && monetizationRowMatchesText(row, q));
+          total += matched.length;
+          const start = query.channelAccountId ? (page - 1) * pageSize : 0;
+          const slice = query.channelAccountId ? matched.slice(start, start + pageSize) : matched.slice(0, pageSize);
+          slice.forEach((row, index) => {
+            const mapped = this.toDiscoverRow_(account, row);
+            if (mapped) collected.push({ ...mapped, sort: index });
+          });
+          continue;
+        }
+
+        const browsed = await browseMonetizationPage(account.platform.code, apiToken, page, pageSize, 'Joined');
+        const approved = browsed.rows.filter((row) => this.isApprovedMerchant_(row));
+        total += approved.length === browsed.rows.length ? browsed.total : approved.length;
+        approved.forEach((row, index) => {
+          const mapped = this.toDiscoverRow_(account, row);
+          if (mapped) collected.push({ ...mapped, sort: index });
+        });
+      } catch (err) {
+        errors.push({
+          channelAccountId: account.id,
+          platformCode: account.platform.code,
+          message: err instanceof Error ? err.message : String(err),
+        });
+      }
+    }
+
+    const mids = [...new Set(collected.map((row) => row.mid))];
+    const claimed = mids.length
+      ? await this.prisma.catalogMerchant.findMany({
+          where: { ownerUserId, mid: { in: mids }, blockReason: 'none' },
+          select: { channelAccountId: true, mid: true },
+        })
+      : [];
+    const claimedKeys = new Set(claimed.map((row) => `${row.channelAccountId}:${row.mid}`));
+    const rows = collected.map(({ sort: _sort, ...row }) => ({
+      ...row,
+      claimed: claimedKeys.has(`${row.channelAccountId}:${row.mid}`),
+    }));
+
+    return {
+      total,
+      page,
+      pageSize,
+      rows,
+      errors,
+      hint: collected.length === 0 && pendingOnly > 0
+        ? '这个商家还没通过审核，不能领取。选取商家只列出已经通过审核、可以投放的商家。'
+        : q && !/^\d+$/.test(q) && truncated
+          ? '名称只在已通过审核的商家里匹配前 2000 条。知道 MID 时直接搜 MID。'
+          : '',
+    };
+  }
+
+  async lookupMerchantSite(ownerUserId: number, channelAccountId: number, merchantId: string) {
+    const mid = merchantId.trim();
+    if (!mid) return { siteUrl: '', merchantName: null as string | null };
+    const saved = await this.prisma.catalogMerchant.findFirst({
+      where: {
+        ownerUserId,
+        mid,
+        blockReason: 'none',
+        ...(channelAccountId ? { channelAccountId } : {}),
+      },
+    });
+    if (saved?.merchantUrl) {
+      return {
+        siteUrl: normalizeMerchantSiteUrl(saved.merchantUrl),
+        merchantName: saved.name,
+        error: null,
+        relationshipStatus: 'joined' as const,
+      };
+    }
+    if (!channelAccountId) return { siteUrl: '', merchantName: null as string | null };
+    const accounts = await this.loadAccountsForQuery_(ownerUserId, [channelAccountId]);
+    const rows = await this.queryRowsForAccounts_([{ merchantId: mid }], accounts, ownerUserId);
+    const row = rows.find((item) => item.siteUrl) ?? rows[0];
+    return {
+      siteUrl: normalizeMerchantSiteUrl(row?.siteUrl ?? ''),
+      merchantName: row?.merchantName?.trim() || null,
+      error: row?.error ?? null,
+      relationshipStatus: row?.relationshipStatus ?? null,
+    };
+  }
+
+  /**
+   * 名称搜索缓存一页 2000 条，10 分钟内重复搜索不再打平台。
+   */
+  private async loadDiscoverScan_(platformCode: string, channelAccountId: number, apiToken: string) {
+    const cached = this.discoverScanCache.get(channelAccountId);
+    if (cached && Date.now() - cached.at < 10 * 60 * 1000) return cached;
+    const browsed = await browseMonetizationPage(platformCode, apiToken, 1, 2000, 'Joined');
+    const entry = {
+      at: Date.now(),
+      rows: browsed.rows,
+      truncated: browsed.pages > 1 || browsed.total > browsed.rows.length,
+    };
+    this.discoverScanCache.set(channelAccountId, entry);
+    return entry;
+  }
+
+  /**
+   * 已经加入并且平台标记为可投放。待审核、未加入的不出现在选取商家里。
+   */
+  private isApprovedMerchant_(row: MonetizationBrandRow): boolean {
+    const offer = mapCatalogOffer(row);
+    return offer.relationshipStatus === 'joined';
+  }
+
+  /**
+   * 平台原始行转成选取商家表格的一行。没有 MID 的跳过。
+   */
+  private toDiscoverRow_(
+    account: { id: number; displayName: string; platform: { code: string; name: string } },
+    row: MonetizationBrandRow,
+  ): DiscoverMerchantRow | null {
+    const offer = mapCatalogOffer(row);
+    const mid = offer.merchantId || offer.mcid || '';
+    const name = offer.merchantName?.trim() || '';
+    if (!mid || !name) return null;
+    return {
+      channelAccountId: account.id,
+      platformCode: account.platform.code,
+      platformName: account.platform.name,
+      accountName: account.displayName,
+      mid,
+      mcid: offer.mcid,
+      name,
+      merchantUrl: normalizeMerchantSiteUrl(offer.siteUrl ?? ''),
+      commRate: offer.commRate,
+      categories: offer.categories,
+      countryCode: offer.countryCode,
+      supportRegion: offer.supportRegion,
+      tags: offer.tags,
+      logo: offer.logo,
+      relationship: offer.relationshipStatus,
+      relationshipLabel: RELATIONSHIP_LABEL[offer.relationshipStatus],
+      claimed: false,
+    };
+  }
+
   private buildUserPassSummary_(
     userId: number,
     username: string,
@@ -369,4 +621,23 @@ export class MerchantsService {
 
     return { userId, username, byPlatform, totalPassed };
   }
+}
+
+/**
+ * 平台返回的网址补上协议，方便直接当商家网址用。
+ */
+const RELATIONSHIP_LABEL: Record<RelationshipStatus, string> = {
+  joined: '已加入',
+  pending: '待审核',
+  rejected: '已拒绝',
+  not_joined: '未加入',
+  not_found: '无此商家',
+  unknown: '未知',
+};
+
+function normalizeMerchantSiteUrl(value: string): string {
+  const trimmed = value.trim();
+  if (!trimmed) return '';
+  if (/^https?:\/\//i.test(trimmed)) return trimmed;
+  return `https://${trimmed}`;
 }

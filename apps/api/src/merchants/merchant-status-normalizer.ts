@@ -72,6 +72,19 @@ export function isMerchantActionable(
 }
 
 /**
+ * 各平台官网字段名不一样，按常见名字取第一个网址。
+ */
+function firstSiteUrl(row: MonetizationBrandRow): string | null {
+  const raw = row as MonetizationBrandRow & Record<string, unknown>;
+  const keys = ['site_url', 'siteurl', 'website', 'site', 'url', 'brand_url', 'domain', 'advertiser_url'];
+  for (const key of keys) {
+    const value = raw[key];
+    if (typeof value === 'string' && value.trim()) return value.trim();
+  }
+  return null;
+}
+
+/**
  * 从 Monetization 行构建标准化字段
  */
 export function mapMonetizationBrandRow(row: MonetizationBrandRow): {
@@ -105,12 +118,72 @@ export function mapMonetizationBrandRow(row: MonetizationBrandRow): {
     merchantId,
     mcid: slugMcid ? String(slugMcid) : null,
     merchantName: row.merchant_name ?? row.sitename ?? null,
-    siteUrl: row.site_url ? String(row.site_url) : null,
+    siteUrl: firstSiteUrl(row),
     relationshipStatus,
     relationshipRaw,
     merchantAvailability,
     availabilityRaw,
   };
+}
+
+/**
+ * 商家库一行里要用到的网址、佣金和地区。
+ */
+export function mapCatalogOffer(row: MonetizationBrandRow): {
+  merchantId: string | null;
+  mcid: string | null;
+  merchantName: string | null;
+  siteUrl: string | null;
+  relationshipStatus: RelationshipStatus;
+  commRate: string;
+  categories: string;
+  countryCode: string;
+  supportRegion: string;
+  tags: string;
+  logo: string;
+} {
+  const mapped = mapMonetizationBrandRow(row);
+  const raw = row as MonetizationBrandRow & Record<string, unknown>;
+  const commRate = catalogText_(raw.comm_rate);
+  const categories = catalogText_(raw.categories);
+  const country = catalogText_(raw.country);
+  const region =
+    catalogText_(raw.support_region) ||
+    (Array.isArray(raw.post_area_list) ? raw.post_area_list.map((item) => catalogText_(item)).filter(Boolean).join(',') : catalogText_(raw.post_area_list));
+  const countryCode = (country || region.split(/[,，/\s]+/)[0] || 'US').replace(/[^A-Za-z]/g, '').slice(0, 8).toUpperCase() || 'US';
+  return {
+    merchantId: mapped.merchantId,
+    mcid: mapped.mcid,
+    merchantName: mapped.merchantName,
+    siteUrl: mapped.siteUrl,
+    relationshipStatus: mapped.relationshipStatus,
+    commRate,
+    categories,
+    countryCode,
+    supportRegion: region || country,
+    tags: catalogText_(raw.tags),
+    logo: catalogText_(raw.logo) || catalogText_(raw.logo_url) || catalogText_(raw.brand_logo) || catalogText_(raw.merchant_logo),
+  };
+}
+
+/**
+ * 名称、MID、网址是否包含这次搜索。
+ */
+export function monetizationRowMatchesText(row: MonetizationBrandRow, query: string): boolean {
+  const needle = query.trim().toLowerCase();
+  if (!needle) return true;
+  const offer = mapCatalogOffer(row);
+  const haystack = [offer.merchantName, offer.merchantId, offer.mcid, offer.siteUrl, offer.categories, offer.commRate]
+    .filter(Boolean)
+    .join(' ')
+    .toLowerCase();
+  return haystack.includes(needle);
+}
+
+function catalogText_(value: unknown): string {
+  if (typeof value === 'string') return value.trim();
+  if (typeof value === 'number' && Number.isFinite(value)) return String(value);
+  return '';
 }
 
 /**

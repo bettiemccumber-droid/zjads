@@ -66,6 +66,22 @@ class CreateChannelAccountBody {
   @IsOptional()
   @IsString()
   affiliateAlias?: string;
+
+  @IsOptional()
+  @IsInt()
+  siteId?: number;
+
+  @IsOptional()
+  @IsInt()
+  paymentMethodId?: number;
+
+  @IsOptional()
+  @IsInt()
+  testId?: number;
+
+  @IsOptional()
+  @IsString()
+  trackLinkPrefix?: string;
 }
 
 class UpdateChannelAccountBody {
@@ -96,6 +112,36 @@ class UpdateChannelAccountBody {
   @IsOptional()
   @IsString()
   settlementBankAccount?: string;
+
+  @IsOptional()
+  @IsInt()
+  siteId?: number;
+
+  @IsOptional()
+  @IsInt()
+  paymentMethodId?: number;
+
+  @IsOptional()
+  @IsString()
+  trackLinkPrefix?: string;
+
+  @IsOptional()
+  @IsInt()
+  testId?: number;
+}
+
+class TestChannelAccountBody {
+  @IsInt()
+  platformId!: number;
+
+  /** 新建时必填。编辑已有账号且留空时，用库里的 Key 测试。 */
+  @IsOptional()
+  @IsString()
+  apiToken?: string;
+
+  @IsOptional()
+  @IsInt()
+  accountId?: number;
 }
 
 @Controller('channel-accounts')
@@ -116,6 +162,16 @@ export class ChannelAccountsController {
   async listByPlatform(@CurrentUser() user: AuthUser, @Query('userId') userId?: string) {
     const filterId = userId ? resolveOwnerUserId(user, parseInt(userId, 10), 'read') : undefined;
     return ok(await this.service.listGroupedByPlatform(user, filterId));
+  }
+
+  @Post('test')
+  async test(@CurrentUser() user: AuthUser, @Body() body: TestChannelAccountBody) {
+    if (user.role === UserRole.VIEWER) {
+      return { success: false, data: null, message: '只读账号无法测试连接' };
+    }
+    return ok(
+      await this.service.testConnection(user, body.platformId, body.apiToken, body.accountId),
+    );
   }
 
   @Post()

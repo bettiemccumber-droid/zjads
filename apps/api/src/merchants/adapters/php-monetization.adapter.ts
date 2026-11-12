@@ -48,6 +48,27 @@ export async function fetchPhpMonetizationBrands(
   return dedupeMonetizationRows_(all);
 }
 
+/**
+ * 只取商家库的一页，用来浏览和选取。
+ */
+export async function browsePhpMonetization(
+  platformCode: string,
+  apiToken: string,
+  page: number,
+  perPage: number,
+  relationship = '',
+): Promise<{ rows: MonetizationBrandRow[]; total: number; pages: number }> {
+  const baseUrl = PHP_MONETIZATION[platformCode];
+  if (!baseUrl) {
+    throw new Error(`平台 ${platformCode} 不支持 PHP Monetization API`);
+  }
+  return fetchPhpMonetizationPage_(baseUrl, apiToken, {
+    page: String(page),
+    limit: String(perPage),
+    ...(relationship ? { relationship } : {}),
+  }, page, perPage);
+}
+
 async function fetchPhpMonetizationOnce_(
   baseUrl: string,
   apiToken: string,
@@ -83,8 +104,65 @@ async function fetchPhpMonetizationOnce_(
   }
 
   const payload = root.data ?? root.list ?? root.payload;
-  if (!Array.isArray(payload)) return [];
-  return payload as MonetizationBrandRow[];
+  const list = Array.isArray(payload)
+    ? payload
+    : payload && typeof payload === 'object' && Array.isArray((payload as { list?: unknown }).list)
+      ? ((payload as { list: MonetizationBrandRow[] }).list)
+      : [];
+  return list;
+}
+
+/**
+ * 带总数的单页结果。没有总数字段时，满页就允许再翻一页。
+ */
+async function fetchPhpMonetizationPage_(
+  baseUrl: string,
+  apiToken: string,
+  extra: Record<string, string>,
+  page: number,
+  perPage: number,
+): Promise<{ rows: MonetizationBrandRow[]; total: number; pages: number }> {
+  await throttlePhpRequest_();
+
+  const params = new URLSearchParams({
+    mod: 'medium',
+    op: 'monetization_api',
+    type: 'json',
+    token: apiToken,
+    ...extra,
+  });
+
+  const url = `${baseUrl}?${params.toString()}`;
+  const { data } = await axios.post(url, params.toString(), {
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    timeout: 120000,
+    validateStatus: () => true,
+  });
+
+  if (typeof data === 'string') {
+    throw new Error(data.slice(0, 200) || 'Monetization API 无响应');
+  }
+
+  const root = data as Record<string, unknown>;
+  const status = root.status as Record<string, unknown> | undefined;
+  const code = status?.code ?? root.code;
+  if (code != null && code !== 0 && code !== '0' && code !== 200 && code !== '200') {
+    const msg = String(status?.msg ?? root.msg ?? root.message ?? 'Monetization API 错误');
+    throw new Error(msg);
+  }
+
+  const payload = root.data ?? root.list ?? root.payload;
+  const list = Array.isArray(payload)
+    ? (payload as MonetizationBrandRow[])
+    : payload && typeof payload === 'object' && Array.isArray((payload as { list?: unknown }).list)
+      ? ((payload as { list: MonetizationBrandRow[] }).list)
+      : [];
+  const meta = payload && typeof payload === 'object' ? (payload as Record<string, unknown>) : root;
+  const totalRaw = Number(meta.total_mcid ?? meta.total ?? root.total ?? 0);
+  const pagesRaw = Number(meta.total_page ?? root.total_page ?? 0);
+  const pages = pagesRaw > 0 ? pagesRaw : list.length >= perPage ? page + 1 : page;
+  const total = totalRaw > 0 ? totalRaw : pages > page ? page * perPage + list.length : (page - 1) * perPage + list.length;
+  return { rows: list, total, pages };
 }
 
 function dedupeMonetizationRows_(rows: MonetizationBrandRow[]): MonetizationBrandRow[] {

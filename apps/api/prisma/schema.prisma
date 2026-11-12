@@ -75,11 +75,17 @@ model User {
   organization         Organization          @relation(fields: [organizationId], references: [id])
   reportsTo            User?                 @relation("UserTeam", fields: [reportsToId], references: [id], onDelete: SetNull)
   teamMembers          User[]                @relation("UserTeam")
-  channelAccounts      ChannelAccount[]
-  syncJobs             SyncJob[]
-  adDataSources        AdDataSource[]
-  commissionAlertRule  CommissionAlertRule?
-  commissionAlerts     CommissionAlert[]
+  channelAccounts       ChannelAccount[]
+  syncJobs              SyncJob[]
+  adDataSources         AdDataSource[]
+  commissionAlertRule   CommissionAlertRule?
+  commissionAlerts      CommissionAlert[]
+  publishSites          PublishSite[]
+  paymentMethods        PaymentMethod[]
+  catalogMerchants      CatalogMerchant[]
+  googleAdsConnections  GoogleAdsConnection[]
+  adJobs                AdJob[]
+  adAutomationCampaigns AdAutomationCampaign[]
 
   @@index([organizationId])
   @@index([reportsToId])
@@ -129,11 +135,20 @@ model ChannelAccount {
   settlementBankAccount  String @default("") @map("settlement_bank_account") @db.VarChar(80)
   credentialsEnc     String   @map("credentials_enc") @db.Text
   isActive           Boolean  @default(true) @map("is_active")
+  /** 绑定的内容站。为空表示沿用原有渠道账号，不参与自动发文。 */
+  siteId             Int?     @map("site_id")
+  paymentMethodId    Int?     @map("payment_method_id")
+  /** 联盟跟踪链接前缀。空则按平台默认规则拼接 url 参数。 */
+  trackLinkPrefix    String   @default("") @map("track_link_prefix") @db.VarChar(500)
+  lastTestedAt       DateTime? @map("last_tested_at")
+  lastTestOk         Boolean  @default(false) @map("last_test_ok")
   createdAt          DateTime @default(now()) @map("created_at")
   updatedAt          DateTime @updatedAt @map("updated_at")
 
-  ownerUser    User              @relation(fields: [ownerUserId], references: [id], onDelete: Cascade)
-  platform     Platform          @relation(fields: [platformId], references: [id])
+  ownerUser     User              @relation(fields: [ownerUserId], references: [id], onDelete: Cascade)
+  platform      Platform          @relation(fields: [platformId], references: [id])
+  site          PublishSite?      @relation(fields: [siteId], references: [id], onDelete: SetNull)
+  paymentMethod PaymentMethod?    @relation(fields: [paymentMethodId], references: [id], onDelete: SetNull)
   orders       AffiliateOrder[]
   merchantClicks AffiliateMerchantClickDaily[]
   syncJobItems SyncJobItem[]
@@ -278,6 +293,8 @@ model AdCampaignDaily {
   avgCpc         Decimal  @default(0) @map("avg_cpc") @db.Decimal(14, 4)
   maxCpc         Decimal  @default(0) @map("max_cpc") @db.Decimal(14, 4)
   currency       String   @default("USD") @db.VarChar(10)
+  /** sheet = 现有表格导入；google_ads_api = 以后的 API 日报。当前唯一键未包含 source，避免改动已有日报索引。 */
+  source         String   @default("sheet") @db.VarChar(32)
   updatedAt      DateTime @updatedAt @map("updated_at")
 
   @@unique([ownerUserId, date, customerId, campaignId])
@@ -425,4 +442,222 @@ model CommissionAlert {
   @@unique([userId, merchantId, windowStart, windowEnd])
   @@index([userId, status])
   @@map("commission_alerts")
+}
+
+/// 文章自动发布的内容站，例如 Blivio、NexusBazaar。
+model PublishSite {
+  id          Int      @id @default(autoincrement())
+  ownerUserId Int      @map("owner_user_id")
+  name        String   @db.VarChar(120)
+  domain      String   @db.VarChar(255)
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  ownerUser       User             @relation(fields: [ownerUserId], references: [id], onDelete: Cascade)
+  channelAccounts ChannelAccount[]
+  articles        Article[]
+
+  @@unique([ownerUserId, domain])
+  @@index([ownerUserId])
+  @@map("publish_sites")
+}
+
+/// 渠道账号上的收款方式。与现有收款人姓名、卡号分开保存。
+model PaymentMethod {
+  id          Int      @id @default(autoincrement())
+  ownerUserId Int      @map("owner_user_id")
+  name        String   @db.VarChar(120)
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  ownerUser       User             @relation(fields: [ownerUserId], references: [id], onDelete: Cascade)
+  channelAccounts ChannelAccount[]
+
+  @@unique([ownerUserId, name])
+  @@index([ownerUserId])
+  @@map("payment_methods")
+}
+
+/// 测试连接的一次性凭证。只有绑定内容站时才要求消费它，原有创建接口不走这里。
+model ChannelConnectionTest {
+  id          Int      @id @default(autoincrement())
+  ownerUserId Int      @map("owner_user_id")
+  platformId  Int      @map("platform_id")
+  tokenHash   String   @map("token_hash") @db.VarChar(64)
+  ok          Boolean
+  message     String   @db.VarChar(500)
+  expiresAt   DateTime @map("expires_at")
+  consumedAt  DateTime? @map("consumed_at")
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  @@index([ownerUserId, platformId])
+  @@map("channel_connection_tests")
+}
+
+/// 可领取的联盟商家。成人、禁止、违规不可进入投放。
+model CatalogMerchant {
+  id               Int      @id @default(autoincrement())
+  ownerUserId      Int      @map("owner_user_id")
+  channelAccountId Int      @map("channel_account_id")
+  platformCode     String   @map("platform_code") @db.VarChar(50)
+  mid              String   @db.VarChar(64)
+  name             String   @db.VarChar(255)
+  merchantUrl      String   @map("merchant_url") @db.VarChar(2048)
+  countryCode      String   @default("US") @map("country_code") @db.VarChar(8)
+  blockReason      String   @default("none") @map("block_reason") @db.VarChar(32)
+  createdAt        DateTime @default(now()) @map("created_at")
+  updatedAt        DateTime @updatedAt @map("updated_at")
+
+  ownerUser User    @relation(fields: [ownerUserId], references: [id], onDelete: Cascade)
+  adJobs    AdJob[]
+
+  @@unique([ownerUserId, channelAccountId, mid])
+  @@index([ownerUserId])
+  @@map("catalog_merchants")
+}
+
+/// 一个 MCC 一条连接。刷新令牌可空，本期不调用 Google。
+model GoogleAdsConnection {
+  id              Int      @id @default(autoincrement())
+  ownerUserId     Int      @map("owner_user_id")
+  mccCustomerId   String   @map("mcc_customer_id") @db.VarChar(16)
+  refreshTokenEnc String   @default("") @map("refresh_token_enc") @db.VarChar(2048)
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+
+  ownerUser User                 @relation(fields: [ownerUserId], references: [id], onDelete: Cascade)
+  customers GoogleAdsCustomer[]
+
+  @@unique([ownerUserId, mccCustomerId])
+  @@map("google_ads_connections")
+}
+
+/// 子账户。可用性是系统自己的开关，Google 状态另记。
+model GoogleAdsCustomer {
+  id                   Int      @id @default(autoincrement())
+  connectionId         Int      @map("connection_id")
+  customerId           String   @map("customer_id") @db.VarChar(16)
+  googleStatus         String   @default("ENABLED") @map("google_status") @db.VarChar(32)
+  availability         String   @default("available") @db.VarChar(32)
+  currencyCode         String   @default("USD") @map("currency_code") @db.VarChar(8)
+  timeZone             String   @default("Asia/Shanghai") @map("time_zone") @db.VarChar(64)
+  activeCampaignCount  Int      @default(0) @map("active_campaign_count")
+  createdAt            DateTime @default(now()) @map("created_at")
+  updatedAt            DateTime @updatedAt @map("updated_at")
+
+  connection GoogleAdsConnection @relation(fields: [connectionId], references: [id], onDelete: Cascade)
+
+  @@unique([connectionId, customerId])
+  @@map("google_ads_customers")
+}
+
+/// 从领取到确认发布的一条任务。队列消息只保存 id。
+model AdJob {
+  id               String   @id @default(cuid())
+  ownerUserId      Int      @map("owner_user_id")
+  catalogMerchantId Int     @map("catalog_merchant_id")
+  channelAccountId Int      @map("channel_account_id")
+  status           String   @default("PENDING") @db.VarChar(32)
+  step             String   @default("COMPETITOR_CREATIVES") @db.VarChar(40)
+  progress         Int      @default(0)
+  progressMessage  String   @default("") @map("progress_message") @db.VarChar(255)
+  mccCustomerId    String   @map("mcc_customer_id") @db.VarChar(16)
+  customerId       String   @default("") @map("customer_id") @db.VarChar(16)
+  campaignName     String   @default("") @map("campaign_name") @db.VarChar(255)
+  targetCountry    String   @map("target_country") @db.VarChar(8)
+  languageCode     String   @default("") @map("language_code") @db.VarChar(16)
+  idempotencyKey   String   @default("") @map("idempotency_key") @db.VarChar(191)
+  input            Json
+  draft            Json?
+  errorMessage     String?  @map("error_message") @db.Text
+  createdAt        DateTime @default(now()) @map("created_at")
+  updatedAt        DateTime @updatedAt @map("updated_at")
+
+  ownerUser       User                   @relation(fields: [ownerUserId], references: [id], onDelete: Cascade)
+  catalogMerchant CatalogMerchant        @relation(fields: [catalogMerchantId], references: [id])
+  events          AdJobEvent[]
+  article         Article?
+  campaign        AdAutomationCampaign?
+
+  @@index([ownerUserId, status])
+  @@index([ownerUserId, idempotencyKey])
+  @@map("ad_jobs")
+}
+
+model AdJobEvent {
+  id        Int      @id @default(autoincrement())
+  jobId     String   @map("job_id")
+  status    String   @db.VarChar(32)
+  step      String   @db.VarChar(40)
+  message   String   @db.VarChar(500)
+  createdAt DateTime @default(now()) @map("created_at")
+
+  job AdJob @relation(fields: [jobId], references: [id], onDelete: Cascade)
+
+  @@index([jobId])
+  @@map("ad_job_events")
+}
+
+/// 发到内容站的文章。articleUrl 与广告最终到达网址不是同一个字段。
+model Article {
+  id                Int      @id @default(autoincrement())
+  ownerUserId       Int      @map("owner_user_id")
+  siteId            Int      @map("site_id")
+  adJobId           String   @unique @map("ad_job_id")
+  title             String   @db.VarChar(255)
+  body              String   @db.Text
+  trackUrl          String   @map("track_url") @db.VarChar(2048)
+  merchantUrl       String   @map("merchant_url") @db.VarChar(2048)
+  articleUrl        String   @default("") @map("article_url") @db.VarChar(2048)
+  publishStatus     String   @default("pending_site") @map("publish_status") @db.VarChar(32)
+  createdAt         DateTime @default(now()) @map("created_at")
+  updatedAt         DateTime @updatedAt @map("updated_at")
+
+  site PublishSite @relation(fields: [siteId], references: [id])
+  job  AdJob       @relation(fields: [adJobId], references: [id], onDelete: Cascade)
+
+  @@index([ownerUserId])
+  @@map("articles")
+}
+
+/// 本地广告系列。状态停留在待提交，不表示 Google 已启用。
+model AdAutomationCampaign {
+  id                  Int      @id @default(autoincrement())
+  ownerUserId         Int      @map("owner_user_id")
+  jobId               String   @unique @map("job_id")
+  customerId          String   @map("customer_id") @db.VarChar(16)
+  mccCustomerId       String   @map("mcc_customer_id") @db.VarChar(16)
+  campaignName        String   @map("campaign_name") @db.VarChar(255)
+  merchantUrl         String   @map("merchant_url") @db.VarChar(2048)
+  finalUrlSuffix      String   @default("") @map("final_url_suffix") @db.VarChar(2048)
+  status              String   @default("WAITING_SUBMIT") @db.VarChar(32)
+  dailyBudgetMicros   BigInt   @map("daily_budget_micros")
+  bidding             String   @db.VarChar(32)
+  cpcBidCeilingMicros BigInt   @map("cpc_bid_ceiling_micros")
+  createdAt           DateTime @default(now()) @map("created_at")
+  updatedAt           DateTime @updatedAt @map("updated_at")
+
+  ownerUser User        @relation(fields: [ownerUserId], references: [id], onDelete: Cascade)
+  job       AdJob       @relation(fields: [jobId], references: [id])
+  outbox    AdsOutbox[]
+
+  @@index([ownerUserId, status])
+  @@map("ad_automation_campaigns")
+}
+
+/// 将来发给 Google Ads API 的请求。本期只保存，不发送。
+model AdsOutbox {
+  id         Int      @id @default(autoincrement())
+  ownerUserId Int     @map("owner_user_id")
+  campaignId Int      @map("campaign_id")
+  kind       String   @db.VarChar(32)
+  status     String   @default("HELD") @db.VarChar(16)
+  payload    Json
+  snapshot   Json
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  campaign AdAutomationCampaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+
+  @@index([campaignId])
+  @@map("ads_outbox")
 }

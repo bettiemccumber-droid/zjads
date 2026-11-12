@@ -14,6 +14,7 @@ import { PrismaModule } from './prisma/prisma.module';
 import { CollectorsModule } from './collectors/collectors.module';
 import { AdSourcesModule } from './ad-sources/ad-sources.module';
 import { MerchantsModule } from './merchants/merchants.module';
+import { AdsAutomationModule } from './ads-automation/ads-automation.module';
 
 @Module({
   imports: [
@@ -31,6 +32,7 @@ import { MerchantsModule } from './merchants/merchants.module';
     AlertsModule,
     AdSourcesModule,
     MerchantsModule,
+    AdsAutomationModule,
     AdminModule,
   ],
 })

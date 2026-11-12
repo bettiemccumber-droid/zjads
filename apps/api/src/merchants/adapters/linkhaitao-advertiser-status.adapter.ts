@@ -47,6 +47,23 @@ export async function fetchLinkHaitaoAdvertiserStatus(
   return fetchLhMonetizationAll_(apiToken);
 }
 
+/**
+ * 只取商家库的一页，用来浏览和选取。
+ */
+export async function browseLinkHaitaoMonetization(
+  apiToken: string,
+  page: number,
+  perPage: number,
+  relationship = '',
+): Promise<{ rows: MonetizationBrandRow[]; total: number; pages: number }> {
+  const result = await fetchLhMonetizationPage_(apiToken, {
+    curPage: String(page),
+    perPage: String(perPage),
+    ...(relationship ? { relationship } : {}),
+  });
+  return { rows: result.rows, pages: result.totalPages, total: result.total };
+}
+
 /** 按 mid/mcid 分批直查（单次最多 200） */
 async function fetchLhMonetizationByKey_(
   apiToken: string,
@@ -87,7 +104,7 @@ async function fetchLhMonetizationAll_(apiToken: string): Promise<MonetizationBr
 async function fetchLhMonetizationPage_(
   apiToken: string,
   extra: Record<string, string | number>,
-): Promise<{ rows: MonetizationBrandRow[]; totalPages: number }> {
+): Promise<{ rows: MonetizationBrandRow[]; totalPages: number; total: number }> {
   let lastError: Error | null = null;
 
   for (let attempt = 0; attempt <= RATE_LIMIT_RETRIES; attempt += 1) {
@@ -127,8 +144,10 @@ async function fetchLhMonetizationPage_(
     const payload = root.data as Record<string, unknown> | undefined;
     const list = Array.isArray(payload?.list) ? (payload.list as LhMonetizationRow[]) : [];
     const totalPages = Math.max(1, Number(payload?.total_page ?? 1));
+    const pageSize = Number(extra.perPage ?? list.length) || list.length;
+    const total = Number(payload?.total_mcid ?? payload?.total ?? 0) || (totalPages > 1 ? totalPages * pageSize : list.length);
 
-    return { rows: list.map(mapLhMonetizationRow_), totalPages };
+    return { rows: list.map(mapLhMonetizationRow_), totalPages, total };
   }
 
   throw lastError ?? new Error('Monetization API 无响应');
@@ -136,6 +155,7 @@ async function fetchLhMonetizationPage_(
 
 function mapLhMonetizationRow_(row: LhMonetizationRow): MonetizationBrandRow {
   return {
+    ...(row as MonetizationBrandRow),
     brand_id: row.brand_id,
     mid: row.mid != null ? String(row.mid) : undefined,
     mcid: row.mcid != null ? String(row.mcid) : undefined,

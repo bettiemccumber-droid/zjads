@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import {
   buildActionLabel,
   isMerchantActionable,
+  mapCatalogOffer,
   normalizeMerchantAvailability,
   normalizeRelationshipStatus,
   parseMerchantQueryText,
@@ -27,6 +28,22 @@ function runTests() {
     { merchantId: '18649156' },
     { merchantId: '144471' },
   ]);
+  const offer = mapCatalogOffer({
+    brand_id: 1896,
+    merchant_name: 'Julep',
+    site_url: 'https://julep.com',
+    comm_rate: 'Rev. Share:65.00%',
+    categories: 'Health & Beauty',
+    country: 'US',
+    support_region: 'US,PR',
+    relationship: 'Joined',
+    brand_status: 'Online',
+  });
+  assert.equal(offer.merchantId, '1896');
+  assert.equal(offer.siteUrl, 'https://julep.com');
+  assert.equal(offer.commRate, 'Rev. Share:65.00%');
+  assert.equal(offer.countryCode, 'US');
+  assert.equal(offer.relationshipStatus, 'joined');
   console.log('merchant-status-normalizer.test.ts OK');
 }
 

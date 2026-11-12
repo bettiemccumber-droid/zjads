@@ -20,6 +20,11 @@ import AdminUsersPage from './pages/admin/AdminUsersPage';
 import AdminUserDetailPage from './pages/admin/AdminUserDetailPage';
 import AdminUserManagePage from './pages/admin/AdminUserManagePage';
 import AdminSyncPage from './pages/admin/AdminSyncPage';
+import AdminPublishSitesPage from './pages/admin/AdminPublishSitesPage';
+import MyMerchantsPage from './pages/ads/MyMerchantsPage';
+import AccountStatusPage from './pages/ads/AccountStatusPage';
+import ArticlesPage from './pages/ads/ArticlesPage';
+import ArticlePublishPage from './pages/ads/ArticlePublishPage';
 import { useAuth } from './hooks/useAuth';
 
 function PrivateRoute({ children }: { children: React.ReactNode }) {
@@ -35,6 +40,14 @@ function EmployeeOnlyRoute({ children }: { children: React.ReactNode }) {
   if (loading) return null;
   if (user?.role === 'ADMIN') return <Navigate to="/admin/sync" replace />;
   return <>{children}</>;
+}
+
+/** 旧投放预览地址改到我的商家；管理员仍去内容站 */
+function AdsAutomationRoute() {
+  const { user, loading } = useAuth();
+  if (loading) return null;
+  if (user?.role === 'ADMIN') return <Navigate to="/admin/publish-sites" replace />;
+  return <Navigate to="/ads/merchants" replace />;
 }
 
 export default function App() {
@@ -88,6 +101,11 @@ export default function App() {
               </EmployeeOnlyRoute>
             }
           />
+          <Route path="ads-automation" element={<AdsAutomationRoute />} />
+          <Route path="ads/merchants" element={<EmployeeOnlyRoute><MyMerchantsPage /></EmployeeOnlyRoute>} />
+          <Route path="ads/accounts" element={<EmployeeOnlyRoute><AccountStatusPage /></EmployeeOnlyRoute>} />
+          <Route path="ads/articles/publish" element={<EmployeeOnlyRoute><ArticlePublishPage /></EmployeeOnlyRoute>} />
+          <Route path="ads/articles" element={<EmployeeOnlyRoute><ArticlesPage /></EmployeeOnlyRoute>} />
           <Route path="admin" element={<AdminRoute><AdminHomePage /></AdminRoute>} />
           <Route path="admin/stats" element={<AdminRoute><AdminStatsPage /></AdminRoute>} />
           <Route path="admin/users" element={<AdminRoute><AdminUsersPage /></AdminRoute>} />
@@ -99,6 +117,14 @@ export default function App() {
             element={
               <AdminRoute>
                 <AdSourcesPage adminMode />
+              </AdminRoute>
+            }
+          />
+          <Route
+            path="admin/publish-sites"
+            element={
+              <AdminRoute>
+                <AdminPublishSitesPage />
               </AdminRoute>
             }
           />

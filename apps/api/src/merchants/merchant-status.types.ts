@@ -105,4 +105,8 @@ export interface MonetizationBrandRow {
   join_status?: string;
   brand_status?: string;
   merchant_status?: string;
+  comm_rate?: string;
+  categories?: string;
+  country?: string;
+  support_region?: string;
 }

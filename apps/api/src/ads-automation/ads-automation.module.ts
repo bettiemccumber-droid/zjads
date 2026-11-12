@@ -1,4 +1,5 @@
 import { Module } from '@nestjs/common';
+import { CryptoService } from '../common/crypto.service';
 import { MerchantsModule } from '../merchants/merchants.module';
 import { AdsAutomationController } from './ads-automation.controller';
 import { AdsAutomationService, ArticlePublisher } from './ads-automation.service';
@@ -9,6 +10,6 @@ import { AdsAutomationService, ArticlePublisher } from './ads-automation.service
 @Module({
   imports: [MerchantsModule],
   controllers: [AdsAutomationController],
-  providers: [AdsAutomationService, ArticlePublisher],
+  providers: [AdsAutomationService, ArticlePublisher, CryptoService],
 })
 export class AdsAutomationModule {}

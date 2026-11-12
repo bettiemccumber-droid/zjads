@@ -167,15 +167,27 @@ export class AdsAutomationController {
   @Post('publish-sites')
   async createSite(
     @CurrentUser() user: AuthUser,
-    @Body() body: { name: string; domain: string },
+    @Body() body: { name: string; domain: string; publishUrl?: string; token?: string },
   ) {
     if (user.role !== UserRole.ADMIN) {
       throw new ForbiddenException('只有管理员可以添加内容站');
     }
     return ok(
-      await this.ads.createSite(user.id, body.name, body.domain),
+      await this.ads.createSite(user.id, body.name, body.domain, body.publishUrl, body.token),
       '内容站已添加',
     );
+  }
+
+  @Patch('publish-sites/:id')
+  async updateSite(
+    @CurrentUser() user: AuthUser,
+    @Param('id', ParseIntPipe) id: number,
+    @Body() body: { publishUrl?: string; token?: string },
+  ) {
+    if (user.role !== UserRole.ADMIN) {
+      throw new ForbiddenException('只有管理员可以修改内容站');
+    }
+    return ok(await this.ads.updateSite(id, body), '内容站已更新');
   }
 
   @Get('payment-methods')

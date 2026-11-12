@@ -450,6 +450,10 @@ model PublishSite {
   ownerUserId Int      @map("owner_user_id")
   name        String   @db.VarChar(120)
   domain      String   @db.VarChar(255)
+  /** 内容站收文章的地址，例如 https://www.example.com/api/posts。空则只在本地保存。 */
+  publishUrl  String   @default("") @map("publish_url") @db.VarChar(500)
+  /** 发布密钥，AES 加密后保存。接口响应里不返回原文。 */
+  publishTokenEnc String @default("") @map("publish_token_enc") @db.VarChar(512)
   createdAt   DateTime @default(now()) @map("created_at")
   updatedAt   DateTime @updatedAt @map("updated_at")
 

@@ -6,6 +6,8 @@ import {
   OnModuleInit,
 } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
+import axios from 'axios';
+import { CryptoService } from '../common/crypto.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { MerchantsService } from '../merchants/merchants.service';
 import { parseCampaignName } from '../common/campaign-name.util';
@@ -22,16 +24,64 @@ import {
 } from './ads-automation.util';
 import { buildCreateCampaignPayload } from './mutate-payload';
 
+interface SitePublishInput {
+  publishUrl: string;
+  token: string;
+  title: string;
+  bodyHtml: string;
+  trackUrl: string;
+  merchantUrl: string;
+  merchantName: string;
+}
+
 /**
- * 内容站发布端口。对方接口未知，成功前 articleUrl 保持为空。
+ * 把文章交给内容站。地址或密钥为空时不发请求，文章地址保持为空。
+ * 返回的 url 是博客文章地址，不是商家网址，也不是联盟跟踪链接。
  */
 @Injectable()
 export class ArticlePublisher {
   /**
-   * 预留的发布动作。接上站点接口后在这里回写文章 URL。
+   * 向内容站提交一篇文章，并取回公开地址。
    */
-  async publish(): Promise<{ articleUrl: string }> {
-    return { articleUrl: '' };
+  async publish(input: SitePublishInput): Promise<{ articleUrl: string }> {
+    const publishUrl = input.publishUrl.trim();
+    const token = input.token.trim();
+    if (!publishUrl || !token) return { articleUrl: '' };
+    const title = input.title.trim();
+    const bodyHtml = input.bodyHtml.trim();
+    if (!title || !bodyHtml) throw new BadRequestException('文章标题和正文不能为空');
+    let response;
+    try {
+      response = await axios.post(
+        publishUrl,
+        {
+          title,
+          bodyHtml,
+          excerpt: excerptFromHtml(bodyHtml),
+          trackUrl: input.trackUrl,
+          merchantUrl: input.merchantUrl,
+          merchantName: input.merchantName,
+          category: 'Product Review',
+          author: 'Alex Jius',
+        },
+        {
+          headers: {
+            Authorization: `Bearer ${token}`,
+            'Content-Type': 'application/json',
+          },
+          timeout: 20000,
+          validateStatus: () => true,
+        },
+      );
+    } catch (error) {
+      const message = error instanceof Error ? error.message : '内容站没有响应';
+      throw new BadRequestException(`内容站没有响应：${message}`);
+    }
+    if (response.status < 200 || response.status >= 300) {
+      const detail = publishErrorText(response.data);
+      throw new BadRequestException(detail ? `内容站拒绝了这篇文章：${detail}` : `内容站拒绝了这篇文章（${response.status}）`);
+    }
+    return { articleUrl: readPublishedUrl(response.data) };
   }
 }
 
@@ -43,6 +93,7 @@ export class AdsAutomationService implements OnModuleInit {
     private readonly prisma: PrismaService,
     private readonly articles: ArticlePublisher,
     private readonly merchants: MerchantsService,
+    private readonly crypto: CryptoService,
   ) {}
 
   /**
@@ -64,23 +115,45 @@ export class AdsAutomationService implements OnModuleInit {
    * 全部内容站。站点由管理员维护，员工绑定自己的联盟账号时共用这份列表。
    */
   async listSites() {
-    return this.prisma.publishSite.findMany({
+    const rows = await this.prisma.publishSite.findMany({
       orderBy: { id: 'desc' },
     });
+    return rows.map((row) => this.siteView(row));
   }
 
   /**
-   * 新增内容站。域名按小写保存，全库不重复。
+   * 新增内容站。域名按小写保存，全库不重复。发布地址和密钥可以稍后补。
    */
-  async createSite(ownerUserId: number, name: string, domain: string) {
+  async createSite(ownerUserId: number, name: string, domain: string, publishUrl = '', token = '') {
     const trimmedName = (name ?? '').trim();
-    const normalized = (domain ?? '').trim().toLowerCase().replace(/^https?:\/\//, '').replace(/\/.*$/, '');
+    const normalized = normalizeSiteDomain(domain);
     if (!trimmedName || !normalized) throw new BadRequestException('名称和域名不能为空');
     const existing = await this.prisma.publishSite.findFirst({ where: { domain: normalized } });
     if (existing) throw new ConflictException('这个域名已经有内容站');
-    return this.prisma.publishSite.create({
-      data: { ownerUserId, name: trimmedName, domain: normalized },
+    const row = await this.prisma.publishSite.create({
+      data: {
+        ownerUserId,
+        name: trimmedName,
+        domain: normalized,
+        publishUrl: normalizePublishUrl(publishUrl),
+        publishTokenEnc: this.encryptSiteToken(token),
+      },
     });
+    return this.siteView(row);
+  }
+
+  /**
+   * 修改内容站的发布地址和密钥。密钥留空表示沿用原来的。
+   */
+  async updateSite(id: number, input: { publishUrl?: string; token?: string }) {
+    const row = await this.prisma.publishSite.findUnique({ where: { id } });
+    if (!row) throw new NotFoundException('内容站不存在');
+    const data: { publishUrl?: string; publishTokenEnc?: string } = {};
+    if (input.publishUrl != null) data.publishUrl = normalizePublishUrl(input.publishUrl);
+    const token = input.token?.trim();
+    if (token) data.publishTokenEnc = this.encryptSiteToken(token);
+    const updated = await this.prisma.publishSite.update({ where: { id }, data });
+    return this.siteView(updated);
   }
 
   /**
@@ -235,7 +308,13 @@ export class AdsAutomationService implements OnModuleInit {
       include: { site: true },
     });
     if (!row) throw new NotFoundException('文章不存在');
-    const published = await this.articles.publish();
+    const published = await this.publishToSite(row.site, {
+      title: row.title,
+      bodyHtml: row.body,
+      trackUrl: row.trackUrl,
+      merchantUrl: row.merchantUrl,
+      merchantName: row.title,
+    });
     const articleUrl = published.articleUrl.trim();
     const updated = await this.prisma.article.update({
       where: { id: row.id },
@@ -422,9 +501,15 @@ export class AdsAutomationService implements OnModuleInit {
       update: {},
     });
     if (catalog.blockReason !== 'none') throw new BadRequestException('这个商家不能发文');
-    const published = await this.articles.publish();
-    const articleUrl = published.articleUrl.trim();
     const body = sampleArticleHtml(prepared.sample, prepared.name, prepared.trackUrl);
+    const published = await this.publishToSite(prepared.account.site, {
+      title: prepared.sample.title,
+      bodyHtml: body,
+      trackUrl: prepared.trackUrl,
+      merchantUrl: prepared.merchantUrl,
+      merchantName: prepared.name,
+    });
+    const articleUrl = published.articleUrl.trim();
     const article = await this.prisma.$transaction(async (tx) => {
       const job = await tx.adJob.create({
         data: {
@@ -434,7 +519,7 @@ export class AdsAutomationService implements OnModuleInit {
           status: 'COMPLETED',
           step: 'ARTICLE_ONLY',
           progress: 100,
-          progressMessage: '文章已保存，等待内容站回写',
+          progressMessage: articleUrl ? '内容站已回写文章地址' : '文章已保存，等待内容站回写',
           mccCustomerId: '',
           customerId: '',
           campaignName: prepared.sample.title.slice(0, 255),
@@ -488,9 +573,10 @@ export class AdsAutomationService implements OnModuleInit {
 
   /**
    * 我的商家：这个员工已经投过广告的商家。日报里出现过的，以及在这里领取后生成过广告的。
+   * 每个商家带上最近一天的广告系列，本地待提交系列挂在对应商家下面。
    */
   async listAdvertisedMerchants(ownerUserId: number) {
-    const [daily, running, jobs, accounts, catalogs] = await Promise.all([
+    const [daily, running, jobs, accounts, catalogs, latestDay, localCampaigns] = await Promise.all([
       this.prisma.adCampaignDaily.findMany({
         where: {
           ownerUserId,
@@ -521,7 +607,52 @@ export class AdsAutomationService implements OnModuleInit {
         include: { platform: true },
       }),
       this.prisma.catalogMerchant.findMany({ where: { ownerUserId, blockReason: 'none' } }),
+      this.prisma.adCampaignDaily.findFirst({
+        where: { ownerUserId, source: 'sheet', campaignId: { not: '__account_gap__' } },
+        orderBy: { date: 'desc' },
+        select: { date: true },
+      }),
+      this.prisma.adAutomationCampaign.findMany({
+        where: { ownerUserId },
+        orderBy: { id: 'desc' },
+        select: {
+          id: true,
+          campaignName: true,
+          customerId: true,
+          status: true,
+          job: { select: { catalogMerchant: { select: { mid: true } } } },
+        },
+      }),
     ]);
+    const sheetCampaigns = latestDay
+      ? await this.prisma.adCampaignDaily.findMany({
+          where: {
+            ownerUserId,
+            source: 'sheet',
+            date: latestDay.date,
+            campaignId: { not: '__account_gap__' },
+            merchantId: { not: '' },
+          },
+          select: { merchantId: true, campaignName: true, customerId: true, campaignStatus: true },
+        })
+      : [];
+    const campaignsByMid = new Map<string, AdvertisedCampaignRow[]>();
+    for (const row of sheetCampaigns) {
+      pushAdvertisedCampaign(campaignsByMid, row.merchantId, {
+        campaignName: row.campaignName,
+        customerId: row.customerId,
+        status: row.campaignStatus || 'PAUSED',
+        localId: null,
+      });
+    }
+    for (const row of localCampaigns) {
+      pushAdvertisedCampaign(campaignsByMid, row.job.catalogMerchant?.mid || '', {
+        campaignName: row.campaignName,
+        customerId: row.customerId,
+        status: row.status,
+        localId: row.id,
+      });
+    }
     const accountByAlias = new Map(
       accounts.filter((account) => account.affiliateAlias).map((account) => [account.affiliateAlias.toLowerCase(), account]),
     );
@@ -535,6 +666,8 @@ export class AdsAutomationService implements OnModuleInit {
       countryCode: string;
       channelAccountId: number;
       enabled: boolean;
+      campaigns: AdvertisedCampaignRow[];
+      logo: string;
     }>();
 
     for (const row of daily) {
@@ -553,6 +686,8 @@ export class AdsAutomationService implements OnModuleInit {
         countryCode: catalog?.countryCode || parts.countryCode || 'US',
         channelAccountId: catalog?.channelAccountId || account?.id || 0,
         enabled: runningMids.has(mid),
+        campaigns: sortAdvertisedCampaigns(campaignsByMid.get(mid) ?? []),
+        logo: '',
       });
     }
 
@@ -567,10 +702,17 @@ export class AdsAutomationService implements OnModuleInit {
         countryCode: merchant.countryCode,
         channelAccountId: merchant.channelAccountId,
         enabled: job.status !== 'FAILED',
+        campaigns: sortAdvertisedCampaigns(campaignsByMid.get(merchant.mid) ?? []),
+        logo: '',
       });
     }
 
-    return [...rows.values()];
+    const listed = [...rows.values()];
+    const logos = await this.merchants.lookupMerchantLogos(
+      ownerUserId,
+      listed.map((row) => ({ channelAccountId: row.channelAccountId, mid: row.mid, platformCode: row.platformCode })),
+    );
+    return listed.map((row) => ({ ...row, logo: logos.get(row.mid) || '' }));
   }
 
   /**
@@ -858,7 +1000,14 @@ export class AdsAutomationService implements OnModuleInit {
     if (duplicate) return this.getJob(ownerUserId, duplicate.id);
 
     const trackUrl = buildTrackUrl(account.platform.code, draft.merchantUrl, account.trackLinkPrefix);
-    const published = await this.articles.publish();
+    const body = articleBody(merchant.name, trackUrl);
+    const published = await this.publishToSite(account.site, {
+      title: draft.headlines[0] || merchant.name,
+      bodyHtml: body,
+      trackUrl,
+      merchantUrl: draft.merchantUrl,
+      merchantName: merchant.name,
+    });
     const payload = buildCreateCampaignPayload({
       customerId: customer.customerId,
       campaignName,
@@ -886,7 +1035,7 @@ export class AdsAutomationService implements OnModuleInit {
           siteId: account.site!.id,
           adJobId: job.id,
           title: draft.headlines[0],
-          body: articleBody(merchant.name, trackUrl),
+          body,
           trackUrl,
           merchantUrl: draft.merchantUrl,
           articleUrl: published.articleUrl,
@@ -1112,6 +1261,58 @@ export class AdsAutomationService implements OnModuleInit {
     return eligible[0];
   }
 
+  /**
+   * 列表里只说明有没有密钥，不把密钥原文返回。
+   */
+  private siteView(row: { id: number; name: string; domain: string; publishUrl: string; publishTokenEnc: string }) {
+    return {
+      id: row.id,
+      name: row.name,
+      domain: row.domain,
+      publishUrl: row.publishUrl,
+      hasToken: Boolean(row.publishTokenEnc),
+    };
+  }
+
+  /**
+   * 密钥加密后入库。空字符串表示还没配置。
+   */
+  private encryptSiteToken(token: string): string {
+    const trimmed = token.trim();
+    if (!trimmed) return '';
+    return this.crypto.encrypt({ token: trimmed });
+  }
+
+  /**
+   * 解出内容站密钥。解不开就当作没配置，避免把密文当成 Bearer 发出去。
+   */
+  private readSiteToken(payload: string): string {
+    if (!payload) return '';
+    try {
+      return this.crypto.decrypt<{ token: string }>(payload).token.trim();
+    } catch {
+      return '';
+    }
+  }
+
+  /**
+   * 按站点配置把文章交出去。商家网址和跟踪链接分开传，文章地址只认对方返回的 url。
+   */
+  private publishToSite(
+    site: { publishUrl: string; publishTokenEnc: string },
+    article: { title: string; bodyHtml: string; trackUrl: string; merchantUrl: string; merchantName: string },
+  ) {
+    return this.articles.publish({
+      publishUrl: site.publishUrl,
+      token: this.readSiteToken(site.publishTokenEnc),
+      title: article.title,
+      bodyHtml: article.bodyHtml,
+      trackUrl: article.trackUrl,
+      merchantUrl: article.merchantUrl,
+      merchantName: article.merchantName,
+    });
+  }
+
   private async mustConnection(ownerUserId: number, mccCustomerId: string) {
     const connection = await this.prisma.googleAdsConnection.findUnique({
       where: {
@@ -1268,6 +1469,38 @@ function articleMerchantLabel(name: string, platformCode: string, mid: string): 
   return `${name}${platform}${id}`;
 }
 
+export interface AdvertisedCampaignRow {
+  campaignName: string;
+  customerId: string;
+  status: string;
+  localId: number | null;
+}
+
+/**
+ * 同一个商家下，系列名和客户号相同只留一条。本地系列补上可暂停的编号。
+ */
+function pushAdvertisedCampaign(bucket: Map<string, AdvertisedCampaignRow[]>, mid: string, row: AdvertisedCampaignRow) {
+  const key = mid.trim();
+  if (!key || !row.campaignName) return;
+  const list = bucket.get(key) ?? [];
+  const index = list.findIndex((item) => item.campaignName === row.campaignName && item.customerId === row.customerId);
+  if (index >= 0) {
+    if (row.localId != null) list[index] = { ...list[index], localId: row.localId, status: row.status };
+    bucket.set(key, list);
+    return;
+  }
+  list.push(row);
+  bucket.set(key, list);
+}
+
+/**
+ * 在投系列排在前面。
+ */
+function sortAdvertisedCampaigns(rows: AdvertisedCampaignRow[]): AdvertisedCampaignRow[] {
+  const rank = (status: string) => (status === 'ENABLED' || status === 'WAITING_SUBMIT' || status === 'WAITING_ENABLE' ? 0 : 1);
+  return [...rows].sort((a, b) => rank(a.status) - rank(b.status) || a.campaignName.localeCompare(b.campaignName));
+}
+
 /**
  * 系列名第三段是商家，第四段是国家。编号-联盟序号-商家-国家-日期-商家ID。
  */
@@ -1319,4 +1552,57 @@ function midFromUrl(url: string): string {
  */
 function articleBody(merchantName: string, trackUrl: string): string {
   return `<p><a href="${trackUrl}">${merchantName}</a></p>`;
+}
+
+/**
+ * 域名去掉协议和路径。www 保留，避免和已保存的域名对不上。
+ */
+function normalizeSiteDomain(domain: string): string {
+  return (domain ?? '').trim().toLowerCase().replace(/^https?:\/\//, '').replace(/\/.*$/, '');
+}
+
+/**
+ * 发布地址必须是 https。空字符串表示还没接接口。
+ */
+function normalizePublishUrl(value: string): string {
+  const trimmed = (value ?? '').trim();
+  if (!trimmed) return '';
+  if (!/^https:\/\/\S+$/i.test(trimmed)) {
+    throw new BadRequestException('发布地址需要以 https:// 开头');
+  }
+  return trimmed;
+}
+
+/**
+ * 从正文里截一段纯文本当摘要。
+ */
+function excerptFromHtml(html: string): string {
+  const text = html.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
+  return text.slice(0, 180);
+}
+
+/**
+ * 内容站成功响应里的文章地址。商家网址不会被当成文章地址。
+ */
+function readPublishedUrl(data: unknown): string {
+  if (!data || typeof data !== 'object') return '';
+  const record = data as { url?: unknown; articleUrl?: unknown; data?: { url?: unknown } };
+  const raw = record.url ?? record.articleUrl ?? record.data?.url;
+  const url = typeof raw === 'string' ? raw.trim() : '';
+  if (!/^https?:\/\//i.test(url)) return '';
+  return url;
+}
+
+/**
+ * 把内容站的错误收成一句能看的话，不带请求密钥。
+ */
+function publishErrorText(data: unknown): string {
+  if (!data) return '';
+  if (typeof data === 'string') return data.slice(0, 200);
+  if (typeof data === 'object' && data && 'message' in data) {
+    const message = (data as { message?: unknown }).message;
+    if (typeof message === 'string') return message.slice(0, 200);
+    if (Array.isArray(message)) return message.map((item) => String(item)).join('；').slice(0, 200);
+  }
+  return '';
 }

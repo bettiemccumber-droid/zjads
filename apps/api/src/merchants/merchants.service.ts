@@ -80,6 +80,8 @@ export interface DiscoverMerchantResult {
 export class MerchantsService {
   /** 名称搜索只扫每个账号商家库的前 2000 条，避免每次把全库拉下来。 */
   private readonly discoverScanCache = new Map<number, { at: number; rows: MonetizationBrandRow[]; truncated: boolean }>();
+  /** 我的商家按 MID 补商标。十分钟内不重复打联盟。 */
+  private readonly logoCache = new Map<string, { at: number; logo: string }>();
 
   constructor(
     private readonly prisma: PrismaService,
@@ -533,6 +535,72 @@ export class MerchantsService {
   }
 
   /**
+   * 按账号和 MID 向联盟要商标。查不到或接口失败时返回空字符串，调用方继续用首字。
+   */
+  async lookupMerchantLogos(
+    ownerUserId: number,
+    items: Array<{ channelAccountId: number; mid: string; platformCode: string }>,
+  ): Promise<Map<string, string>> {
+    const result = new Map<string, string>();
+    const accounts = await this.prisma.channelAccount.findMany({
+      where: { ownerUserId, isActive: true },
+      include: { platform: true },
+    });
+    const byId = new Map(accounts.map((account) => [account.id, account]));
+    const missing = new Map<number, string[]>();
+    for (const item of items) {
+      const mid = item.mid.trim();
+      if (!mid) continue;
+      let accountId = item.channelAccountId;
+      if (!byId.has(accountId)) {
+        const matched = accounts.filter((account) => account.platform.code === item.platformCode);
+        accountId = matched.length === 1 ? matched[0].id : 0;
+      }
+      if (!accountId) continue;
+      const cacheKey = `${accountId}:${mid}`;
+      const cached = this.logoCache.get(cacheKey);
+      if (cached && Date.now() - cached.at < 10 * 60 * 1000) {
+        if (cached.logo) result.set(mid, cached.logo);
+        continue;
+      }
+      const list = missing.get(accountId) ?? [];
+      list.push(mid);
+      missing.set(accountId, list);
+    }
+
+    await Promise.all([...missing.entries()].map(async ([accountId, mids]) => {
+      const account = byId.get(accountId);
+      if (!account) return;
+      try {
+        const apiToken = this.crypto.decrypt<{ apiToken: string }>(account.credentialsEnc).apiToken;
+        if (!apiToken) return;
+        const unique = [...new Set(mids)];
+        const logos = new Map<string, string>();
+        const scanned = await this.loadDiscoverScan_(account.platform.code, account.id, apiToken);
+        for (const brand of scanned.rows) rememberMerchantLogo_(logos, brand);
+        const missed = unique.filter((mid) => !logos.has(mid));
+        if (missed.length > 0 && account.platform.code !== 'linkbux') {
+          const brands = await preloadMonetizationBrandsForAccount(
+            account.platform.code,
+            apiToken,
+            missed.map((merchantId) => ({ merchantId })),
+          );
+          for (const brand of brands) rememberMerchantLogo_(logos, brand);
+        }
+        for (const mid of unique) {
+          const logo = logos.get(mid) || '';
+          this.logoCache.set(`${accountId}:${mid}`, { at: Date.now(), logo });
+          if (logo) result.set(mid, logo);
+        }
+      } catch (error) {
+        console.error(`[merchants] 商标查询失败 account=${accountId}`, error instanceof Error ? error.message : error);
+      }
+    }));
+
+    return result;
+  }
+
+  /**
    * 名称搜索缓存一页 2000 条，10 分钟内重复搜索不再打平台。
    */
   private async loadDiscoverScan_(platformCode: string, channelAccountId: number, apiToken: string) {
@@ -634,6 +702,18 @@ const RELATIONSHIP_LABEL: Record<RelationshipStatus, string> = {
   not_found: '无此商家',
   unknown: '未知',
 };
+
+/**
+ * 同一行的 brand_id 和 mid 都记下，日报里的商家 ID 用的是其中之一。
+ */
+function rememberMerchantLogo_(logos: Map<string, string>, brand: MonetizationBrandRow) {
+  const logo = mapCatalogOffer(brand).logo;
+  if (!logo) return;
+  for (const value of [brand.brand_id, brand.mid, brand.m_id]) {
+    const id = value == null ? '' : String(value).trim();
+    if (id && id !== '0') logos.set(id, logo);
+  }
+}
 
 function normalizeMerchantSiteUrl(value: string): string {
   const trimmed = value.trim();

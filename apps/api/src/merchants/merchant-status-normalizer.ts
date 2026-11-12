@@ -162,7 +162,7 @@ export function mapCatalogOffer(row: MonetizationBrandRow): {
     countryCode,
     supportRegion: region || country,
     tags: catalogText_(raw.tags),
-    logo: catalogText_(raw.logo) || catalogText_(raw.logo_url) || catalogText_(raw.brand_logo) || catalogText_(raw.merchant_logo),
+    logo: catalogLogo_(raw),
   };
 }
 
@@ -183,6 +183,33 @@ export function monetizationRowMatchesText(row: MonetizationBrandRow, query: str
 function catalogText_(value: unknown): string {
   if (typeof value === 'string') return value.trim();
   if (typeof value === 'number' && Number.isFinite(value)) return String(value);
+  return '';
+}
+
+/**
+ * 从联盟原始行里取出商标地址。字段名各平台不一样，嵌套对象取 url。
+ */
+function catalogLogo_(raw: Record<string, unknown>): string {
+  const keys = ['logo', 'logo_url', 'brand_logo', 'merchant_logo', 'logoUrl', 'brandLogo', 'image', 'img', 'merchant_logo_url'];
+  for (const key of keys) {
+    const value = raw[key];
+    const direct = catalogLogoUrl_(catalogText_(value));
+    if (direct) return direct;
+    if (value && typeof value === 'object' && !Array.isArray(value)) {
+      const nested = value as Record<string, unknown>;
+      const inner = catalogLogoUrl_(catalogText_(nested.url) || catalogText_(nested.src) || catalogText_(nested.logo));
+      if (inner) return inner;
+    }
+  }
+  return '';
+}
+
+/**
+ * 只接受 http(s) 商标地址。协议相对地址补上 https。
+ */
+function catalogLogoUrl_(value: string): string {
+  if (value.startsWith('//')) return `https:${value}`;
+  if (/^https?:\/\//i.test(value)) return value;
   return '';
 }
 

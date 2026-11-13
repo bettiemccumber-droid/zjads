@@ -19,6 +19,7 @@ import {
   parseMerchantOpsListImport,
   type MerchantOpsListImportRow,
 } from '../../utils/parseMerchantOpsListImport';
+import { opsPlatformShort } from '../../utils/opsPlatform';
 
 type ListType = 'violation' | 'recommend';
 type ImportMode = 'merge' | 'replace_platforms' | 'replace_all';
@@ -178,7 +179,10 @@ export default function AdminMerchantListsPage() {
     const counts = data?.platformCounts ?? {};
     return Object.entries(counts)
       .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
-      .map(([code, count]) => ({ value: code, label: `${code.toUpperCase()} (${count})` }));
+      .map(([code, count]) => ({
+        value: code,
+        label: `${opsPlatformShort(code)} · ${code} (${count})`,
+      }));
   }, [data?.platformCounts]);
 
   const rows = useMemo(() => {
@@ -294,7 +298,14 @@ export default function AdminMerchantListsPage() {
           locale={{ emptyText: isRecommend ? '还没有推荐名单，可一次选多个平台文件上传' : '还没有违规名单，上传后按平台+MID 去重保存' }}
           columns={[
             { title: '商家名称', dataIndex: 'name', ellipsis: true, render: (value: string) => value || '—' },
-            { title: '平台', dataIndex: 'platformCode', width: 100, render: (value: string) => value.toUpperCase() },
+            {
+              title: '平台',
+              dataIndex: 'platformCode',
+              width: 120,
+              render: (value: string) => (
+                <span title={value}>{opsPlatformShort(value)}</span>
+              ),
+            },
             { title: 'MID', dataIndex: 'mid', width: 120 },
             { title: '国家', dataIndex: 'countryCode', width: 100, render: (value: string) => value || '—' },
             { title: '品类', dataIndex: 'category', width: 140, ellipsis: true, render: (value: string) => value || '—' },

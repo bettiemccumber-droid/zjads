@@ -15,6 +15,43 @@ export interface MerchantOpsListRowInput {
   note?: string;
 }
 
+/** 与前端 opsPlatform 保持一致：chuizhan_cg → collabglow 等 */
+const PLATFORM_ALIASES: Record<string, string> = {
+  linkhaitao: 'linkhaitao',
+  lh: 'linkhaitao',
+  rewardoo: 'rewardoo',
+  rewardme: 'rewardoo',
+  rw: 'rewardoo',
+  linkbux: 'linkbux',
+  linkbuy: 'linkbux',
+  lb: 'linkbux',
+  partnermatic: 'partnermatic',
+  pm: 'partnermatic',
+  shoplooks: 'shoplooks',
+  shoplookz: 'shoplooks',
+  bsh: 'shoplooks',
+  collabglow: 'collabglow',
+  cg: 'collabglow',
+  ultrainfluence: 'ultrainfluence',
+  ui: 'ultrainfluence',
+  famesta: 'famesta',
+  fs: 'famesta',
+  chuizhan_lh: 'linkhaitao',
+  chuizhanlh: 'linkhaitao',
+  chuizhan_rw: 'rewardoo',
+  chuizhanrw: 'rewardoo',
+  chuizhan_pm: 'partnermatic',
+  chuizhanpm: 'partnermatic',
+  chuizhan_bsh: 'shoplooks',
+  chuizhanbsh: 'shoplooks',
+  chuizhan_cg: 'collabglow',
+  chuizhancg: 'collabglow',
+  chuizhan_ui: 'ultrainfluence',
+  chuizhanui: 'ultrainfluence',
+  chuizhan_fs: 'famesta',
+  chuizhanfs: 'famesta',
+};
+
 /**
  * 违规商家 / 推荐商家运营名单。可按平台多次上传合并，员工只读。
  */
@@ -27,6 +64,7 @@ export class MerchantOpsListService {
    */
   async list(organizationId: number, listType: MerchantOpsListType) {
     this.assertType(listType);
+    await this.remapLegacyPlatformCodes_(organizationId, listType);
     const rows = await this.prisma.merchantOpsListItem.findMany({
       where: { organizationId, listType },
       orderBy: [{ platformCode: 'asc' }, { name: 'asc' }, { mid: 'asc' }],
@@ -144,10 +182,7 @@ export class MerchantOpsListService {
     const seen = new Set<string>();
 
     for (const row of rows) {
-      const platformCode = String(row.platformCode ?? '')
-        .trim()
-        .toLowerCase()
-        .slice(0, 50);
+      const platformCode = this.normalizePlatform_(String(row.platformCode ?? ''));
       const mid = String(row.mid ?? '').trim().slice(0, 64);
       if (!platformCode || !mid) continue;
       const key = `${platformCode}:${mid}`;
@@ -171,6 +206,60 @@ export class MerchantOpsListService {
   private assertType(listType: string): asserts listType is MerchantOpsListType {
     if (listType !== 'violation' && listType !== 'recommend') {
       throw new BadRequestException('名单类型只能是 violation 或 recommend');
+    }
+  }
+
+  private normalizePlatform_(raw: string) {
+    const trimmed = raw.trim();
+    if (!trimmed) return '';
+    const key = trimmed.toLowerCase().replace(/[\s_\-]/g, '');
+    if (PLATFORM_ALIASES[key]) return PLATFORM_ALIASES[key];
+    const withUnderscore = trimmed.toLowerCase().replace(/\s+/g, '_');
+    if (PLATFORM_ALIASES[withUnderscore]) return PLATFORM_ALIASES[withUnderscore];
+    const lower = trimmed.toLowerCase();
+    if (PLATFORM_ALIASES[lower]) return PLATFORM_ALIASES[lower];
+    return lower.slice(0, 50);
+  }
+
+  /**
+   * 把历史导入的 chuizhan_cg 等改成 collabglow；与已有正式码冲突时删掉旧行。
+   */
+  private async remapLegacyPlatformCodes_(organizationId: number, listType: MerchantOpsListType) {
+    const legacy = await this.prisma.merchantOpsListItem.findMany({
+      where: {
+        organizationId,
+        listType,
+        OR: [
+          { platformCode: { startsWith: 'chuizhan' } },
+          { platformCode: { in: ['cg', 'ui', 'fs', 'lh', 'rw', 'pm', 'lb', 'bsh'] } },
+        ],
+      },
+      select: { id: true, platformCode: true, mid: true },
+    });
+    if (legacy.length === 0) return;
+
+    for (const row of legacy) {
+      const next = this.normalizePlatform_(row.platformCode);
+      if (!next || next === row.platformCode) continue;
+      const conflict = await this.prisma.merchantOpsListItem.findUnique({
+        where: {
+          organizationId_listType_platformCode_mid: {
+            organizationId,
+            listType,
+            platformCode: next,
+            mid: row.mid,
+          },
+        },
+        select: { id: true },
+      });
+      if (conflict) {
+        await this.prisma.merchantOpsListItem.delete({ where: { id: row.id } });
+        continue;
+      }
+      await this.prisma.merchantOpsListItem.update({
+        where: { id: row.id },
+        data: { platformCode: next },
+      });
     }
   }
 

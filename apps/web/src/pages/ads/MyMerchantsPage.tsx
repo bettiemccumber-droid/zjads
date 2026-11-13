@@ -19,10 +19,13 @@ import { api, type ApiResult } from '../../api/client';
 import { useAuth } from '../../hooks/useAuth';
 import { parseScopedViewUserId } from '../../utils/team-scope.util';
 import { lastNDaysToYesterday } from '../../utils/date-range.util';
+import { OPS_PLATFORM_SHORT, opsPlatformShort } from '../../utils/opsPlatform';
 import { formatCustomerId, loadAdSettings, saveAdSettings, type AdLaunchSettings } from './ad-launch-settings';
 import ChargebackMerchantsPage from '../merchant-hub/ChargebackMerchantsPage';
 import PersonaLibraryModal, { fetchPersonaSummary } from './PersonaLibraryModal';
 import './MyMerchantsPage.css';
+
+const PLATFORM_SHORT = OPS_PLATFORM_SHORT;
 
 interface ChannelAccount {
   id: number;
@@ -145,15 +148,6 @@ function tabLabel(icon: ReactNode, text: string, tone: string) {
   );
 }
 
-const PLATFORM_SHORT: Record<string, string> = {
-  partnermatic: 'PM',
-  rewardoo: 'RW',
-  linkhaitao: 'LH',
-  linkbux: 'LB',
-  ultrainfluence: 'UI',
-  collabglow: 'CG',
-  famesta: 'FS',
-};
 /**
  * 上广告引擎的两个开关只记在这台电脑上，不提交到 Google。
  */
@@ -230,8 +224,9 @@ function SettlementInsight({ rows, empty }: { rows: SettlementRow[]; empty: stri
 }
 
 function platformTag(code: string) {
-  const short = PLATFORM_SHORT[code] || (code ? code.slice(0, 2).toUpperCase() : '—');
-  return <span className={`merchant-platform merchant-platform--${code || 'default'}`}>{short}</span>;
+  const key = (code || '').trim().toLowerCase();
+  const short = opsPlatformShort(code);
+  return <span className={`merchant-platform merchant-platform--${key || 'default'}`} title={code || undefined}>{short}</span>;
 }
 
 /**
@@ -1387,7 +1382,7 @@ export default function MyMerchantsPage() {
                       onChange={(value) => setRecommendPlatform(value)}
                       options={recommendPlatforms.map((code) => ({
                         value: code,
-                        label: PLATFORM_SHORT[code] || code.toUpperCase(),
+                        label: opsPlatformShort(code),
                       }))}
                     />
                     <Button type="primary" icon={<SearchOutlined />} onClick={() => setRecommendQuery(recommendDraft.trim())}>

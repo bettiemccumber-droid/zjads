@@ -1,4 +1,5 @@
 import * as XLSX from 'xlsx';
+import { normalizeOpsPlatform } from './opsPlatform';
 
 export interface MerchantOpsListImportRow {
   platformCode: string;
@@ -79,43 +80,6 @@ const NOTE_HEADERS = [
 ];
 const BU_HEADERS = ['bu', 'bucode', '业务线'];
 const SID_HEADERS = ['sid', '商家sid', '商家cid', 'icid', 'lcid', 'mcid'];
-
-/** 表格里常见平台写法归一成系统 platformCode */
-const PLATFORM_ALIASES: Record<string, string> = {
-  linkhaitao: 'linkhaitao',
-  lh: 'linkhaitao',
-  rewardoo: 'rewardoo',
-  rewardme: 'rewardoo',
-  rw: 'rewardoo',
-  linkbux: 'linkbux',
-  linkbuy: 'linkbux',
-  lb: 'linkbux',
-  partnermatic: 'partnermatic',
-  pm: 'partnermatic',
-  shoplooks: 'shoplooks',
-  shoplookz: 'shoplooks',
-  bsh: 'shoplooks',
-  collabglow: 'collabglow',
-  cg: 'collabglow',
-  ultrainfluence: 'ultrainfluence',
-  ui: 'ultrainfluence',
-  famesta: 'famesta',
-  fs: 'famesta',
-  chuizhan_lh: 'linkhaitao',
-  chuizhanlh: 'linkhaitao',
-  chuizhan_rw: 'rewardoo',
-  chuizhanrw: 'rewardoo',
-  chuizhan_pm: 'partnermatic',
-  chuizhanpm: 'partnermatic',
-  chuizhan_bsh: 'shoplooks',
-  chuizhanbsh: 'shoplooks',
-  chuizhan_cg: 'collabglow',
-  chuizhancg: 'collabglow',
-  chuizhan_ui: 'ultrainfluence',
-  chuizhanui: 'ultrainfluence',
-  chuizhan_fs: 'famesta',
-  chuizhanfs: 'famesta',
-};
 
 /** 从文件名 / 标题 / sheet 名推断平台（如「PM推荐商家表」） */
 const PLATFORM_HINTS: Array<{ re: RegExp; code: string }> = [
@@ -274,14 +238,7 @@ function cleanMid_(value: unknown) {
 }
 
 function normalizePlatform_(raw: string) {
-  const key = raw.trim().toLowerCase().replace(/[\s_\-]/g, '');
-  if (!key) return '';
-  if (PLATFORM_ALIASES[key]) return PLATFORM_ALIASES[key];
-  const withUnderscore = raw.trim().toLowerCase().replace(/\s+/g, '_');
-  if (PLATFORM_ALIASES[withUnderscore]) return PLATFORM_ALIASES[withUnderscore];
-  const bu = raw.trim().toLowerCase();
-  if (PLATFORM_ALIASES[bu]) return PLATFORM_ALIASES[bu];
-  return bu.slice(0, 50);
+  return normalizeOpsPlatform(raw);
 }
 
 /**

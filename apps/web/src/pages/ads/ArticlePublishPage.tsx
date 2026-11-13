@@ -112,6 +112,9 @@ function languageOf(countryCode: string): { code: string; label: string } {
   if (country === 'JP') return { code: 'ja', label: '日本語' };
   if (country === 'DE') return { code: 'de', label: 'Deutsch' };
   if (country === 'FR') return { code: 'fr', label: 'Français' };
+  if (country === 'VN') return { code: 'vi', label: 'Tiếng Việt' };
+  if (country === 'MX') return { code: 'es', label: 'Español (México)' };
+  if (country === 'ES') return { code: 'es', label: 'Español (España)' };
   return { code: 'en', label: 'English' };
 }
 
@@ -482,7 +485,7 @@ export default function ArticlePublishPage() {
         )}
 
         {step === 3 && (
-          <Spin spinning={generating} tip="正在生成示例文章，请稍候...">
+          <Spin spinning={generating} tip="正在按投放国家生成文章，请稍候...">
             <Typography.Text strong>选择文章配图（已选 {selectedImageUrls.length} 条）</Typography.Text>
             <Typography.Paragraph type="secondary">勾选要留在文章里的图片。没有抓到的话，可以从电脑上传。</Typography.Paragraph>
             <input

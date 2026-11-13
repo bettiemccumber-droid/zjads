@@ -50,8 +50,8 @@ export async function completeModelGoChat(messages: Array<{ role: 'system' | 'us
     },
   );
   if (response.status >= 400) throw new Error(explainModelGoError(response.status, response.data));
-  const content = response.data?.choices?.[0]?.message?.content;
-  if (typeof content !== 'string' || !content.trim()) throw new Error('ModelGo 没有返回文案');
+  const content = messageText(response.data?.choices?.[0]?.message);
+  if (!content) throw new Error('ModelGo 没有返回文案');
   return content;
 }
 
@@ -63,7 +63,41 @@ export function explainModelGoError(status: number, body: unknown): string {
   if (status === 401) return 'ModelGo 密钥无效，请在控制台重新建一把并更新服务器配置';
   if (status === 402 || /insufficient|balance|quota|credit|余额/i.test(text)) return 'ModelGo 余额不足，请先在控制台充值';
   if (status === 403) return 'ModelGo 不允许调用这个模型，请在模型广场换一个当前密钥能用的模型';
+  const detail = errorDetail(body);
+  if (detail) return `ModelGo 调用失败：${detail}`;
   return `ModelGo 调用失败（${status}）`;
+}
+
+/**
+ * 取出模型消息里的正文。有的接口把正文放在数组里。
+ */
+function messageText(message: { content?: unknown; reasoning_content?: unknown } | undefined): string {
+  const content = message?.content;
+  if (typeof content === 'string') return content.trim();
+  if (Array.isArray(content)) {
+    const text = content
+      .map((item) => {
+        if (typeof item === 'string') return item;
+        if (item && typeof item === 'object' && typeof (item as { text?: unknown }).text === 'string') {
+          return (item as { text: string }).text;
+        }
+        return '';
+      })
+      .join('')
+      .trim();
+    if (text) return text;
+  }
+  return typeof message?.reasoning_content === 'string' ? message.reasoning_content.trim() : '';
+}
+
+/**
+ * 取出上游错误里给人看的一句。去掉可能夹带的密钥。
+ */
+function errorDetail(body: unknown): string {
+  if (!body || typeof body !== 'object') return '';
+  const error = (body as { error?: { message?: unknown }; message?: unknown }).error;
+  const message = typeof error?.message === 'string' ? error.message : typeof (body as { message?: unknown }).message === 'string' ? (body as { message: string }).message : '';
+  return message.replace(/mgk_[A-Za-z0-9]+/g, '密钥').slice(0, 180);
 }
 
 /**

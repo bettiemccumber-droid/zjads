@@ -1516,7 +1516,18 @@ export class AdsAutomationService implements OnModuleInit {
   }
 
   /**
-   * 校验发文表单，并按联盟账号拼出跟踪链接和示例正文。
+   * 模型失败时把原因交给页面，避免只显示 Internal server error。
+   */
+  private async articleFromModel(merchantName: string, merchantUrl: string, countryCode: string, languageCode: string) {
+    try {
+      return await writeArticle({ merchantName, merchantUrl, countryCode, languageCode });
+    } catch (error) {
+      throw new BadRequestException(error instanceof Error ? error.message : '生成文章失败');
+    }
+  }
+
+  /**
+   * 校验发文表单，并按联盟账号拼出跟踪链接和文章正文。
    */
   private async prepareComposedArticle(ownerUserId: number, input: ArticleComposeInput) {
     const account = await this.prisma.channelAccount.findFirst({
@@ -1543,7 +1554,7 @@ export class AdsAutomationService implements OnModuleInit {
     const languageCode = input.languageCode.trim() || 'en';
     const trackUrl = buildTrackUrl(account.platform.code, merchantUrl, account.trackLinkPrefix);
     const sample = modelGoConfig().enabled
-      ? await writeArticle({ merchantName: name, merchantUrl, countryCode, languageCode })
+      ? await this.articleFromModel(name, merchantUrl, countryCode, languageCode)
       : buildSampleArticle({ merchantName: name, merchantUrl, trackUrl, languageCode });
     const imageUrls = (input.imageUrls ?? [])
       .map((url) => url.trim())

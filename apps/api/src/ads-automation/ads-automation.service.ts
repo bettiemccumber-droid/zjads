@@ -633,29 +633,20 @@ export class AdsAutomationService implements OnModuleInit {
 
   /**
    * 我的商家：这个员工已经投过广告的商家。日报里出现过的，以及在这里领取后生成过广告的。
-   * 每个商家带上最近一天的广告系列，本地待提交系列挂在对应商家下面。
+   * 状态和展开的系列都看这个商家自己最近一天，更早的启用不算还在投。
    */
   async listAdvertisedMerchants(ownerUserId: number, includeLogos = false) {
-    const [daily, running, jobs, accounts, catalogs, latestDay, localCampaigns] = await Promise.all([
-      this.prisma.adCampaignDaily.findMany({
-        where: {
-          ownerUserId,
-          source: 'sheet',
-          campaignId: { not: '__account_gap__' },
-          merchantId: { not: '' },
-        },
-        distinct: ['merchantId'],
-        select: { merchantId: true, affiliateAlias: true, campaignName: true },
-      }),
+    const sheetWhere = {
+      ownerUserId,
+      source: 'sheet',
+      campaignId: { not: '__account_gap__' },
+      merchantId: { not: '' },
+    };
+    const [latestDates, jobs, accounts, catalogs, localCampaigns] = await Promise.all([
       this.prisma.adCampaignDaily.groupBy({
         by: ['merchantId'],
-        where: {
-          ownerUserId,
-          source: 'sheet',
-          campaignStatus: 'ENABLED',
-          campaignId: { not: '__account_gap__' },
-          merchantId: { not: '' },
-        },
+        where: sheetWhere,
+        _max: { date: true },
       }),
       this.prisma.adJob.findMany({
         where: { ownerUserId, step: { not: 'ARTICLE_ONLY' } },
@@ -667,11 +658,6 @@ export class AdsAutomationService implements OnModuleInit {
         include: { platform: true },
       }),
       this.prisma.catalogMerchant.findMany({ where: { ownerUserId, blockReason: 'none' } }),
-      this.prisma.adCampaignDaily.findFirst({
-        where: { ownerUserId, source: 'sheet', campaignId: { not: '__account_gap__' } },
-        orderBy: { date: 'desc' },
-        select: { date: true },
-      }),
       this.prisma.adAutomationCampaign.findMany({
         where: { ownerUserId },
         orderBy: { id: 'desc' },
@@ -684,16 +670,21 @@ export class AdsAutomationService implements OnModuleInit {
         },
       }),
     ]);
-    const sheetCampaigns = latestDay
+    const sheetCampaigns = latestDates.length
       ? await this.prisma.adCampaignDaily.findMany({
           where: {
-            ownerUserId,
-            source: 'sheet',
-            date: latestDay.date,
-            campaignId: { not: '__account_gap__' },
-            merchantId: { not: '' },
+            ...sheetWhere,
+            OR: latestDates.flatMap((row) => (
+              row._max.date ? [{ merchantId: row.merchantId, date: row._max.date }] : []
+            )),
           },
-          select: { merchantId: true, campaignName: true, customerId: true, campaignStatus: true },
+          select: {
+            merchantId: true,
+            affiliateAlias: true,
+            campaignName: true,
+            customerId: true,
+            campaignStatus: true,
+          },
         })
       : [];
     const campaignsByMid = new Map<string, AdvertisedCampaignRow[]>();
@@ -717,7 +708,6 @@ export class AdsAutomationService implements OnModuleInit {
       accounts.filter((account) => account.affiliateAlias).map((account) => [account.affiliateAlias.toLowerCase(), account]),
     );
     const catalogByMid = new Map(catalogs.map((row) => [row.mid, row]));
-    const runningMids = new Set(running.map((row) => row.merchantId));
     const rows = new Map<string, {
       name: string;
       mid: string;
@@ -730,7 +720,7 @@ export class AdsAutomationService implements OnModuleInit {
       logo: string;
     }>();
 
-    for (const row of daily) {
+    for (const row of sheetCampaigns) {
       const parsed = parseCampaignName(row.campaignName);
       const mid = (row.merchantId || parsed.merchantId).trim();
       if (!mid || rows.has(mid)) continue;
@@ -738,6 +728,7 @@ export class AdsAutomationService implements OnModuleInit {
       const parts = campaignMerchantParts(row.campaignName);
       const account = accountByAlias.get(alias) ?? onlyAccountForAlias(accounts, alias);
       const catalog = catalogByMid.get(mid);
+      const campaigns = sortAdvertisedCampaigns(campaignsByMid.get(mid) ?? []);
       rows.set(mid, {
         name: catalog?.name || parts.name || mid,
         mid,
@@ -745,8 +736,8 @@ export class AdsAutomationService implements OnModuleInit {
         merchantUrl: catalog?.merchantUrl || '',
         countryCode: catalog?.countryCode || parts.countryCode || 'US',
         channelAccountId: catalog?.channelAccountId || account?.id || 0,
-        enabled: runningMids.has(mid),
-        campaigns: sortAdvertisedCampaigns(campaignsByMid.get(mid) ?? []),
+        enabled: campaigns.some((item) => item.localId == null && item.status === 'ENABLED'),
+        campaigns,
         logo: '',
       });
     }

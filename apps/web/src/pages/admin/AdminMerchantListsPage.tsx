@@ -135,7 +135,7 @@ export default function AdminMerchantListsPage() {
     const failures: string[] = [];
     for (const file of files) {
       try {
-        const parsed = parseMerchantOpsListImport(await file.arrayBuffer());
+        const parsed = parseMerchantOpsListImport(await file.arrayBuffer(), file.name);
         allRows.push(...parsed);
       } catch (error: unknown) {
         failures.push(`${file.name}：${error instanceof Error ? error.message : '解析失败'}`);
@@ -204,7 +204,7 @@ export default function AdminMerchantListsPage() {
       <Alert
         type="info"
         showIcon
-        message="去重规则：合并导入，按平台+MID 自动去重。同一商家重复上传只会保留一条。支持多文件、多 sheet；表头可为「平台+商家ID」或「Merchant ID + BU」。"
+        message="去重规则：合并导入，按平台+MID 自动去重。支持多文件、多 sheet；表头可为「平台+商家ID」「Merchant ID + BU」，或仅有 MID 且文件名/标题带平台（如 PM推荐商家表）。"
       />
       <Card size="small">
         <Tabs

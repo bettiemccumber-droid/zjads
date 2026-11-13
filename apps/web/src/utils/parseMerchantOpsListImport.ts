@@ -35,8 +35,12 @@ const NAME_HEADERS = [
   'merchantname',
   'merchant_name',
   'bumerchant',
+  'advertiser',
+  'advertisername',
   '商家名称',
   '商家名',
+  '广告主名称',
+  '广告主',
 ];
 const COUNTRY_HEADERS = [
   'country',
@@ -47,6 +51,9 @@ const COUNTRY_HEADERS = [
   '出单国家',
   'primaryregion',
   'region',
+  '商家地区',
+  'merchantbase',
+  'base',
 ];
 const URL_HEADERS = [
   'url',
@@ -110,11 +117,26 @@ const PLATFORM_ALIASES: Record<string, string> = {
   chuizhanfs: 'famesta',
 };
 
+/** 从文件名 / 标题 / sheet 名推断平台（如「PM推荐商家表」） */
+const PLATFORM_HINTS: Array<{ re: RegExp; code: string }> = [
+  { re: /linkhaitao|chuizhan[_\s-]?lh|\blh推荐|\blh\b/i, code: 'linkhaitao' },
+  { re: /rewardoo|rewardme|chuizhan[_\s-]?rw|\brw推荐|\brw\b/i, code: 'rewardoo' },
+  { re: /partnermatic|chuizhan[_\s-]?pm|pm推荐|\bpm\b/i, code: 'partnermatic' },
+  { re: /linkbux|linkbuy|chuizhan[_\s-]?lb|\blb推荐|\blb\b/i, code: 'linkbux' },
+  { re: /shoplooks|shoplookz|chuizhan[_\s-]?bsh|\bbsh\b/i, code: 'shoplooks' },
+  { re: /collabglow|chuizhan[_\s-]?cg|\bcg推荐|\bcg\b/i, code: 'collabglow' },
+  { re: /ultrainfluence|chuizhan[_\s-]?ui|\bui推荐|\bui\b/i, code: 'ultrainfluence' },
+  { re: /famesta|chuizhan[_\s-]?fs|\bfs推荐|\bfs\b/i, code: 'famesta' },
+];
+
 /**
  * 从 Excel/CSV 解析违规或推荐商家名单。
- * 支持多 sheet；兼容「平台+商家ID」表，以及「Merchant ID + BU」表。
+ * 支持多 sheet；兼容平台列 / BU 列，以及标题里带 PM/LH 等平台暗示、仅有 MID 的推荐表。
  */
-export function parseMerchantOpsListImport(file: ArrayBuffer): MerchantOpsListImportRow[] {
+export function parseMerchantOpsListImport(
+  file: ArrayBuffer,
+  fileName?: string,
+): MerchantOpsListImportRow[] {
   const wb = XLSX.read(file, { type: 'array' });
   if (!wb.SheetNames.length) throw new Error('文件中没有工作表');
 
@@ -129,7 +151,7 @@ export function parseMerchantOpsListImport(file: ArrayBuffer): MerchantOpsListIm
     if (matrix.length === 0) continue;
 
     try {
-      const parsed = parseSheet_(matrix, sheetName);
+      const parsed = parseSheet_(matrix, sheetName, fileName);
       for (const row of parsed) {
         const key = `${row.platformCode}:${row.mid}`;
         if (seen.has(key)) continue;
@@ -144,16 +166,21 @@ export function parseMerchantOpsListImport(file: ArrayBuffer): MerchantOpsListIm
   if (rows.length === 0) {
     throw new Error(
       sheetErrors[0]
-        || '未解析到有效商家行。请包含「平台」+「商家ID/MID」，或「Merchant ID」+「BU」列；多 sheet 会全部读取。',
+        || '未解析到有效商家行。请包含 MID，以及平台/BU 列；或文件名/标题标明平台（如 PM推荐商家表）。',
     );
   }
   return rows;
 }
 
-function parseSheet_(matrix: unknown[][], sheetName: string): MerchantOpsListImportRow[] {
+function parseSheet_(
+  matrix: unknown[][],
+  sheetName: string,
+  fileName?: string,
+): MerchantOpsListImportRow[] {
+  const fallbackPlatform = inferPlatformFromContext_(matrix, sheetName, fileName);
   const headerIndex = findHeaderRow_(matrix);
   if (headerIndex < 0) {
-    throw new Error('未找到表头（需要商家ID/MID，以及平台或 BU）');
+    throw new Error('未找到表头（需要 MID / 商家ID）');
   }
 
   const header = matrix[headerIndex].map((cell) => normalizeHeader_(cell));
@@ -161,8 +188,8 @@ function parseSheet_(matrix: unknown[][], sheetName: string): MerchantOpsListImp
   const colPlatform = findCol_(header, PLATFORM_HEADERS);
   const colBu = findCol_(header, BU_HEADERS);
   if (colMid == null) throw new Error('缺少商家ID / MID / Merchant ID 列');
-  if (colPlatform == null && colBu == null) {
-    throw new Error('缺少平台列，或 BU 列（如 chuizhan_cg）');
+  if (colPlatform == null && colBu == null && !fallbackPlatform) {
+    throw new Error('缺少平台列或 BU 列；也可在文件名/标题写平台（如 PM推荐商家表）');
   }
 
   const colName = findCol_(header, NAME_HEADERS);
@@ -185,7 +212,7 @@ function parseSheet_(matrix: unknown[][], sheetName: string): MerchantOpsListImp
         ? String(line[colPlatform] ?? '').trim()
         : colBu != null
           ? String(line[colBu] ?? '').trim()
-          : '';
+          : fallbackPlatform;
     const platformCode = normalizePlatform_(platformRaw);
     if (!platformCode) continue;
 
@@ -214,6 +241,26 @@ function parseSheet_(matrix: unknown[][], sheetName: string): MerchantOpsListImp
   return rows;
 }
 
+function inferPlatformFromContext_(
+  matrix: unknown[][],
+  sheetName: string,
+  fileName?: string,
+): string {
+  const chunks: string[] = [sheetName, fileName ?? ''];
+  const limit = Math.min(matrix.length, 6);
+  for (let r = 0; r < limit; r += 1) {
+    for (const cell of matrix[r] ?? []) {
+      const text = String(cell ?? '').trim();
+      if (text) chunks.push(text);
+    }
+  }
+  const blob = chunks.join(' ');
+  for (const hint of PLATFORM_HINTS) {
+    if (hint.re.test(blob)) return hint.code;
+  }
+  return '';
+}
+
 function wbSheetHint_(sheetName: string) {
   return /[a-zA-Z\u4e00-\u9fff]/.test(sheetName);
 }
@@ -232,18 +279,18 @@ function normalizePlatform_(raw: string) {
   if (PLATFORM_ALIASES[key]) return PLATFORM_ALIASES[key];
   const withUnderscore = raw.trim().toLowerCase().replace(/\s+/g, '_');
   if (PLATFORM_ALIASES[withUnderscore]) return PLATFORM_ALIASES[withUnderscore];
-  // chuizhan_cg 这类
   const bu = raw.trim().toLowerCase();
   if (PLATFORM_ALIASES[bu]) return PLATFORM_ALIASES[bu];
   return bu.slice(0, 50);
 }
 
 /**
- * 瑞士(CH) / US -> CH / US
+ * 瑞士(CH) / US / FR -> CH / US / FR
  */
 function extractCountry_(raw: string) {
   const text = raw.trim();
   if (!text) return '';
+  if (/^other$/i.test(text)) return '';
   const matched = text.match(/\(([A-Za-z]{2})\)\s*$/);
   if (matched) return matched[1].toUpperCase();
   if (/^[A-Za-z]{2}$/.test(text)) return text.toUpperCase();
@@ -259,12 +306,16 @@ function normalizeHeader_(cell: unknown) {
 
 function findCol_(header: string[], candidates: string[]) {
   const normalized = candidates.map((item) => item.toLowerCase().replace(/[\s_\-（）()]/g, ''));
+  // 先精确匹配，避免「平均佣金…」等长表头误伤
+  for (let i = 0; i < header.length; i += 1) {
+    const cell = header[i];
+    if (cell && normalized.includes(cell)) return i;
+  }
   for (let i = 0; i < header.length; i += 1) {
     const cell = header[i];
     if (!cell) continue;
-    if (normalized.includes(cell)) return i;
-    // 「BU Merchant ID」→ bumerchantid 仍应命中 merchantid
-    if (normalized.some((item) => item.length >= 3 && cell.endsWith(item))) return i;
+    // 「BU Merchant ID」→ bumerchantid 仍应命中 merchantid；跳过过短后缀
+    if (normalized.some((item) => item.length >= 4 && cell.endsWith(item))) return i;
   }
   return null;
 }
@@ -278,13 +329,14 @@ function findHeaderRow_(matrix: unknown[][]) {
     if (!hasMid) continue;
     const hasPlatform = findCol_(header, PLATFORM_HEADERS) != null;
     const hasBu = findCol_(header, BU_HEADERS) != null;
-    if (!hasPlatform && !hasBu) continue;
+    // 允许仅有 MID（平台由文件名/标题推断，如 PM 推荐表）
     const score =
       (hasMid ? 4 : 0)
       + (hasPlatform ? 3 : 0)
       + (hasBu ? 2 : 0)
       + (findCol_(header, NAME_HEADERS) != null ? 1 : 0)
-      + (findCol_(header, URL_HEADERS) != null ? 1 : 0);
+      + (findCol_(header, URL_HEADERS) != null ? 1 : 0)
+      + (findCol_(header, SID_HEADERS) != null ? 1 : 0);
     if (!best || score > best.score) best = { index: r, score };
   }
   return best?.index ?? -1;

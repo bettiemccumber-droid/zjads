@@ -5,12 +5,13 @@ import {
   AlertOutlined,
   CalendarOutlined,
   FireOutlined,
+  ReloadOutlined,
   SaveOutlined,
   SearchOutlined,
   SettingOutlined,
   ShopOutlined,
-  StarOutlined,
   SmileOutlined,
+  StarOutlined,
   ThunderboltOutlined,
   WarningOutlined,
 } from '@ant-design/icons';
@@ -122,6 +123,8 @@ interface OpsListItem {
   merchantUrl: string;
   category: string;
   note: string;
+  updatedAt?: string;
+  createdAt?: string;
 }
 
 interface EnginePrefs {
@@ -287,6 +290,55 @@ function regionTags(value?: string) {
 }
 
 /**
+ * 从网址取出可点的域名。
+ */
+function domainLink(url?: string) {
+  const raw = url?.trim();
+  if (!raw) return <span className="merchant-blank">—</span>;
+  try {
+    const href = /^https?:\/\//i.test(raw) ? raw : `https://${raw}`;
+    const host = new URL(href).hostname.replace(/^www\./, '');
+    return (
+      <a className="merchant-link" href={href} target="_blank" rel="noopener noreferrer">
+        {host}
+      </a>
+    );
+  } catch {
+    return <span className="merchant-blank">—</span>;
+  }
+}
+
+/**
+ * 运营名单时间显示成 YYYY/M/D。
+ */
+function opsDateText(value?: string) {
+  if (!value) return '—';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return '—';
+  return `${date.getFullYear()}/${date.getMonth() + 1}/${date.getDate()}`;
+}
+
+/**
+ * 推荐商家名称：可点链接 + 运营推荐标记。
+ */
+function RecommendName({ row }: { row: OpsListItem }) {
+  const title = row.name?.trim() || row.mid;
+  const href = row.merchantUrl?.trim();
+  return (
+    <span className="merchant-recommend-name">
+      {href ? (
+        <a className="merchant-link" href={/^https?:\/\//i.test(href) ? href : `https://${href}`} target="_blank" rel="noopener noreferrer">
+          {title}
+        </a>
+      ) : (
+        <span>{title}</span>
+      )}
+      <span className="merchant-recommend-badge">运营推荐</span>
+    </span>
+  );
+}
+
+/**
  * 系列状态文案。日报用已启用/已暂停，本地系列用待提交。
  */
 function campaignStatusView(status: string) {
@@ -401,6 +453,12 @@ export default function MyMerchantsPage() {
   const [discoverLoading, setDiscoverLoading] = useState(false);
   const [claimingKey, setClaimingKey] = useState('');
   const [merchantsLoaded, setMerchantsLoaded] = useState(false);
+  const [violationDraft, setViolationDraft] = useState('');
+  const [violationQuery, setViolationQuery] = useState('');
+  const [recommendDraft, setRecommendDraft] = useState('');
+  const [recommendQuery, setRecommendQuery] = useState('');
+  const [recommendPlatform, setRecommendPlatform] = useState<string | undefined>();
+  const [reasonModal, setReasonModal] = useState<{ name: string; note: string } | null>(null);
   const [personaOpen, setPersonaOpen] = useState(false);
   const [personaTotal, setPersonaTotal] = useState(0);
   const [personaOwned, setPersonaOwned] = useState(0);
@@ -713,6 +771,49 @@ export default function MyMerchantsPage() {
     () => new Set(advertised.map((item) => `${(item.platformCode || '').toLowerCase()}:${item.mid}`)),
     [advertised],
   );
+
+  const refreshOpsLists = useCallback(async () => {
+    setOpsListsLoaded(false);
+    try {
+      const [violationRes, recommendRes] = await Promise.all([
+        api.get<ApiResult<{ items: OpsListItem[] }>>('/merchant-ops-lists/violation'),
+        api.get<ApiResult<{ items: OpsListItem[] }>>('/merchant-ops-lists/recommend'),
+      ]);
+      setViolationList(violationRes.data.success ? violationRes.data.data.items ?? [] : []);
+      setRecommendList(recommendRes.data.success ? recommendRes.data.data.items ?? [] : []);
+    } catch {
+      setViolationList([]);
+      setRecommendList([]);
+      message.error('刷新运营名单失败');
+    } finally {
+      setOpsListsLoaded(true);
+    }
+  }, []);
+
+  const filteredViolations = useMemo(() => {
+    const query = violationQuery.trim().toLowerCase();
+    if (!query) return violationList;
+    return violationList.filter((item) => {
+      const hay = `${item.name} ${item.mid} ${item.merchantUrl} ${item.note}`.toLowerCase();
+      return hay.includes(query);
+    });
+  }, [violationList, violationQuery]);
+
+  const recommendPlatforms = useMemo(() => {
+    const codes = [...new Set(recommendList.map((item) => item.platformCode).filter(Boolean))];
+    return codes.sort((a, b) => a.localeCompare(b));
+  }, [recommendList]);
+
+  const filteredRecommends = useMemo(() => {
+    const query = recommendQuery.trim().toLowerCase();
+    return recommendList.filter((item) => {
+      if (recommendPlatform && item.platformCode !== recommendPlatform) return false;
+      if (!query) return true;
+      const hay = `${item.name} ${item.mid} ${item.merchantUrl} ${item.category}`.toLowerCase();
+      return hay.includes(query);
+    });
+  }, [recommendList, recommendQuery, recommendPlatform]);
+
   const nodeCountry = (settings?.targetCountry || 'US').toUpperCase();
   const nodeRows = useMemo(() => {
     const ordered = new Set(chargebacks.filter((item) => item.orderCount > 0).map((item) => `${item.platformCode}:${item.merchantId}`));
@@ -1024,6 +1125,17 @@ export default function MyMerchantsPage() {
         onChanged={applyPersonaSummary}
       />
 
+      <Modal
+        open={reasonModal != null}
+        title={reasonModal ? `违规原因 · ${reasonModal.name}` : '违规原因'}
+        footer={<Button type="primary" onClick={() => setReasonModal(null)}>知道了</Button>}
+        onCancel={() => setReasonModal(null)}
+      >
+        <Typography.Paragraph style={{ marginBottom: 0, whiteSpace: 'pre-wrap' }}>
+          {reasonModal?.note || '—'}
+        </Typography.Paragraph>
+      </Modal>
+
       <Card className="merchant-board">
         <Tabs
           activeKey={tab}
@@ -1185,26 +1297,60 @@ export default function MyMerchantsPage() {
             {
               key: 'blocked',
               label: tabLabel(<WarningOutlined />, opsListsLoaded ? `违规商家 (${violationList.length})` : '违规商家', 'warn'),
-              children: !opsListsLoaded ? <Spin /> : violationList.length === 0 ? (
-                <EmptyList name="违规商家" />
-              ) : (
+              children: !opsListsLoaded ? <Spin /> : (
                 <>
-                  <TabNote>管理员上传的运营违规名单，全员只读。</TabNote>
-                  <Table
-                    className="merchant-table"
-                    rowKey={(row) => String(row.id)}
-                    size="middle"
-                    pagination={{ pageSize: 10, showTotal: (total) => `共 ${total} 条` }}
-                    dataSource={violationList}
-                    columns={[
-                      { title: '商家名称', dataIndex: 'name', render: (value: string, row: OpsListItem) => <MerchantMark name={value || row.mid} merchantUrl={row.merchantUrl} /> },
-                      { title: '平台', dataIndex: 'platformCode', width: 72, render: (value: string) => platformTag(value) },
-                      { title: 'MID', dataIndex: 'mid', width: 120 },
-                      { title: '国家', dataIndex: 'countryCode', width: 100, render: (value: string) => (value ? regionTags(value) : blank()) },
-                      { title: '品类', dataIndex: 'category', width: 140, ellipsis: true, render: (value: string) => blank(value) },
-                      { title: '备注', dataIndex: 'note', ellipsis: true, render: (value: string) => blank(value) },
-                    ]}
-                  />
+                  <div className="merchant-toolbar">
+                    <Input
+                      allowClear
+                      prefix={<SearchOutlined />}
+                      style={{ width: 240 }}
+                      placeholder="搜索商家名称"
+                      value={violationDraft}
+                      onChange={(event) => setViolationDraft(event.target.value)}
+                      onPressEnter={() => setViolationQuery(violationDraft.trim())}
+                    />
+                    <Button type="primary" icon={<SearchOutlined />} onClick={() => setViolationQuery(violationDraft.trim())}>
+                      查询
+                    </Button>
+                    <Button icon={<ReloadOutlined />} onClick={() => { setViolationDraft(''); setViolationQuery(''); void refreshOpsLists(); }}>
+                      刷新
+                    </Button>
+                  </div>
+                  {violationList.length === 0 ? <EmptyList name="违规商家" /> : (
+                    <Table
+                      className="merchant-table merchant-table--ops"
+                      rowKey={(row) => String(row.id)}
+                      size="middle"
+                      pagination={{ pageSize: 20, showSizeChanger: true, pageSizeOptions: ['10', '20', '50'], showTotal: (total) => `共 ${total} 条` }}
+                      dataSource={filteredViolations}
+                      locale={{ emptyText: '没有匹配的违规商家' }}
+                      columns={[
+                        {
+                          title: '商家名称',
+                          dataIndex: 'name',
+                          width: 220,
+                          render: (value: string, row: OpsListItem) => <MerchantMark name={value || row.mid} merchantUrl={row.merchantUrl} />,
+                        },
+                        { title: '平台', dataIndex: 'platformCode', width: 88, render: (value: string) => platformTag(value) },
+                        { title: '商家域名', dataIndex: 'merchantUrl', width: 200, render: (value: string) => domainLink(value) },
+                        {
+                          title: '违规原因',
+                          width: 100,
+                          render: (_: unknown, row: OpsListItem) => (
+                            row.note?.trim()
+                              ? <Button type="link" size="small" className="merchant-link-btn" onClick={() => setReasonModal({ name: row.name || row.mid, note: row.note })}>查看</Button>
+                              : <span className="merchant-blank">—</span>
+                          ),
+                        },
+                        {
+                          title: '违规时间',
+                          width: 120,
+                          render: (_: unknown, row: OpsListItem) => opsDateText(row.updatedAt || row.createdAt),
+                        },
+                        { title: '名单来源', width: 100, render: () => '运营上传' },
+                      ]}
+                    />
+                  )}
                 </>
               ),
             },
@@ -1223,20 +1369,59 @@ export default function MyMerchantsPage() {
               label: tabLabel(<StarOutlined />, opsListsLoaded ? `推荐商家 (${recommendList.length})` : '推荐商家', 'star'),
               children: !opsListsLoaded ? <Spin /> : (
                 <>
-                  <TabNote>管理员上传的推荐名单，全员只读。库状态按你自己的「我的商家」判断。</TabNote>
+                  <div className="merchant-toolbar">
+                    <Input
+                      allowClear
+                      prefix={<SearchOutlined />}
+                      style={{ width: 240 }}
+                      placeholder="搜索商家名"
+                      value={recommendDraft}
+                      onChange={(event) => setRecommendDraft(event.target.value)}
+                      onPressEnter={() => setRecommendQuery(recommendDraft.trim())}
+                    />
+                    <Select
+                      allowClear
+                      placeholder="全部来源"
+                      style={{ width: 140 }}
+                      value={recommendPlatform}
+                      onChange={(value) => setRecommendPlatform(value)}
+                      options={recommendPlatforms.map((code) => ({
+                        value: code,
+                        label: PLATFORM_SHORT[code] || code.toUpperCase(),
+                      }))}
+                    />
+                    <Button type="primary" icon={<SearchOutlined />} onClick={() => setRecommendQuery(recommendDraft.trim())}>
+                      查询
+                    </Button>
+                    <Button
+                      icon={<ReloadOutlined />}
+                      onClick={() => {
+                        setRecommendDraft('');
+                        setRecommendQuery('');
+                        setRecommendPlatform(undefined);
+                        void refreshOpsLists();
+                      }}
+                    >
+                      刷新
+                    </Button>
+                  </div>
                   {recommendList.length === 0 ? <EmptyList name="推荐商家" /> : (
                     <Table
-                      className="merchant-table"
+                      className="merchant-table merchant-table--ops"
                       rowKey={(row) => String(row.id)}
                       size="middle"
-                      pagination={{ pageSize: 10, showTotal: (total) => `共 ${total} 条` }}
-                      dataSource={recommendList}
+                      scroll={{ x: 1100 }}
+                      pagination={{ pageSize: 20, showSizeChanger: true, pageSizeOptions: ['10', '20', '50'], showTotal: (total) => `共 ${total} 条` }}
+                      dataSource={filteredRecommends}
+                      locale={{ emptyText: '没有匹配的推荐商家' }}
                       columns={[
-                        { title: '商家名称', dataIndex: 'name', render: (value: string, row: OpsListItem) => <MerchantMark name={value || row.mid} merchantUrl={row.merchantUrl} /> },
-                        { title: '平台', dataIndex: 'platformCode', width: 72, render: (value: string) => platformTag(value) },
-                        { title: 'MID', dataIndex: 'mid', width: 120 },
-                        { title: '国家', dataIndex: 'countryCode', width: 100, render: (value: string) => (value ? regionTags(value) : blank()) },
-                        { title: '品类', dataIndex: 'category', width: 140, ellipsis: true, render: (value: string) => blank(value) },
+                        {
+                          title: '商家名称',
+                          dataIndex: 'name',
+                          width: 260,
+                          render: (_: string, row: OpsListItem) => <RecommendName row={row} />,
+                        },
+                        { title: '联盟平台', dataIndex: 'platformCode', width: 90, render: (value: string) => platformTag(value) },
                         {
                           title: '我的库状态',
                           width: 100,
@@ -1246,7 +1431,11 @@ export default function MyMerchantsPage() {
                               : <span className="merchant-state merchant-state--wait">可领取</span>
                           ),
                         },
-                        { title: '备注', dataIndex: 'note', ellipsis: true, render: (value: string) => blank(value) },
+                        { title: '商家地区', dataIndex: 'countryCode', width: 120, render: (value: string) => (value ? regionTags(value) : blank()) },
+                        { title: 'EPC', width: 80, render: () => blank() },
+                        { title: '平均佣金率', width: 100, render: () => blank() },
+                        { title: '客单价', width: 90, render: () => blank() },
+                        { title: '佣金上限', width: 90, render: () => blank() },
                       ]}
                     />
                   )}

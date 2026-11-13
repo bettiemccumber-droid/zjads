@@ -29,7 +29,11 @@ import { AuthUser, resolveOwnerUserId } from '../common/ownership.util';
 import { AdDraft, AdKeyword, AdSitelink } from './ads-automation.util';
 import { AdsAutomationService } from './ads-automation.service';
 import { AiPersonaService, PersonaScope } from './ai-persona.service';
-import { MerchantOpsListService, MerchantOpsListType } from './merchant-ops-list.service';
+import {
+  MerchantOpsImportMode,
+  MerchantOpsListService,
+  MerchantOpsListType,
+} from './merchant-ops-list.service';
 
 class CreatePersonaBody {
   @IsString()
@@ -85,11 +89,16 @@ class MerchantOpsListRowBody {
   note?: string;
 }
 
-class ReplaceMerchantOpsListBody {
+class ImportMerchantOpsListBody {
   @IsArray()
   @ValidateNested({ each: true })
   @Type(() => MerchantOpsListRowBody)
   rows!: MerchantOpsListRowBody[];
+
+  /** merge 合并；replace_platforms 只覆盖本次平台；replace_all 整表替换 */
+  @IsOptional()
+  @IsIn(['merge', 'replace_platforms', 'replace_all'])
+  mode?: MerchantOpsImportMode;
 }
 
 class KeywordBody implements AdKeyword {
@@ -240,19 +249,66 @@ export class AdsAutomationController {
     return ok(await this.merchantLists.list(user.organizationId, listType));
   }
 
-  /** 管理员整表替换违规或推荐名单。 */
+  /** 管理员导入违规或推荐名单。默认合并，可多次按平台上传。 */
+  @Post('merchant-ops-lists/:listType/import')
+  async importMerchantOps(
+    @CurrentUser() user: AuthUser,
+    @Param('listType') listType: MerchantOpsListType,
+    @Body() body: ImportMerchantOpsListBody,
+  ) {
+    if (user.role !== UserRole.ADMIN) {
+      throw new ForbiddenException('只有管理员可以上传名单');
+    }
+    const mode = body.mode ?? 'merge';
+    const data = await this.merchantLists.importRows(
+      user.organizationId,
+      listType,
+      body.rows ?? [],
+      mode,
+    );
+    const tip =
+      mode === 'merge'
+        ? `已合并导入 ${data.imported} 条`
+        : mode === 'replace_platforms'
+          ? `已覆盖平台 ${data.platforms.join('、')}，共 ${data.imported} 条`
+          : `已整表替换为 ${data.imported} 条`;
+    return ok(data, tip);
+  }
+
+  /** 兼容旧前端：整表替换。 */
   @Post('merchant-ops-lists/:listType/replace')
   async replaceMerchantOps(
     @CurrentUser() user: AuthUser,
     @Param('listType') listType: MerchantOpsListType,
-    @Body() body: ReplaceMerchantOpsListBody,
+    @Body() body: ImportMerchantOpsListBody,
   ) {
     if (user.role !== UserRole.ADMIN) {
       throw new ForbiddenException('只有管理员可以上传名单');
     }
     return ok(
-      await this.merchantLists.replace(user.organizationId, listType, body.rows ?? []),
+      await this.merchantLists.importRows(
+        user.organizationId,
+        listType,
+        body.rows ?? [],
+        body.mode ?? 'replace_all',
+      ),
       '名单已更新',
+    );
+  }
+
+  /** 清空名单，或只清某个平台。 */
+  @Delete('merchant-ops-lists/:listType')
+  async clearMerchantOps(
+    @CurrentUser() user: AuthUser,
+    @Param('listType') listType: MerchantOpsListType,
+    @Query('platformCode') platformCode?: string,
+  ) {
+    if (user.role !== UserRole.ADMIN) {
+      throw new ForbiddenException('只有管理员可以清空名单');
+    }
+    return ok(
+      await this.merchantLists.clear(user.organizationId, listType, platformCode),
+      platformCode ? `已清空平台 ${platformCode}` : '名单已清空',
     );
   }
 

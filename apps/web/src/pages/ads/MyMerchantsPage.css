@@ -496,6 +496,40 @@
   background: #f8fbff !important;
 }
 
+.merchant-table--ops .ant-table-thead > tr > th {
+  background: #fafbfc !important;
+}
+
+.merchant-link,
+.merchant-link-btn.ant-btn-link {
+  padding: 0;
+  color: #1677ff;
+  height: auto;
+}
+
+.merchant-link:hover,
+.merchant-link-btn.ant-btn-link:hover {
+  color: #4096ff;
+}
+
+.merchant-recommend-name {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  min-width: 0;
+}
+
+.merchant-recommend-badge {
+  flex: none;
+  padding: 0 8px;
+  border-radius: 999px;
+  background: #f3e8ff;
+  color: #7c3aed;
+  font-size: 12px;
+  line-height: 20px;
+}
+
 .merchant-mark {
   display: inline-flex;
   align-items: center;

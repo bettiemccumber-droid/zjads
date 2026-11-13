@@ -5,14 +5,13 @@ import {
   AlertOutlined,
   CalendarOutlined,
   FireOutlined,
-  FundOutlined,
   SaveOutlined,
   SearchOutlined,
   SettingOutlined,
   ShopOutlined,
   StarOutlined,
+  SmileOutlined,
   ThunderboltOutlined,
-  UserOutlined,
   WarningOutlined,
 } from '@ant-design/icons';
 import { api, type ApiResult } from '../../api/client';
@@ -114,6 +113,17 @@ interface SettlementRow {
   rejectionRate: number;
 }
 
+interface OpsListItem {
+  id: number;
+  platformCode: string;
+  mid: string;
+  name: string;
+  countryCode: string;
+  merchantUrl: string;
+  category: string;
+  note: string;
+}
+
 interface EnginePrefs {
   landingProof: boolean;
   singleProduct: boolean;
@@ -141,15 +151,6 @@ const PLATFORM_SHORT: Record<string, string> = {
   collabglow: 'CG',
   famesta: 'FS',
 };
-/**
- * 平台代码显示成参考页上的短标签。
- */
-const BLOCK_LABEL: Record<string, string> = {
-  adult: '成人',
-  prohibited: '禁止',
-  violation: '违规',
-};
-
 /**
  * 上广告引擎的两个开关只记在这台电脑上，不提交到 Google。
  */
@@ -380,8 +381,12 @@ export default function MyMerchantsPage() {
   const [mineQuery, setMineQuery] = useState('');
   const [pickTag, setPickTag] = useState('');
   const [sources, setSources] = useState<AdSource[]>([]);
-  const [blocked, setBlocked] = useState<CatalogMerchant[]>([]);
+  const [violationList, setViolationList] = useState<OpsListItem[]>([]);
+  const [recommendList, setRecommendList] = useState<OpsListItem[]>([]);
+  const [opsListsLoaded, setOpsListsLoaded] = useState(false);
   const [chargebacks, setChargebacks] = useState<SettlementRow[]>([]);
+  const [hotOrgRows, setHotOrgRows] = useState<SettlementRow[]>([]);
+  const [hotLoaded, setHotLoaded] = useState(false);
   const [settlementLoaded, setSettlementLoaded] = useState(false);
   const [engines, setEngines] = useState<EnginePrefs>({ landingProof: false, singleProduct: false, ecpc: false });
   const [settings, setSettings] = useState<AdLaunchSettings | null>(null);
@@ -398,22 +403,32 @@ export default function MyMerchantsPage() {
   const [merchantsLoaded, setMerchantsLoaded] = useState(false);
   const [personaOpen, setPersonaOpen] = useState(false);
   const [personaTotal, setPersonaTotal] = useState(0);
-  const [personaUsed, setPersonaUsed] = useState(0);
+  const [personaOwned, setPersonaOwned] = useState(0);
   const [activePersonaName, setActivePersonaName] = useState('');
+  const [activePersonaTags, setActivePersonaTags] = useState<string[]>([]);
   const loadGen = useRef(0);
+
+  const applyPersonaSummary = useCallback((data: {
+    total: number;
+    activePersonaId: number | null;
+    items: Array<{ id: number; name: string; tags: string[]; owned: boolean }>;
+  }) => {
+    setPersonaTotal(data.total);
+    setPersonaOwned(data.items.filter((item) => item.owned).length);
+    const active = data.items.find((item) => item.id === data.activePersonaId) ?? data.items[0];
+    setActivePersonaName(active?.name ?? '');
+    setActivePersonaTags(active?.tags ?? []);
+  }, []);
 
   const refreshPersonas = useCallback(async () => {
     try {
       const data = await fetchPersonaSummary();
       if (!data) return;
-      setPersonaTotal(data.total);
-      setPersonaUsed(data.usedCount);
-      const active = data.items.find((item) => item.id === data.activePersonaId) ?? data.items[0];
-      setActivePersonaName(active?.name ?? '');
+      applyPersonaSummary(data);
     } catch {
       /* 人设接口失败不挡商家列表 */
     }
-  }, []);
+  }, [applyPersonaSummary]);
 
   const load = useCallback(async () => {
     const gen = ++loadGen.current;
@@ -440,10 +455,9 @@ export default function MyMerchantsPage() {
         message.error('加载商家失败');
         setMerchantsLoaded(true);
       });
-    const [accountRes, sourceRes, catalogRes] = await Promise.all([
+    const [accountRes, sourceRes] = await Promise.all([
       api.get<ApiResult<Array<{ platformCode: string; accounts: ChannelAccount[] }>>>('/channel-accounts/by-platform', { params }).catch(() => null),
       api.get<ApiResult<AdSource[]>>('/ad-sources', { params }).catch(() => null),
-      api.get<ApiResult<CatalogMerchant[]>>('/catalog-merchants', { params }).catch(() => null),
       advertisedTask,
     ]);
     if (gen !== loadGen.current) return;
@@ -451,9 +465,6 @@ export default function MyMerchantsPage() {
       setAccounts(accountRes.data.data.flatMap((group) => group.accounts.map((account) => ({ ...account, platformCode: group.platformCode }))));
     }
     if (sourceRes?.data.success) setSources(sourceRes.data.data.map((item) => ({ id: item.id, name: item.name })));
-    if (catalogRes?.data.success) {
-      setBlocked(catalogRes.data.data.filter((item) => item.blockReason && item.blockReason !== 'none'));
-    }
   }, [viewUserId]);
 
   const searchDiscover = useCallback(async (page = 1, query = discoverQuery) => {
@@ -511,11 +522,16 @@ export default function MyMerchantsPage() {
     void load();
     void refreshPersonas();
     const [start, end] = lastNDaysToYesterday(90);
+    const range = {
+      startDate: start.format('YYYY-MM-DD'),
+      endDate: end.format('YYYY-MM-DD'),
+    };
     setSettlementLoaded(false);
+    setHotLoaded(false);
+    setOpsListsLoaded(false);
     void api.get<ApiResult<{ items: SettlementRow[] }>>('/orders/settlement/merchant-summary', {
       params: {
-        startDate: start.format('YYYY-MM-DD'),
-        endDate: end.format('YYYY-MM-DD'),
+        ...range,
         ...(viewUserId ? { userId: viewUserId } : {}),
       },
     }).then((res) => {
@@ -524,6 +540,32 @@ export default function MyMerchantsPage() {
     }).catch(() => {
       setChargebacks([]);
       setSettlementLoaded(true);
+    });
+    void api.get<ApiResult<{ items: SettlementRow[] }>>('/orders/settlement/merchant-summary', {
+      params: { ...range, orgWide: 1 },
+    }).then((res) => {
+      const items = res.data.success ? res.data.data.items ?? [] : [];
+      setHotOrgRows(
+        [...items]
+          .filter((item) => item.orderCount > 0)
+          .sort((a, b) => b.orderCount - a.orderCount || b.totalCommission - a.totalCommission),
+      );
+      setHotLoaded(true);
+    }).catch(() => {
+      setHotOrgRows([]);
+      setHotLoaded(true);
+    });
+    void Promise.all([
+      api.get<ApiResult<{ items: OpsListItem[] }>>('/merchant-ops-lists/violation'),
+      api.get<ApiResult<{ items: OpsListItem[] }>>('/merchant-ops-lists/recommend'),
+    ]).then(([violationRes, recommendRes]) => {
+      setViolationList(violationRes.data.success ? violationRes.data.data.items ?? [] : []);
+      setRecommendList(recommendRes.data.success ? recommendRes.data.data.items ?? [] : []);
+      setOpsListsLoaded(true);
+    }).catch(() => {
+      setViolationList([]);
+      setRecommendList([]);
+      setOpsListsLoaded(true);
     });
     return () => {
       loadGen.current += 1;
@@ -667,19 +709,9 @@ export default function MyMerchantsPage() {
     if (count == null) return blank();
     return count;
   };
-  const hotRows = useMemo(
-    () => [...chargebacks].filter((item) => item.orderCount > 0).sort((a, b) => b.orderCount - a.orderCount || b.totalCommission - a.totalCommission),
-    [chargebacks],
-  );
-  const recommendRows = useMemo(
-    () => chargebacks
-      .filter((item) => item.orderCount >= 3 && item.totalCommission > 0 && item.rejectionRate < 15)
-      .sort((a, b) => b.orderCount - a.orderCount || b.totalCommission - a.totalCommission),
-    [chargebacks],
-  );
-  const runningRows = useMemo(
-    () => visibleAdvertised.filter((item) => (item.campaigns ?? []).some((campaign) => campaign.localId == null && campaign.status === 'ENABLED')),
-    [visibleAdvertised],
+  const claimedKeySet = useMemo(
+    () => new Set(advertised.map((item) => `${(item.platformCode || '').toLowerCase()}:${item.mid}`)),
+    [advertised],
   );
   const nodeCountry = (settings?.targetCountry || 'US').toUpperCase();
   const nodeRows = useMemo(() => {
@@ -691,6 +723,103 @@ export default function MyMerchantsPage() {
     setEngines(next);
     if (scopeUserId != null) saveEngines(scopeUserId, next);
   };
+
+  const chargebackRows = useMemo(
+    () => chargebacks.filter((item) => item.rejectionRate > 0),
+    [chargebacks],
+  );
+
+  /**
+   * 左上角商家数跟随下方当前 Tab，显示对应板块数量。
+   */
+  const boardSummary = useMemo(() => {
+    if (tab === 'pick') {
+      return {
+        title: '选取商家',
+        loaded: !discoverLoading && discover != null,
+        count: discover?.total ?? 0,
+        label: '可领取',
+        foot: discover ? `当前页 ${discover.rows.length} · 共 ${discover.total}` : '打开选取商家后加载',
+        chips: 'none' as const,
+      };
+    }
+    if (tab === 'blocked') {
+      return {
+        title: '违规商家',
+        loaded: opsListsLoaded,
+        count: violationList.length,
+        label: '运营名单',
+        foot: opsListsLoaded ? (violationList.length === 0 ? '管理员尚未上传违规名单' : '管理员上传，全员只读') : '正在加载',
+        chips: 'none' as const,
+      };
+    }
+    if (tab === 'hot') {
+      return {
+        title: '热销商家',
+        loaded: hotLoaded,
+        count: hotOrgRows.length,
+        label: '全公司近 90 天',
+        foot: hotLoaded ? '全平台汇总，按订单数从高到低' : '正在加载结算',
+        chips: 'none' as const,
+      };
+    }
+    if (tab === 'recommend') {
+      return {
+        title: '推荐商家',
+        loaded: opsListsLoaded,
+        count: recommendList.length,
+        label: '运营名单',
+        foot: opsListsLoaded ? (recommendList.length === 0 ? '管理员尚未上传推荐名单' : '管理员上传，全员只读') : '正在加载',
+        chips: 'none' as const,
+      };
+    }
+    if (tab === 'nodes') {
+      return {
+        title: '节点推荐',
+        loaded: merchantsLoaded && settlementLoaded,
+        count: nodeRows.length,
+        label: `国家 ${nodeCountry}`,
+        foot: merchantsLoaded && settlementLoaded ? `投放国家 ${nodeCountry} 近 90 天有单` : '正在加载',
+        chips: 'none' as const,
+      };
+    }
+    if (tab === 'chargeback') {
+      return {
+        title: '拒付商家',
+        loaded: settlementLoaded,
+        count: chargebackRows.length,
+        label: '有拒付',
+        foot: settlementLoaded ? '近 90 天拒付率大于 0' : '正在加载结算',
+        chips: 'none' as const,
+      };
+    }
+    return {
+      title: '我的商家',
+      loaded: merchantsLoaded,
+      count: visibleAdvertised.length,
+      label: '可投放',
+      foot: merchantsLoaded
+        ? `已启用 ${enabledCount} · 已暂停 ${visibleAdvertised.length - enabledCount}`
+        : '正在加载商家',
+      chips: 'platforms' as const,
+    };
+  }, [
+    tab,
+    discoverLoading,
+    discover,
+    merchantsLoaded,
+    opsListsLoaded,
+    violationList.length,
+    hotLoaded,
+    hotOrgRows.length,
+    recommendList.length,
+    settlementLoaded,
+    nodeRows.length,
+    nodeCountry,
+    chargebackRows.length,
+    visibleAdvertised.length,
+    enabledCount,
+  ]);
 
   return (
     <div className="merchant-page">
@@ -706,18 +835,30 @@ export default function MyMerchantsPage() {
 
       <div className="merchant-dash">
         <section className="merchant-panel">
-          <div className="merchant-panel__title"><ShopOutlined /> 我的商家</div>
-          <div className="merchant-stat__num">{merchantsLoaded ? visibleAdvertised.length.toLocaleString('en-US') : <Spin size="small" />}</div>
-          <div className="merchant-stat__label">可投放</div>
-          <div className="merchant-chips">
-            {!merchantsLoaded ? <span className="merchant-blank">正在加载</span> : platformCounts.length === 0 ? <span className="merchant-blank">还没有商家</span> : platformCounts.map(([code, count]) => (
-              <span key={code || 'unknown'} className="merchant-chip">
-                {platformTag(code)}
-                <b>{count}</b>
-              </span>
-            ))}
+          <div className="merchant-panel__title"><ShopOutlined /> {boardSummary.title}</div>
+          <div className="merchant-stat__num">
+            {boardSummary.loaded ? boardSummary.count.toLocaleString('en-US') : <Spin size="small" />}
           </div>
-          <div className="merchant-stat__foot">{merchantsLoaded ? `已启用 ${enabledCount} · 已暂停 ${visibleAdvertised.length - enabledCount}` : '正在加载商家'}</div>
+          <div className="merchant-stat__label">{boardSummary.label}</div>
+          <div className="merchant-chips">
+            {boardSummary.chips === 'platforms' ? (
+              !merchantsLoaded ? (
+                <span className="merchant-blank">正在加载</span>
+              ) : platformCounts.length === 0 ? (
+                <span className="merchant-blank">还没有商家</span>
+              ) : (
+                platformCounts.map(([code, count]) => (
+                  <span key={code || 'unknown'} className="merchant-chip">
+                    {platformTag(code)}
+                    <b>{count}</b>
+                  </span>
+                ))
+              )
+            ) : (
+              <span className="merchant-blank">切换下方分类查看列表</span>
+            )}
+          </div>
+          <div className="merchant-stat__foot">{boardSummary.foot}</div>
         </section>
 
         <section className="merchant-panel merchant-panel--settings">
@@ -805,18 +946,39 @@ export default function MyMerchantsPage() {
         </section>
 
         <section className="merchant-panel merchant-panel--ai">
-          <div className="merchant-panel__title"><UserOutlined /> AI 人设库</div>
+          <div className="merchant-ai__title">
+            <span className="merchant-ai__logo"><SmileOutlined /></span>
+            AI 人设库
+          </div>
           {activePersonaName ? (
-            <div className="merchant-ai__empty">当前：{activePersonaName}</div>
+            <div className="merchant-ai__active">
+              <div className="merchant-ai__active-head">
+                <span className="merchant-ai__badge">激活中</span>
+                <span className="merchant-ai__name">{activePersonaName}</span>
+              </div>
+              {activePersonaTags.length > 0 ? (
+                <div className="merchant-ai__tags">
+                  {activePersonaTags.slice(0, 3).map((tag) => (
+                    <span key={tag} className="merchant-ai__tag">{tag}</span>
+                  ))}
+                </div>
+              ) : null}
+            </div>
           ) : (
-            <div className="merchant-ai__empty">还没有人设</div>
+            <div className="merchant-ai__idle">还没有激活人设</div>
           )}
           <div className="merchant-ai__counts">
-            <div><b>{personaTotal}</b><span>人设库</span></div>
-            <div><b>{personaUsed}</b><span>使用过</span></div>
+            <div>
+              <b className="merchant-ai__count--lib">{personaTotal}</b>
+              <span>人设库</span>
+            </div>
+            <div>
+              <b className="merchant-ai__count--own">{personaOwned}</b>
+              <span>自建人设</span>
+            </div>
           </div>
-          <Button size="small" className="merchant-ai__btn" icon={<UserOutlined />} onClick={() => setPersonaOpen(true)}>
-            管理人设
+          <Button className="merchant-ai__btn" icon={<SmileOutlined />} onClick={() => setPersonaOpen(true)}>
+            管理 AI 人设库
           </Button>
         </section>
       </div>
@@ -824,12 +986,7 @@ export default function MyMerchantsPage() {
       <PersonaLibraryModal
         open={personaOpen}
         onClose={() => setPersonaOpen(false)}
-        onChanged={(data) => {
-          setPersonaTotal(data.total);
-          setPersonaUsed(data.usedCount);
-          const active = data.items.find((item) => item.id === data.activePersonaId) ?? data.items[0];
-          setActivePersonaName(active?.name ?? '');
-        }}
+        onChanged={applyPersonaSummary}
       />
 
       <Card className="merchant-board">
@@ -992,41 +1149,72 @@ export default function MyMerchantsPage() {
             },
             {
               key: 'blocked',
-              label: tabLabel(<WarningOutlined />, `违规商家 (${blocked.length})`, 'warn'),
-              children: blocked.length === 0 ? <EmptyList name="违规商家" /> : (
-                <Table
-                  className="merchant-table"
-                  rowKey={(row) => String(row.id)}
-                  size="middle"
-                  pagination={{ pageSize: 10, showTotal: (total) => `共 ${total} 条` }}
-                  dataSource={blocked}
-                  columns={[
-                    { title: '商家名称', dataIndex: 'name', render: (value: string, row: CatalogMerchant) => <MerchantMark name={value} merchantUrl={row.merchantUrl} /> },
-                    { title: '平台', dataIndex: 'platformCode', width: 72, render: (value: string) => platformTag(value) },
-                    { title: 'MID', dataIndex: 'mid', width: 120 },
-                    { title: '原因', dataIndex: 'blockReason', width: 100, render: (value: string) => BLOCK_LABEL[value] || value },
-                    { title: '支持地区', dataIndex: 'countryCode', width: 120, render: (value: string) => regionTags(value) },
-                  ]}
-                />
+              label: tabLabel(<WarningOutlined />, opsListsLoaded ? `违规商家 (${violationList.length})` : '违规商家', 'warn'),
+              children: !opsListsLoaded ? <Spin /> : violationList.length === 0 ? (
+                <EmptyList name="违规商家" />
+              ) : (
+                <>
+                  <TabNote>管理员上传的运营违规名单，全员只读。</TabNote>
+                  <Table
+                    className="merchant-table"
+                    rowKey={(row) => String(row.id)}
+                    size="middle"
+                    pagination={{ pageSize: 10, showTotal: (total) => `共 ${total} 条` }}
+                    dataSource={violationList}
+                    columns={[
+                      { title: '商家名称', dataIndex: 'name', render: (value: string, row: OpsListItem) => <MerchantMark name={value || row.mid} merchantUrl={row.merchantUrl} /> },
+                      { title: '平台', dataIndex: 'platformCode', width: 72, render: (value: string) => platformTag(value) },
+                      { title: 'MID', dataIndex: 'mid', width: 120 },
+                      { title: '国家', dataIndex: 'countryCode', width: 100, render: (value: string) => (value ? regionTags(value) : blank()) },
+                      { title: '品类', dataIndex: 'category', width: 140, ellipsis: true, render: (value: string) => blank(value) },
+                      { title: '备注', dataIndex: 'note', ellipsis: true, render: (value: string) => blank(value) },
+                    ]}
+                  />
+                </>
               ),
             },
             {
               key: 'hot',
-              label: tabLabel(<FireOutlined />, settlementLoaded ? `热销商家 (${hotRows.length})` : '热销商家', 'hot'),
+              label: tabLabel(<FireOutlined />, hotLoaded ? `热销商家 (${hotOrgRows.length})` : '热销商家', 'hot'),
               children: (
                 <>
-                  <TabNote>近 90 天有订单的商家，按订单数从高到低。</TabNote>
-                  {settlementLoaded ? <SettlementInsight rows={hotRows} empty="近 90 天没有出单商家。" /> : <Spin />}
+                  <TabNote>全公司近 90 天有订单的商家（各联盟账号汇总），按订单数从高到低。</TabNote>
+                  {hotLoaded ? <SettlementInsight rows={hotOrgRows} empty="近 90 天没有出单商家。" /> : <Spin />}
                 </>
               ),
             },
             {
               key: 'recommend',
-              label: tabLabel(<StarOutlined />, settlementLoaded ? `推荐商家 (${recommendRows.length})` : '推荐商家', 'star'),
-              children: (
+              label: tabLabel(<StarOutlined />, opsListsLoaded ? `推荐商家 (${recommendList.length})` : '推荐商家', 'star'),
+              children: !opsListsLoaded ? <Spin /> : (
                 <>
-                  <TabNote>近 90 天至少 3 单、有佣金、拒付率低于 15%。已确认佣金还是 0 时不按结算率过滤。模型接入后会替换这套规则。</TabNote>
-                  {settlementLoaded ? <SettlementInsight rows={recommendRows} empty="近 90 天没有达到推荐条件的商家。" /> : <Spin />}
+                  <TabNote>管理员上传的推荐名单，全员只读。库状态按你自己的「我的商家」判断。</TabNote>
+                  {recommendList.length === 0 ? <EmptyList name="推荐商家" /> : (
+                    <Table
+                      className="merchant-table"
+                      rowKey={(row) => String(row.id)}
+                      size="middle"
+                      pagination={{ pageSize: 10, showTotal: (total) => `共 ${total} 条` }}
+                      dataSource={recommendList}
+                      columns={[
+                        { title: '商家名称', dataIndex: 'name', render: (value: string, row: OpsListItem) => <MerchantMark name={value || row.mid} merchantUrl={row.merchantUrl} /> },
+                        { title: '平台', dataIndex: 'platformCode', width: 72, render: (value: string) => platformTag(value) },
+                        { title: 'MID', dataIndex: 'mid', width: 120 },
+                        { title: '国家', dataIndex: 'countryCode', width: 100, render: (value: string) => (value ? regionTags(value) : blank()) },
+                        { title: '品类', dataIndex: 'category', width: 140, ellipsis: true, render: (value: string) => blank(value) },
+                        {
+                          title: '我的库状态',
+                          width: 100,
+                          render: (_: unknown, row: OpsListItem) => (
+                            claimedKeySet.has(`${(row.platformCode || '').toLowerCase()}:${row.mid}`)
+                              ? <span className="merchant-state merchant-state--on">已领取</span>
+                              : <span className="merchant-state merchant-state--wait">可领取</span>
+                          ),
+                        },
+                        { title: '备注', dataIndex: 'note', ellipsis: true, render: (value: string) => blank(value) },
+                      ]}
+                    />
+                  )}
                 </>
               ),
             },
@@ -1059,41 +1247,8 @@ export default function MyMerchantsPage() {
               ),
             },
             {
-              key: 'running',
-              label: tabLabel(<FundOutlined />, merchantsLoaded ? `经营商家 (${runningRows.length})` : '经营商家', 'run'),
-              children: (
-                <>
-                  <TabNote>最近一天日报里仍有启用系列的商家。</TabNote>
-                  {!merchantsLoaded ? <Spin /> : runningRows.length === 0 ? <div className="merchant-empty">最近一天没有启用中的商家。</div> : (
-                    <Table
-                      className="merchant-table"
-                      rowKey={(row) => `${row.channelAccountId}:${row.mid}`}
-                      size="middle"
-                      pagination={{ pageSize: 10, showSizeChanger: true, pageSizeOptions: ['10', '20', '50'], showTotal: (total) => `共 ${total} 条` }}
-                      dataSource={runningRows}
-                      columns={[
-                        { title: '商家名称', dataIndex: 'name', width: 220, render: (value: string, row: AdvertisedMerchant) => <MerchantMark name={value} logo={row.logo} merchantUrl={row.merchantUrl} /> },
-                        { title: '平台', dataIndex: 'platformCode', width: 72, render: (value: string) => platformTag(value) },
-                        { title: 'MID', dataIndex: 'mid', width: 120 },
-                        { title: '主营业务', dataIndex: 'categories', width: 140, ellipsis: true, render: (value: string) => blank(value) },
-                        { title: '在投人数', dataIndex: 'advertiserCount', width: 90, render: (value: number | undefined) => (value == null ? blank() : value) },
-                        { title: '支持地区', dataIndex: 'countryCode', width: 120, render: (value: string) => regionTags(value) },
-                        {
-                          title: '操作',
-                          width: 110,
-                          render: (_: unknown, row: AdvertisedMerchant) => (
-                            <Button type="link" size="small" disabled={!row.merchantUrl || !row.channelAccountId} onClick={() => launchAdvertised(row)}>新增广告</Button>
-                          ),
-                        },
-                      ]}
-                    />
-                  )}
-                </>
-              ),
-            },
-            {
               key: 'chargeback',
-              label: tabLabel(<AlertOutlined />, '拒付商家', 'back'),
+              label: tabLabel(<AlertOutlined />, settlementLoaded ? `拒付商家 (${chargebackRows.length})` : '拒付商家', 'back'),
               children: tab === 'chargeback' ? <ChargebackMerchantsPage /> : null,
             },
           ]}

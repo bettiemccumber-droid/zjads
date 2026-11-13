@@ -4,6 +4,7 @@ import { MerchantsModule } from '../merchants/merchants.module';
 import { AdsAutomationController } from './ads-automation.controller';
 import { AdsAutomationService, ArticlePublisher } from './ads-automation.service';
 import { AiPersonaService } from './ai-persona.service';
+import { MerchantOpsListService } from './merchant-ops-list.service';
 
 /**
  * 自动化投放框架。Google Ads 请求写入待提交队列，不改现有报表模块。
@@ -11,7 +12,7 @@ import { AiPersonaService } from './ai-persona.service';
 @Module({
   imports: [MerchantsModule],
   controllers: [AdsAutomationController],
-  providers: [AdsAutomationService, ArticlePublisher, CryptoService, AiPersonaService],
-  exports: [AiPersonaService],
+  providers: [AdsAutomationService, ArticlePublisher, CryptoService, AiPersonaService, MerchantOpsListService],
+  exports: [AiPersonaService, MerchantOpsListService],
 })
 export class AdsAutomationModule {}

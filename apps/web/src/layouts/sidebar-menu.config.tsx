@@ -124,6 +124,11 @@ export function buildAdminSidebarMenu(): MenuProps['items'] {
         <RocketOutlined />,
         <Link to="/admin/publish-sites">内容站</Link>,
       ),
+      item(
+        '/admin/merchant-lists',
+        <ShopOutlined />,
+        <Link to="/admin/merchant-lists">违规/推荐名单</Link>,
+      ),
     ]),
     group('数据中心', [
       item('/settlement', <BarChartOutlined />, <Link to="/settlement">结算查询</Link>),
@@ -174,6 +179,7 @@ export function resolveSidebarSelectedKey(pathname: string, isAdmin: boolean): s
     if (pathname.startsWith('/admin/sync')) return '/admin/sync';
     if (pathname.startsWith('/admin/ad-sources')) return '/admin/ad-sources';
     if (pathname.startsWith('/admin/publish-sites')) return '/admin/publish-sites';
+    if (pathname.startsWith('/admin/merchant-lists')) return '/admin/merchant-lists';
     if (pathname === '/admin' || pathname === '/admin/') return '/admin';
     return pathname;
   }

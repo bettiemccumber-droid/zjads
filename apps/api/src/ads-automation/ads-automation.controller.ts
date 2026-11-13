@@ -29,6 +29,7 @@ import { AuthUser, resolveOwnerUserId } from '../common/ownership.util';
 import { AdDraft, AdKeyword, AdSitelink } from './ads-automation.util';
 import { AdsAutomationService } from './ads-automation.service';
 import { AiPersonaService, PersonaScope } from './ai-persona.service';
+import { MerchantOpsListService, MerchantOpsListType } from './merchant-ops-list.service';
 
 class CreatePersonaBody {
   @IsString()
@@ -54,6 +55,41 @@ class CreatePersonaBody {
   @IsOptional()
   @IsBoolean()
   activate?: boolean;
+}
+
+class MerchantOpsListRowBody {
+  @IsString()
+  platformCode!: string;
+
+  @IsString()
+  mid!: string;
+
+  @IsOptional()
+  @IsString()
+  name?: string;
+
+  @IsOptional()
+  @IsString()
+  countryCode?: string;
+
+  @IsOptional()
+  @IsString()
+  merchantUrl?: string;
+
+  @IsOptional()
+  @IsString()
+  category?: string;
+
+  @IsOptional()
+  @IsString()
+  note?: string;
+}
+
+class ReplaceMerchantOpsListBody {
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => MerchantOpsListRowBody)
+  rows!: MerchantOpsListRowBody[];
 }
 
 class KeywordBody implements AdKeyword {
@@ -192,7 +228,33 @@ export class AdsAutomationController {
   constructor(
     private readonly ads: AdsAutomationService,
     private readonly personas: AiPersonaService,
+    private readonly merchantLists: MerchantOpsListService,
   ) {}
+
+  /** 违规/推荐运营名单。员工只读。 */
+  @Get('merchant-ops-lists/:listType')
+  async listMerchantOps(
+    @CurrentUser() user: AuthUser,
+    @Param('listType') listType: MerchantOpsListType,
+  ) {
+    return ok(await this.merchantLists.list(user.organizationId, listType));
+  }
+
+  /** 管理员整表替换违规或推荐名单。 */
+  @Post('merchant-ops-lists/:listType/replace')
+  async replaceMerchantOps(
+    @CurrentUser() user: AuthUser,
+    @Param('listType') listType: MerchantOpsListType,
+    @Body() body: ReplaceMerchantOpsListBody,
+  ) {
+    if (user.role !== UserRole.ADMIN) {
+      throw new ForbiddenException('只有管理员可以上传名单');
+    }
+    return ok(
+      await this.merchantLists.replace(user.organizationId, listType, body.rows ?? []),
+      '名单已更新',
+    );
+  }
 
   /** 当前员工可见的 AI 人设库。 */
   @Get('ai-personas')

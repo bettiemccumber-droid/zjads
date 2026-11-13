@@ -54,7 +54,8 @@ model Organization {
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 
-  users User[]
+  users            User[]
+  merchantOpsLists MerchantOpsListItem[]
 
   @@map("organizations")
 }
@@ -700,4 +701,26 @@ model UserAiPreference {
   activePersona AiPersona? @relation(fields: [activePersonaId], references: [id], onDelete: SetNull)
 
   @@map("user_ai_preferences")
+}
+
+/// 运营维护的违规/推荐商家名单。管理员整表替换上传，员工只读查看。
+model MerchantOpsListItem {
+  id             Int      @id @default(autoincrement())
+  organizationId Int      @map("organization_id")
+  listType       String   @map("list_type") @db.VarChar(16)
+  platformCode   String   @map("platform_code") @db.VarChar(50)
+  mid            String   @db.VarChar(64)
+  name           String   @default("") @db.VarChar(255)
+  countryCode    String   @default("") @map("country_code") @db.VarChar(32)
+  merchantUrl    String   @default("") @map("merchant_url") @db.VarChar(2048)
+  category       String   @default("") @db.VarChar(255)
+  note           String   @default("") @db.VarChar(500)
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@unique([organizationId, listType, platformCode, mid])
+  @@index([organizationId, listType])
+  @@map("merchant_ops_list_items")
 }

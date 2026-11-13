@@ -21,6 +21,7 @@ import AdminUserDetailPage from './pages/admin/AdminUserDetailPage';
 import AdminUserManagePage from './pages/admin/AdminUserManagePage';
 import AdminSyncPage from './pages/admin/AdminSyncPage';
 import AdminPublishSitesPage from './pages/admin/AdminPublishSitesPage';
+import AdminMerchantListsPage from './pages/admin/AdminMerchantListsPage';
 import MyMerchantsPage from './pages/ads/MyMerchantsPage';
 import AccountStatusPage from './pages/ads/AccountStatusPage';
 import ArticlesPage from './pages/ads/ArticlesPage';
@@ -125,6 +126,14 @@ export default function App() {
             element={
               <AdminRoute>
                 <AdminPublishSitesPage />
+              </AdminRoute>
+            }
+          />
+          <Route
+            path="admin/merchant-lists"
+            element={
+              <AdminRoute>
+                <AdminMerchantListsPage />
               </AdminRoute>
             }
           />

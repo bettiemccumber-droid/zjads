@@ -310,6 +310,7 @@ export function buildSampleArticle(input: {
 
 /**
  * 封面优先用商家页 https 图。正文最多插几张，避免全堆在开头。
+ * 内容站卡片封面只认 https；本地 data:image 只可进正文且最多 1 张。
  */
 export function pickArticleImages(imageUrls: string[] = []): { cover: string; body: string[] } {
   const unique = imageUrls
@@ -320,8 +321,17 @@ export function pickArticleImages(imageUrls: string[] = []): { cover: string; bo
   // 上传的 base64 太大，只留一张兜底；有远程图时正文只用远程图。
   const bodyPool = remote.length ? remote : uploaded.slice(0, 1);
   const body = bodyPool.slice(0, 4);
-  const cover = remote[0] || uploaded[0] || '';
+  // 封面必须是 https，否则内容站列表会丢掉 image，卡片空白
+  const cover = remote[0] || '';
   return { cover, body };
+}
+
+/**
+ * 从正文 HTML 里取出第一张 https 图，给内容站当卡片封面。
+ */
+export function firstHttpsImageFromHtml(html: string): string {
+  const match = html.match(/<img\b[^>]*\bsrc=["'](https?:\/\/[^"']+)["']/i);
+  return match?.[1] ?? '';
 }
 
 /**

@@ -18,6 +18,7 @@ import {
   buildSampleDraft,
   buildTrackUrl,
   acceptedArticleImage,
+  firstHttpsImageFromHtml,
   pickArticleImages,
   sampleArticleHtml,
   isCustomerEligible,
@@ -594,14 +595,21 @@ export class AdsAutomationService implements OnModuleInit {
     if (catalog.blockReason !== 'none') throw new BadRequestException('这个商家不能发文');
     const pickedImages = pickArticleImages(prepared.imageUrls);
     const body = sampleArticleHtml(prepared.sample, prepared.name, prepared.trackUrl, prepared.imageUrls);
+    const httpsBodyImages = pickedImages.body.filter((url) => /^https?:\/\//i.test(url));
+    // 内容站封面只收 https；本地上传的 base64 不会进卡片
+    const cover =
+      pickedImages.cover
+      || firstHttpsImageFromHtml(body)
+      || httpsBodyImages[0]
+      || '';
     const published = await this.publishToSite(prepared.account.site, {
       title: prepared.sample.title,
       bodyHtml: body,
       trackUrl: prepared.trackUrl,
       merchantUrl: prepared.merchantUrl,
       merchantName: prepared.name,
-      image: pickedImages.cover,
-      images: pickedImages.body.filter((url) => /^https?:\/\//i.test(url)),
+      image: cover,
+      images: httpsBodyImages,
     });
     const articleUrl = published.articleUrl.trim();
     const article = await this.prisma.$transaction(async (tx) => {

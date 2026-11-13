@@ -617,7 +617,7 @@ export default function ArticlePublishPage() {
               );
             })}
             <Typography.Paragraph type="secondary">
-              蓝色关键词会指向跟踪链接。配图插在各小节之间；上传的本地图过大时，优先用商家页抓到的网址图。
+              蓝色关键词会指向跟踪链接。配图插在各小节之间。卡片封面必须用商家页 https 图；只上传本地图时正文最多 1 张，且列表封面会空。
             </Typography.Paragraph>
             <div style={{ background: '#f6ffed', border: '1px solid #b7eb8f', borderRadius: 8, padding: 12, marginBottom: 8 }}>
               <div>跟踪链接</div>

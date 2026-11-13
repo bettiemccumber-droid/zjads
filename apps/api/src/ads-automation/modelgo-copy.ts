@@ -30,6 +30,7 @@ export async function writeAdCopy(input: {
   bidding?: 'MAXIMIZE_CLICKS' | 'MANUAL_CPC';
   dailyBudgetUsd?: string;
   cpcBidCeilingUsd?: string;
+  personaPrompt?: string;
 }): Promise<AdDraft> {
   const base = buildSampleDraft(input);
   const language = audienceLanguage(input.countryCode, input.languageCode);
@@ -38,6 +39,8 @@ export async function writeAdCopy(input: {
     `Return JSON only: {"headlines": string[3 to 8], "descriptions": string[2 to 4], "keywords": string[1 to 8], "negativeKeywords": string[0 to 8], "sitelinks": [{"linkText": string, "description1": string, "description2": string}]}.
 Limits: headline <= 30 characters, description <= 90, sitelink text <= 25, each sitelink description <= 35 and both descriptions filled or both empty.
 Do not invent prices, discounts, awards, or shipping promises. Final URL stays ${input.merchantUrl}. No URLs inside the copy.`,
+    1400,
+    input.personaPrompt,
   );
   const draft = applyAdCopy(base, raw);
   const errors = validateDraft(draft);
@@ -46,22 +49,38 @@ Do not invent prices, discounts, awards, or shipping promises. Final URL stays $
 }
 
 /**
- * 按投放国家生成文章。正文不放网址，跟踪链接由系统另加。
+ * 按投放国家生成文章。关键词用 [[affiliate:文案]] 标记，发布时换成跟踪链接。
  */
 export async function writeArticle(input: {
   merchantName: string;
   merchantUrl: string;
   countryCode: string;
   languageCode: string;
+  personaPrompt?: string;
 }): Promise<SampleArticle> {
   const language = audienceLanguage(input.countryCode, input.languageCode);
+  const brand = input.merchantName.trim() || 'the brand';
   const raw = await askJson(
-    `Write a short shopping article about ${input.merchantName} for readers in ${input.countryCode}. Language: ${language}.`,
-    `Return JSON only: {"title": string, "sections": [{"heading": string, "text": string}]}.
-Use 3 sections. Do not invent prices, ratings, medical claims, or limited-time offers. Do not include any URL. The page will add the affiliate link separately.`,
+    `Write a first-person product review blog post about ${brand} for readers in ${input.countryCode}. Language: ${language}.
+Match a medium-long personal blog style: specific, practical, a little conversational. Soft sell with natural keyword links.`,
+    `Return JSON only: {"title": string, "intro": string[2], "sections": [{"heading": string, "paragraphs": string[2 to 3]}]}.
+Requirements:
+- Title under 90 characters, natural for search readers in that country.
+- intro: exactly 2 opening paragraphs before the first heading.
+- sections: 4 or 5 sections. Each heading is concrete. Each section has 2 or 3 paragraphs of 2 to 4 sentences.
+- Include 4 to 8 affiliate keyword markers using exactly this syntax: [[affiliate:anchor text]].
+- Anchor text must be natural phrases readers would click, for example the brand name, product type, or "try ${brand}". Vary the wording. Place markers inside sentences, not as a bare list.
+- Put at least one marker in the intro and at least one near the end.
+- Do not invent prices, star ratings, medical claims, or limited-time discounts.
+- Never write real http/https URLs. Only [[affiliate:...]] markers are allowed for links.
+- Do not write generic filler like "in today's world" or "whether you are a beginner or expert".`,
+    2800,
+    input.personaPrompt,
   );
   const article = applyArticle(raw);
-  if (!article.title || article.sections.length < 2) throw new Error('模型返回的文章不完整');
+  if (!article.title || article.intro.length < 1 || article.sections.length < 3) {
+    throw new Error('模型返回的文章不完整');
+  }
   return article;
 }
 
@@ -108,40 +127,68 @@ export function applyAdCopy(base: AdDraft, raw: Record<string, unknown>): AdDraf
 }
 
 /**
- * 把模型文章收成标题和段落。
+ * 把模型文章收成开篇和分节。兼容旧的 text 字段。
  */
 export function applyArticle(raw: Record<string, unknown>): SampleArticle {
   const title = typeof raw.title === 'string' ? raw.title.trim().slice(0, 180) : '';
+  const intro = textList(raw.intro)
+    .map((text) => text.slice(0, 900))
+    .filter(Boolean)
+    .slice(0, 3);
   const sections = Array.isArray(raw.sections)
     ? raw.sections
         .map((item) => {
           if (!item || typeof item !== 'object') return null;
           const heading = typeof (item as { heading?: unknown }).heading === 'string' ? (item as { heading: string }).heading.trim() : '';
-          const text = typeof (item as { text?: unknown }).text === 'string' ? (item as { text: string }).text.trim() : '';
-          if (!heading || !text) return null;
-          return { heading: heading.slice(0, 120), text: text.slice(0, 1200) };
+          const fromParagraphs = textList((item as { paragraphs?: unknown }).paragraphs).map((text) => text.slice(0, 900));
+          const fromText = typeof (item as { text?: unknown }).text === 'string'
+            ? String((item as { text: string }).text)
+                .split(/\n{2,}/)
+                .map((text) => text.trim())
+                .filter(Boolean)
+            : [];
+          const paragraphs = (fromParagraphs.length ? fromParagraphs : fromText).slice(0, 4);
+          if (!heading || !paragraphs.length) return null;
+          return { heading: heading.slice(0, 120), paragraphs };
         })
-        .filter((item): item is { heading: string; text: string } => item != null)
+        .filter((item): item is { heading: string; paragraphs: string[] } => item != null)
         .slice(0, 6)
     : [];
-  return { title, sections };
+  return { title, intro, sections };
 }
 
 /**
  * 请求一段 JSON，并在格式不对时再问一次。
  */
-async function askJson(task: string, shape: string): Promise<Record<string, unknown>> {
-  const first = await completeModelGoChat([
-    { role: 'system', content: 'You write affiliate ads and articles. Reply with JSON only.' },
-    { role: 'user', content: `${task}\n${shape}` },
-  ]);
+async function askJson(
+  task: string,
+  shape: string,
+  maxTokens = 1400,
+  personaPrompt = '',
+): Promise<Record<string, unknown>> {
+  const system = [
+    'You write affiliate ads and personal product-review blog posts. Reply with JSON only.',
+    personaPrompt.trim(),
+  ]
+    .filter(Boolean)
+    .join('\n\n');
+  const first = await completeModelGoChat(
+    [
+      { role: 'system', content: system },
+      { role: 'user', content: `${task}\n${shape}` },
+    ],
+    { maxTokens },
+  );
   try {
     return parseModelJson(first);
   } catch {
-    const second = await completeModelGoChat([
-      { role: 'system', content: 'You write affiliate ads and articles. Reply with JSON only.' },
-      { role: 'user', content: `${task}\n${shape}\nThe previous reply was not valid JSON. Return one JSON object and nothing else.` },
-    ]);
+    const second = await completeModelGoChat(
+      [
+        { role: 'system', content: system },
+        { role: 'user', content: `${task}\n${shape}\nThe previous reply was not valid JSON. Return one JSON object and nothing else.` },
+      ],
+      { maxTokens },
+    );
     return parseModelJson(second);
   }
 }

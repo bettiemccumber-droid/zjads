@@ -37,12 +37,15 @@ export async function resolveModelGoModel(): Promise<string> {
 /**
  * 非流式对话。返回模型正文，不记录密钥。
  */
-export async function completeModelGoChat(messages: Array<{ role: 'system' | 'user'; content: string }>): Promise<string> {
+export async function completeModelGoChat(
+  messages: Array<{ role: 'system' | 'user'; content: string }>,
+  options?: { maxTokens?: number },
+): Promise<string> {
   const config = modelGoConfig();
   const model = await resolveModelGoModel();
   const response = await axios.post(
     `${config.baseUrl}/chat/completions`,
-    { model, messages, temperature: 0.4, max_tokens: 1400 },
+    { model, messages, temperature: 0.4, max_tokens: options?.maxTokens ?? 1400 },
     {
       headers: { Authorization: `Bearer ${config.apiKey}`, 'Content-Type': 'application/json' },
       timeout: 60000,

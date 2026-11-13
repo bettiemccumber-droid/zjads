@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Button, Card, Divider, Form, Input, Result, Select, Space, Spin, Steps, Tag, Typography, message } from 'antd';
-import { FileTextOutlined, LinkOutlined, WarningOutlined } from '@ant-design/icons';
+import { FileTextOutlined, LinkOutlined, UserOutlined, WarningOutlined } from '@ant-design/icons';
 import { api, type ApiResult } from '../../api/client';
+import PersonaLibraryModal from './PersonaLibraryModal';
 
 interface ChannelAccount {
   id: number;
@@ -30,11 +31,13 @@ interface MerchantOption {
 
 interface ArticleSection {
   heading: string;
-  text: string;
+  paragraphs?: string[];
+  text?: string;
 }
 
 interface ArticlePreview {
   title: string;
+  intro?: string[];
   sections: ArticleSection[];
   merchantUrl: string;
   trackUrl: string;
@@ -119,6 +122,23 @@ function languageOf(countryCode: string): { code: string; label: string } {
 }
 
 /**
+ * 预览里把关键词标记显示成可点的跟踪链接文案。
+ */
+function previewRichText(text: string, trackUrl: string) {
+  const parts = text.split(/(\[\[affiliate:[^\]]+\]\])/gi);
+  return parts.map((part, index) => {
+    const match = part.match(/^\[\[affiliate:([^\]]+)\]\]$/i);
+    if (!match) return <span key={`${index}-${part.slice(0, 12)}`}>{part}</span>;
+    const label = match[1].trim();
+    return (
+      <a key={`${index}-${label}`} href={trackUrl} target="_blank" rel="noopener noreferrer">
+        {label}
+      </a>
+    );
+  });
+}
+
+/**
  * 取出接口错误里的提示。
  */
 function errorText(error: unknown, fallback: string): string {
@@ -131,7 +151,7 @@ function errorText(error: unknown, fallback: string): string {
 }
 
 /**
- * 快速发布文章。配图从商家页面抓取，正文仍是示例，三个网址分开保存。
+ * 快速发布文章。配图从商家页面抓取，正文按投放国家生成，三个网址分开保存。
  */
 export default function ArticlePublishPage() {
   const navigate = useNavigate();
@@ -154,6 +174,7 @@ export default function ArticlePublishPage() {
   const [publishing, setPublishing] = useState(false);
   const [profileLoading, setProfileLoading] = useState(false);
   const [profileNote, setProfileNote] = useState('');
+  const [personaOpen, setPersonaOpen] = useState(false);
   const countryCode = Form.useWatch('countryCode', form) || 'US';
   const channelAccountId = Form.useWatch('channelAccountId', form);
   const language = languageOf(countryCode);
@@ -274,13 +295,17 @@ export default function ArticlePublishPage() {
 
   return (
     <div style={{ maxWidth: 980, margin: '0 auto' }}>
-      <Space style={{ marginBottom: 8 }}>
-        <FileTextOutlined />
-        <Typography.Title level={4} style={{ margin: 0 }}>快速发布文章</Typography.Title>
-      </Space>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, marginBottom: 8 }}>
+        <Space>
+          <FileTextOutlined />
+          <Typography.Title level={4} style={{ margin: 0 }}>快速发布文章</Typography.Title>
+        </Space>
+        <Button icon={<UserOutlined />} onClick={() => setPersonaOpen(true)}>AI 人设库</Button>
+      </div>
       <Typography.Paragraph type="secondary" style={{ marginBottom: 16 }}>
-        配图从商家页面抓取。正文仍是示例。文章地址、商家网址、跟踪链接分开保存。
+        配图插在各小节之间。正文按投放国家生成第一人称中长文，并在相关关键词上挂跟踪链接。文章地址、商家网址、跟踪链接分开保存。生成时会使用当前激活的人设提示词。
       </Typography.Paragraph>
+      <PersonaLibraryModal open={personaOpen} onClose={() => setPersonaOpen(false)} />
       <Steps current={step} size="small" items={STEPS.map((title) => ({ title }))} style={{ marginBottom: 20 }} />
       <Card>
         {step === 0 && (
@@ -560,23 +585,40 @@ export default function ArticlePublishPage() {
         {step === 4 && preview && (
           <div>
             <Typography.Title level={3}>{preview.title}</Typography.Title>
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 12, marginBottom: 16 }}>
-              {selectedImageUrls.map((url) => (
-                <img
-                  key={url}
-                  src={url}
-                  alt=""
-                  referrerPolicy="no-referrer"
-                  style={{ width: '100%', height: 180, objectFit: 'cover', borderRadius: 8, background: '#f5f5f5' }}
-                />
-              ))}
-            </div>
-            {preview.sections.map((section) => (
-              <div key={section.heading} style={{ marginBottom: 16 }}>
-                <Typography.Title level={5}>{section.heading}</Typography.Title>
-                <Typography.Paragraph>{section.text}</Typography.Paragraph>
-              </div>
+            {(preview.intro ?? []).map((text) => (
+              <Typography.Paragraph key={text.slice(0, 24)}>
+                {previewRichText(text, preview.trackUrl)}
+              </Typography.Paragraph>
             ))}
+            {preview.sections.map((section, index) => {
+              const image = selectedImageUrls.filter((url) => /^https?:\/\//i.test(url) || url.startsWith('data:image/'))[index];
+              const paragraphs = section.paragraphs?.length
+                ? section.paragraphs
+                : section.text
+                  ? [section.text]
+                  : [];
+              return (
+                <div key={`${section.heading}-${index}`} style={{ marginBottom: 20 }}>
+                  {image ? (
+                    <img
+                      src={image}
+                      alt=""
+                      referrerPolicy="no-referrer"
+                      style={{ width: '100%', maxHeight: 280, objectFit: 'cover', borderRadius: 8, background: '#f5f5f5', marginBottom: 12 }}
+                    />
+                  ) : null}
+                  <Typography.Title level={5}>{section.heading}</Typography.Title>
+                  {paragraphs.map((text) => (
+                    <Typography.Paragraph key={text.slice(0, 24)}>
+                      {previewRichText(text, preview.trackUrl)}
+                    </Typography.Paragraph>
+                  ))}
+                </div>
+              );
+            })}
+            <Typography.Paragraph type="secondary">
+              蓝色关键词会指向跟踪链接。配图插在各小节之间；上传的本地图过大时，优先用商家页抓到的网址图。
+            </Typography.Paragraph>
             <div style={{ background: '#f6ffed', border: '1px solid #b7eb8f', borderRadius: 8, padding: 12, marginBottom: 8 }}>
               <div>跟踪链接</div>
               <a href={preview.trackUrl} target="_blank" rel="noreferrer">{preview.trackUrl}</a>

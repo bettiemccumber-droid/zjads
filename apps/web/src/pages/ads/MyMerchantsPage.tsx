@@ -21,6 +21,7 @@ import { parseScopedViewUserId } from '../../utils/team-scope.util';
 import { lastNDaysToYesterday } from '../../utils/date-range.util';
 import { formatCustomerId, loadAdSettings, saveAdSettings, type AdLaunchSettings } from './ad-launch-settings';
 import ChargebackMerchantsPage from '../merchant-hub/ChargebackMerchantsPage';
+import PersonaLibraryModal, { fetchPersonaSummary } from './PersonaLibraryModal';
 import './MyMerchantsPage.css';
 
 interface ChannelAccount {
@@ -395,7 +396,24 @@ export default function MyMerchantsPage() {
   const [discoverLoading, setDiscoverLoading] = useState(false);
   const [claimingKey, setClaimingKey] = useState('');
   const [merchantsLoaded, setMerchantsLoaded] = useState(false);
+  const [personaOpen, setPersonaOpen] = useState(false);
+  const [personaTotal, setPersonaTotal] = useState(0);
+  const [personaUsed, setPersonaUsed] = useState(0);
+  const [activePersonaName, setActivePersonaName] = useState('');
   const loadGen = useRef(0);
+
+  const refreshPersonas = useCallback(async () => {
+    try {
+      const data = await fetchPersonaSummary();
+      if (!data) return;
+      setPersonaTotal(data.total);
+      setPersonaUsed(data.usedCount);
+      const active = data.items.find((item) => item.id === data.activePersonaId) ?? data.items[0];
+      setActivePersonaName(active?.name ?? '');
+    } catch {
+      /* 人设接口失败不挡商家列表 */
+    }
+  }, []);
 
   const load = useCallback(async () => {
     const gen = ++loadGen.current;
@@ -491,6 +509,7 @@ export default function MyMerchantsPage() {
     setEngines(loadEngines(scopeUserId));
     setHiddenMids(readHiddenMids(scopeUserId));
     void load();
+    void refreshPersonas();
     const [start, end] = lastNDaysToYesterday(90);
     setSettlementLoaded(false);
     void api.get<ApiResult<{ items: SettlementRow[] }>>('/orders/settlement/merchant-summary', {
@@ -509,7 +528,7 @@ export default function MyMerchantsPage() {
     return () => {
       loadGen.current += 1;
     };
-  }, [user, scopeUserId, viewUserId, load, settingsForm]);
+  }, [user, scopeUserId, viewUserId, load, refreshPersonas, settingsForm]);
 
   useEffect(() => {
     if (!job || job.status === 'READY_FOR_REVIEW' || job.status === 'COMPLETED' || job.status === 'FAILED') return;
@@ -787,14 +806,31 @@ export default function MyMerchantsPage() {
 
         <section className="merchant-panel merchant-panel--ai">
           <div className="merchant-panel__title"><UserOutlined /> AI 人设库</div>
-          <div className="merchant-ai__empty">还没有人设</div>
+          {activePersonaName ? (
+            <div className="merchant-ai__empty">当前：{activePersonaName}</div>
+          ) : (
+            <div className="merchant-ai__empty">还没有人设</div>
+          )}
           <div className="merchant-ai__counts">
-            <div><b>0</b><span>人设库</span></div>
-            <div><b>0</b><span>使用过</span></div>
+            <div><b>{personaTotal}</b><span>人设库</span></div>
+            <div><b>{personaUsed}</b><span>使用过</span></div>
           </div>
-          <Button size="small" className="merchant-ai__btn" icon={<UserOutlined />} onClick={() => message.info('还没有人设')}>管理人设</Button>
+          <Button size="small" className="merchant-ai__btn" icon={<UserOutlined />} onClick={() => setPersonaOpen(true)}>
+            管理人设
+          </Button>
         </section>
       </div>
+
+      <PersonaLibraryModal
+        open={personaOpen}
+        onClose={() => setPersonaOpen(false)}
+        onChanged={(data) => {
+          setPersonaTotal(data.total);
+          setPersonaUsed(data.usedCount);
+          const active = data.items.find((item) => item.id === data.activePersonaId) ?? data.items[0];
+          setActivePersonaName(active?.name ?? '');
+        }}
+      />
 
       <Card className="merchant-board">
         <Tabs

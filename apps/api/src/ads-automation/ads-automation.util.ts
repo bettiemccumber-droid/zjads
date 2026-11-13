@@ -253,7 +253,9 @@ export function validateDraft(draft: AdDraft): string[] {
 
 export interface SampleArticle {
   title: string;
-  sections: Array<{ heading: string; text: string }>;
+  /** 开篇段落，放在第一张图和第一个小标题之前。 */
+  intro: string[];
+  sections: Array<{ heading: string; paragraphs: string[] }>;
 }
 
 /**
@@ -269,43 +271,117 @@ export function buildSampleArticle(input: {
   if (input.languageCode.toLowerCase().startsWith('zh')) {
     return {
       title: `${name}：下单前先看这几件事`,
+      intro: [`这是给 [[affiliate:${name}]] 准备的示例文案，不是从商家页面抓下来的。`],
       sections: [
         {
-          heading: '先说结论',
-          text: `这是给 ${name} 准备的示例文案，不是从商家页面抓下来的。正文里的链接是联盟跟踪链接。`,
-        },
-        {
           heading: '两个网址不要混',
-          text: `广告最终到达网址是商家网址 ${input.merchantUrl}。文章里的超链接是跟踪链接，用来记录联盟点击。`,
+          paragraphs: [
+            `广告最终到达网址仍是商家网址。正文里的关键词如 [[affiliate:${name} 官网]] 才会换成跟踪链接。`,
+          ],
         },
         {
           heading: '发布之后',
-          text: '文章会先保存在这里。内容站接口接上之后，才会回写真正的文章地址。',
+          paragraphs: [`文章会先保存在这里。需要下单时再点正文里的 [[affiliate:${name}]]。`],
         },
       ],
     };
   }
   return {
     title: `A closer look at ${name}`,
+    intro: [
+      `This is sample copy for [[affiliate:${name}]]. It is not crawled from the merchant site.${input.languageCode.toLowerCase().startsWith('en') ? '' : ' The sample stays in English until a model is connected.'}`,
+    ],
     sections: [
       {
-        heading: 'What this draft is',
-        text: `This is sample copy for ${name}. It is not crawled from the merchant site. The link in the article is the affiliate track URL.${input.languageCode.toLowerCase().startsWith('en') ? '' : ' The sample stays in English until a model is connected.'}`,
-      },
-      {
         heading: 'Keep the URLs apart',
-        text: `The ad final URL stays ${input.merchantUrl}. The in-article link is the track URL, so the click can be attributed.`,
+        paragraphs: [
+          `The ad final URL stays the merchant site. In-article keywords such as [[affiliate:${name} store]] use the track URL.`,
+        ],
       },
       {
         heading: 'After you publish',
-        text: 'The article is saved here first. The content site has not returned an article address yet.',
+        paragraphs: [
+          `The article is saved here first. When you are ready, open [[affiliate:${name}]] from the body links.`,
+        ],
       },
     ],
   };
 }
 
 /**
- * 把示例正文收成 HTML。配图用商家页面上的地址，超链接只指向联盟跟踪链接。
+ * 封面优先用商家页 https 图。正文最多插几张，避免全堆在开头。
+ */
+export function pickArticleImages(imageUrls: string[] = []): { cover: string; body: string[] } {
+  const unique = imageUrls
+    .map((url) => url.trim())
+    .filter((url, index, all) => acceptedArticleImage(url) && all.indexOf(url) === index);
+  const remote = unique.filter((url) => /^https?:\/\//i.test(url));
+  const uploaded = unique.filter((url) => url.startsWith('data:image/'));
+  // 上传的 base64 太大，只留一张兜底；有远程图时正文只用远程图。
+  const bodyPool = remote.length ? remote : uploaded.slice(0, 1);
+  const body = bodyPool.slice(0, 4);
+  const cover = remote[0] || uploaded[0] || '';
+  return { cover, body };
+}
+
+/**
+ * 段落里的 [[affiliate:关键词]] 换成跟踪链接。真实 http 链接会被丢掉，只保留锚点文案。
+ */
+export function renderAffiliateText(text: string, trackUrl: string): string {
+  const cleaned = text.replace(/https?:\/\/\S+/gi, '').trim();
+  const pattern = /\[\[affiliate:([^\]]+)\]\]/gi;
+  let html = '';
+  let last = 0;
+  let match: RegExpExecArray | null;
+  while ((match = pattern.exec(cleaned)) !== null) {
+    html += escapeHtml(cleaned.slice(last, match.index));
+    const label = match[1].replace(/\s+/g, ' ').trim().slice(0, 80);
+    if (label) {
+      html += `<a href="${escapeHtml(trackUrl)}" class="link--affiliate" target="_blank" rel="noopener sponsored">${escapeHtml(label)}</a>`;
+    }
+    last = match.index + match[0].length;
+  }
+  html += escapeHtml(cleaned.slice(last));
+  return html;
+}
+
+/**
+ * 模型没标关键词时，至少把商家名嵌进开篇和收尾。
+ */
+export function ensureAffiliateMarkers(article: SampleArticle, merchantName: string): SampleArticle {
+  const brand = merchantName.trim() || 'this store';
+  const marker = `[[affiliate:${brand}]]`;
+  const countMarkers = (text: string) => (text.match(/\[\[affiliate:[^\]]+\]\]/gi) || []).length;
+  let total = [...article.intro, ...article.sections.flatMap((section) => section.paragraphs)].reduce(
+    (sum, text) => sum + countMarkers(text),
+    0,
+  );
+  if (total >= 3) return article;
+
+  const inject = (text: string) => {
+    if (countMarkers(text) > 0) return text;
+    const index = text.toLowerCase().indexOf(brand.toLowerCase());
+    if (index >= 0) {
+      return `${text.slice(0, index)}${marker}${text.slice(index + brand.length)}`;
+    }
+    return `${text} ${marker}`.trim();
+  };
+
+  const intro = article.intro.length ? article.intro.map((text, index) => (index === 0 ? inject(text) : text)) : [marker];
+  const sections = article.sections.map((section, index) => {
+    if (index !== article.sections.length - 1) return section;
+    const paragraphs = section.paragraphs.length
+      ? section.paragraphs.map((text, paragraphIndex) => (
+          paragraphIndex === section.paragraphs.length - 1 ? inject(text) : text
+        ))
+      : [`Learn more at ${marker}.`];
+    return { ...section, paragraphs };
+  });
+  return { ...article, intro, sections };
+}
+
+/**
+ * 把文章收成博客正文。配图插在段落之间，关键词锚点指向跟踪链接。
  */
 export function sampleArticleHtml(
   article: SampleArticle,
@@ -313,16 +389,31 @@ export function sampleArticleHtml(
   trackUrl: string,
   imageUrls: string[] = [],
 ): string {
-  const figures = imageUrls
-    .map((url) => url.trim())
-    .filter((url, index, all) => acceptedArticleImage(url) && all.indexOf(url) === index)
-    .slice(0, 8)
-    .map((url) => `<p><img src="${escapeHtml(url)}" alt=""></p>`)
+  const prepared = ensureAffiliateMarkers(article, merchantName);
+  const { body: figures } = pickArticleImages(imageUrls);
+  const intro = (prepared.intro?.length ? prepared.intro : [])
+    .map((text) => `<p>${renderAffiliateText(text, trackUrl)}</p>`)
     .join('');
-  const blocks = article.sections
-    .map((section) => `<h2>${escapeHtml(section.heading)}</h2><p>${escapeHtml(section.text)}</p>`)
-    .join('');
-  return `${figures}${blocks}<p><a href="${escapeHtml(trackUrl)}">${escapeHtml(merchantName)}</a></p>`;
+  const sections = prepared.sections ?? [];
+  const blocks: string[] = [];
+  if (intro) blocks.push(intro);
+  sections.forEach((section, index) => {
+    if (figures[index]) {
+      blocks.push(
+        `<figure><img src="${escapeHtml(figures[index])}" alt="${escapeHtml(section.heading || merchantName)}" loading="lazy"></figure>`,
+      );
+    }
+    if (section.heading) blocks.push(`<h2>${escapeHtml(section.heading)}</h2>`);
+    (section.paragraphs ?? []).forEach((text) => {
+      if (text.trim()) blocks.push(`<p>${renderAffiliateText(text.trim(), trackUrl)}</p>`);
+    });
+  });
+  if (figures.length > sections.length) {
+    figures.slice(sections.length).forEach((url) => {
+      blocks.push(`<figure><img src="${escapeHtml(url)}" alt="" loading="lazy"></figure>`);
+    });
+  }
+  return blocks.join('');
 }
 
 /**

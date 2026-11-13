@@ -28,6 +28,33 @@ import { ok } from '../common/api-response';
 import { AuthUser, resolveOwnerUserId } from '../common/ownership.util';
 import { AdDraft, AdKeyword, AdSitelink } from './ads-automation.util';
 import { AdsAutomationService } from './ads-automation.service';
+import { AiPersonaService, PersonaScope } from './ai-persona.service';
+
+class CreatePersonaBody {
+  @IsString()
+  name!: string;
+
+  @IsOptional()
+  @IsString()
+  summary?: string;
+
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  tags?: string[];
+
+  @IsOptional()
+  @IsString()
+  systemPrompt?: string;
+
+  @IsOptional()
+  @IsIn(['ads', 'article', 'both'])
+  scope?: PersonaScope;
+
+  @IsOptional()
+  @IsBoolean()
+  activate?: boolean;
+}
 
 class KeywordBody implements AdKeyword {
   @IsString()
@@ -162,7 +189,48 @@ class ArticlePublishBody {
 @Controller()
 @UseGuards(AuthGuard('jwt'))
 export class AdsAutomationController {
-  constructor(private readonly ads: AdsAutomationService) {}
+  constructor(
+    private readonly ads: AdsAutomationService,
+    private readonly personas: AiPersonaService,
+  ) {}
+
+  /** 当前员工可见的 AI 人设库。 */
+  @Get('ai-personas')
+  async listPersonas(@CurrentUser() user: AuthUser) {
+    return ok(await this.personas.listForUser(user.id));
+  }
+
+  /** 新建人设；默认创建后激活。提示词可空，空则继承 Adrian。 */
+  @Post('ai-personas')
+  async createPersona(@CurrentUser() user: AuthUser, @Body() body: CreatePersonaBody) {
+    this.assertWriter(user);
+    const activate = body.activate !== false;
+    return ok(
+      await this.personas.create(user.id, {
+        name: body.name,
+        summary: body.summary,
+        tags: body.tags ?? [],
+        systemPrompt: body.systemPrompt,
+        scope: body.scope,
+        activate,
+      }),
+      activate ? '人设已创建并激活' : '人设已创建',
+    );
+  }
+
+  /** 激活人设，之后生成广告/文章会带上其提示词。 */
+  @Post('ai-personas/:id/activate')
+  async activatePersona(@CurrentUser() user: AuthUser, @Param('id', ParseIntPipe) id: number) {
+    this.assertWriter(user);
+    return ok(await this.personas.activate(user.id, id), '已激活');
+  }
+
+  /** 删除自己建的人设。 */
+  @Delete('ai-personas/:id')
+  async removePersona(@CurrentUser() user: AuthUser, @Param('id', ParseIntPipe) id: number) {
+    this.assertWriter(user);
+    return ok(await this.personas.remove(user.id, id), '人设已删除');
+  }
 
   @Get('publish-sites')
   async listSites() {

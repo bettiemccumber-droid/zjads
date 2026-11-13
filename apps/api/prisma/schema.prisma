@@ -86,6 +86,8 @@ model User {
   googleAdsConnections  GoogleAdsConnection[]
   adJobs                AdJob[]
   adAutomationCampaigns AdAutomationCampaign[]
+  aiPersonas            AiPersona[]
+  aiPreference          UserAiPreference?
 
   @@index([organizationId])
   @@index([reportsToId])
@@ -665,4 +667,37 @@ model AdsOutbox {
 
   @@index([campaignId])
   @@map("ads_outbox")
+}
+
+/// AI 人设。ownerUserId 为空的是系统内置，员工可新建自己的人设。
+model AiPersona {
+  id           Int      @id @default(autoincrement())
+  ownerUserId  Int?     @map("owner_user_id")
+  name         String   @db.VarChar(120)
+  summary      String   @db.VarChar(500)
+  tags         Json
+  systemPrompt String   @map("system_prompt") @db.MediumText
+  scope        String   @default("both") @db.VarChar(16)
+  builtin      Boolean  @default(false)
+  useCount     Int      @default(0) @map("use_count")
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  owner        User?              @relation(fields: [ownerUserId], references: [id], onDelete: Cascade)
+  preferences  UserAiPreference[]
+
+  @@index([ownerUserId])
+  @@index([builtin])
+  @@map("ai_personas")
+}
+
+/// 每个员工当前激活的人设。
+model UserAiPreference {
+  userId          Int @id @map("user_id")
+  activePersonaId Int? @map("active_persona_id")
+
+  user          User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  activePersona AiPersona? @relation(fields: [activePersonaId], references: [id], onDelete: SetNull)
+
+  @@map("user_ai_preferences")
 }

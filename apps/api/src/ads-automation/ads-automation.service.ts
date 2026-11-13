@@ -18,12 +18,14 @@ import {
   buildSampleDraft,
   buildTrackUrl,
   acceptedArticleImage,
+  pickArticleImages,
   sampleArticleHtml,
   isCustomerEligible,
   usdToMicros,
   validateDraft,
 } from './ads-automation.util';
 import { crawlMerchantImages } from './merchant-page-images';
+import { AiPersonaService } from './ai-persona.service';
 import { writeAdCopy, writeArticle } from './modelgo-copy';
 import { modelGoConfig } from './modelgo.client';
 import { buildCreateCampaignPayload } from './mutate-payload';
@@ -36,6 +38,8 @@ interface SitePublishInput {
   trackUrl: string;
   merchantUrl: string;
   merchantName: string;
+  image?: string;
+  images?: string[];
 }
 
 /**
@@ -65,6 +69,8 @@ export class ArticlePublisher {
           trackUrl: input.trackUrl,
           merchantUrl: input.merchantUrl,
           merchantName: input.merchantName,
+          image: input.image?.trim() || '',
+          images: (input.images ?? []).filter((url) => /^https?:\/\//i.test(url)).slice(0, 8),
           category: 'Product Review',
           author: 'Alex Jius',
         },
@@ -125,6 +131,7 @@ export class AdsAutomationService implements OnModuleInit {
     private readonly articles: ArticlePublisher,
     private readonly merchants: MerchantsService,
     private readonly crypto: CryptoService,
+    private readonly personas: AiPersonaService,
   ) {}
 
   /**
@@ -527,6 +534,7 @@ export class AdsAutomationService implements OnModuleInit {
     const prepared = await this.prepareComposedArticle(ownerUserId, input);
     return {
       title: prepared.sample.title,
+      intro: prepared.sample.intro,
       sections: prepared.sample.sections,
       merchantUrl: prepared.merchantUrl,
       trackUrl: prepared.trackUrl,
@@ -569,6 +577,7 @@ export class AdsAutomationService implements OnModuleInit {
       update: {},
     });
     if (catalog.blockReason !== 'none') throw new BadRequestException('这个商家不能发文');
+    const pickedImages = pickArticleImages(prepared.imageUrls);
     const body = sampleArticleHtml(prepared.sample, prepared.name, prepared.trackUrl, prepared.imageUrls);
     const published = await this.publishToSite(prepared.account.site, {
       title: prepared.sample.title,
@@ -576,6 +585,8 @@ export class AdsAutomationService implements OnModuleInit {
       trackUrl: prepared.trackUrl,
       merchantUrl: prepared.merchantUrl,
       merchantName: prepared.name,
+      image: pickedImages.cover,
+      images: pickedImages.body.filter((url) => /^https?:\/\//i.test(url)),
     });
     const articleUrl = published.articleUrl.trim();
     const article = await this.prisma.$transaction(async (tx) => {
@@ -618,6 +629,7 @@ export class AdsAutomationService implements OnModuleInit {
     return {
       id: article.id,
       title: article.title,
+      intro: prepared.sample.intro,
       sections: prepared.sample.sections,
       merchantUrl: article.merchantUrl,
       trackUrl: article.trackUrl,
@@ -1317,6 +1329,7 @@ export class AdsAutomationService implements OnModuleInit {
         await this.addEvent(jobId, 'RUNNING', step, message);
       }
       const language = input.languageCode || 'en';
+      const personaPrompt = useModel ? await this.personas.activePrompt(job.ownerUserId, 'ads') : '';
       const draft = useModel
         ? await writeAdCopy({
             merchantName: input.merchantName,
@@ -1326,6 +1339,7 @@ export class AdsAutomationService implements OnModuleInit {
             bidding: input.bidding,
             dailyBudgetUsd: input.dailyBudgetUsd,
             cpcBidCeilingUsd: input.cpcBidCeilingUsd,
+            personaPrompt,
           })
         : buildSampleDraft({
             merchantName: input.merchantName,
@@ -1336,6 +1350,7 @@ export class AdsAutomationService implements OnModuleInit {
             dailyBudgetUsd: input.dailyBudgetUsd,
             cpcBidCeilingUsd: input.cpcBidCeilingUsd,
           });
+      if (useModel) await this.personas.markUsed(job.ownerUserId);
       await this.prisma.adJob.update({
         where: { id: jobId },
         data: {
@@ -1438,7 +1453,15 @@ export class AdsAutomationService implements OnModuleInit {
 
   private publishToSite(
     site: { publishUrl: string; publishTokenEnc: string },
-    article: { title: string; bodyHtml: string; trackUrl: string; merchantUrl: string; merchantName: string },
+    article: {
+      title: string;
+      bodyHtml: string;
+      trackUrl: string;
+      merchantUrl: string;
+      merchantName: string;
+      image?: string;
+      images?: string[];
+    },
   ) {
     return this.articles.publish({
       publishUrl: site.publishUrl,
@@ -1448,6 +1471,8 @@ export class AdsAutomationService implements OnModuleInit {
       trackUrl: article.trackUrl,
       merchantUrl: article.merchantUrl,
       merchantName: article.merchantName,
+      image: article.image,
+      images: article.images,
     });
   }
 
@@ -1518,9 +1543,18 @@ export class AdsAutomationService implements OnModuleInit {
   /**
    * 模型失败时把原因交给页面，避免只显示 Internal server error。
    */
-  private async articleFromModel(merchantName: string, merchantUrl: string, countryCode: string, languageCode: string) {
+  private async articleFromModel(
+    ownerUserId: number,
+    merchantName: string,
+    merchantUrl: string,
+    countryCode: string,
+    languageCode: string,
+  ) {
     try {
-      return await writeArticle({ merchantName, merchantUrl, countryCode, languageCode });
+      const personaPrompt = await this.personas.activePrompt(ownerUserId, 'article');
+      const article = await writeArticle({ merchantName, merchantUrl, countryCode, languageCode, personaPrompt });
+      await this.personas.markUsed(ownerUserId);
+      return article;
     } catch (error) {
       throw new BadRequestException(error instanceof Error ? error.message : '生成文章失败');
     }
@@ -1554,7 +1588,7 @@ export class AdsAutomationService implements OnModuleInit {
     const languageCode = input.languageCode.trim() || 'en';
     const trackUrl = buildTrackUrl(account.platform.code, merchantUrl, account.trackLinkPrefix);
     const sample = modelGoConfig().enabled
-      ? await this.articleFromModel(name, merchantUrl, countryCode, languageCode)
+      ? await this.articleFromModel(ownerUserId, name, merchantUrl, countryCode, languageCode)
       : buildSampleArticle({ merchantName: name, merchantUrl, trackUrl, languageCode });
     const imageUrls = (input.imageUrls ?? [])
       .map((url) => url.trim())

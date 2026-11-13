@@ -1,5 +1,6 @@
+import { useEffect, useState } from 'react';
 import { Layout, Menu, Tag, Typography } from 'antd';
-import { LogoutOutlined } from '@ant-design/icons';
+import { LeftOutlined, LogoutOutlined, RightOutlined } from '@ant-design/icons';
 import { Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../hooks/useAuth';
 import TeamMemberScopeSelect from '../components/TeamMemberScopeSelect';
@@ -12,25 +13,62 @@ import './AppLayout.css';
 
 const { Header, Sider, Content } = Layout;
 
+const COLLAPSE_KEY = 'zjads.sidebar.collapsed';
+
+/**
+ * 主框架：侧边栏可收起，状态记在本机。
+ */
 export default function AppLayout() {
   const { user, logout, isAdmin, isTeamLead } = useAuth();
   const location = useLocation();
   const navigate = useNavigate();
+  const [collapsed, setCollapsed] = useState(() => {
+    try {
+      return localStorage.getItem(COLLAPSE_KEY) === '1';
+    } catch {
+      return false;
+    }
+  });
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(COLLAPSE_KEY, collapsed ? '1' : '0');
+    } catch {
+      /* ignore */
+    }
+  }, [collapsed]);
 
   const items = isAdmin ? buildAdminSidebarMenu() : buildEmployeeSidebarMenu();
   const selectedKey = resolveSidebarSelectedKey(location.pathname, isAdmin);
 
   return (
-    <Layout style={{ minHeight: '100vh' }}>
-      <Sider width={220} theme="dark">
-        <div style={{ padding: 16, color: '#fff', fontWeight: 700, fontSize: 18 }}>ZJADS</div>
+    <Layout className="app-shell" style={{ minHeight: '100vh' }}>
+      <Sider
+        className="app-sider"
+        width={220}
+        collapsedWidth={64}
+        collapsible
+        collapsed={collapsed}
+        trigger={null}
+        theme="dark"
+      >
+        <div className="app-sider__brand">{collapsed ? 'ZJ' : 'ZJADS'}</div>
         <Menu
           theme="dark"
           mode="inline"
           className="app-sider-menu"
+          inlineCollapsed={collapsed}
           selectedKeys={[selectedKey]}
           items={items}
         />
+        <button
+          type="button"
+          className="app-sider__collapse"
+          aria-label={collapsed ? '展开侧边栏' : '收起侧边栏'}
+          onClick={() => setCollapsed((current) => !current)}
+        >
+          {collapsed ? <RightOutlined /> : <LeftOutlined />}
+        </button>
       </Sider>
       <Layout>
         <Header

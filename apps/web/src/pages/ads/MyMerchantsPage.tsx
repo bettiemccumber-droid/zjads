@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { Alert, Button, Card, Checkbox, Form, Input, Modal, Popconfirm, Select, Space, Spin, Switch, Table, Tabs, Tag, Tooltip, Typography, message } from 'antd';
+import { Alert, Button, Card, Checkbox, Form, Input, Modal, Popconfirm, Radio, Select, Space, Spin, Switch, Table, Tabs, Tag, Tooltip, Typography, message } from 'antd';
 import {
   AlertOutlined,
   CalendarOutlined,
@@ -799,7 +799,7 @@ export default function MyMerchantsPage() {
       count: visibleAdvertised.length,
       label: '可投放',
       foot: merchantsLoaded
-        ? `已启用 ${enabledCount} · 已暂停 ${visibleAdvertised.length - enabledCount}`
+        ? `在投广告 ${enabledCount} 个商家 · 平台 ${platformCounts.length} 个`
         : '正在加载商家',
       chips: 'platforms' as const,
     };
@@ -819,7 +819,10 @@ export default function MyMerchantsPage() {
     chargebackRows.length,
     visibleAdvertised.length,
     enabledCount,
+    platformCounts.length,
   ]);
+
+  const engineMode = engines.singleProduct ? 'singleProduct' : engines.landingProof ? 'landingProof' : 'none';
 
   return (
     <div className="merchant-page">
@@ -834,7 +837,7 @@ export default function MyMerchantsPage() {
       </div>
 
       <div className="merchant-dash">
-        <section className="merchant-panel">
+        <section className="merchant-panel merchant-panel--stat">
           <div className="merchant-panel__title"><ShopOutlined /> {boardSummary.title}</div>
           <div className="merchant-stat__num">
             {boardSummary.loaded ? boardSummary.count.toLocaleString('en-US') : <Spin size="small" />}
@@ -880,69 +883,101 @@ export default function MyMerchantsPage() {
             </Button>
           </div>
           <Form form={settingsForm} component="div" className="merchant-settings">
-            <div className="merchant-setting-line">
-              <span>出价策略</span>
-              <Form.Item name="bidding" noStyle>
-                <Select size="small" options={[
-                  { value: 'MAXIMIZE_CLICKS', label: '尽可能多的点击' },
-                  { value: 'MANUAL_CPC', label: '手动 CPC' },
-                ]} />
-              </Form.Item>
-              <span className="merchant-ecpc">eCPC <Switch size="small" checked={engines.ecpc} onChange={(checked) => persistEngines({ ...engines, ecpc: checked })} /></span>
-              <span>CPC($)</span>
+            <div className="merchant-setting-row">
+              <span className="merchant-setting-row__label">出价策略</span>
+              <div className="merchant-setting-row__body merchant-setting-row__body--split">
+                <Form.Item name="bidding" noStyle>
+                  <Select
+                    size="small"
+                    className="merchant-setting-row__select"
+                    options={[
+                      { value: 'MAXIMIZE_CLICKS', label: '尽可能多的点击' },
+                      { value: 'MANUAL_CPC', label: '手动 CPC' },
+                    ]}
+                  />
+                </Form.Item>
+                <span className="merchant-ecpc">
+                  eCPC
+                  <Switch size="small" checked={engines.ecpc} onChange={(checked) => persistEngines({ ...engines, ecpc: checked })} />
+                </span>
+              </div>
+            </div>
+            <div className="merchant-setting-row">
+              <span className="merchant-setting-row__label">CPC($)</span>
               <Form.Item name="cpcBidCeilingUsd" noStyle rules={[{ required: true, message: '填写最高 CPC' }]}>
-                <Input size="small" />
+                <Input size="small" className="merchant-setting-row__input" />
               </Form.Item>
             </div>
-            <div className="merchant-setting-line">
-              <span>日预算($)</span>
+            <div className="merchant-setting-row">
+              <span className="merchant-setting-row__label">日预算($)</span>
               <Form.Item name="dailyBudgetUsd" noStyle rules={[{ required: true, message: '填写日预算' }]}>
-                <Input size="small" />
+                <Input size="small" className="merchant-setting-row__input" />
               </Form.Item>
-              <span>投放网络</span>
+            </div>
+            <div className="merchant-setting-row">
+              <span className="merchant-setting-row__label">投放网络</span>
               <span className="merchant-nets">
                 <Checkbox checked disabled>搜索</Checkbox>
                 <Checkbox disabled>合作伙伴</Checkbox>
                 <Checkbox disabled>展示</Checkbox>
               </span>
             </div>
-            <div className="merchant-setting-line">
-              <span>竞价规则</span>
-              <span className="merchant-blank">—</span>
-              <span>欧盟政治广告</span>
-              <Tag className="merchant-eu">不含</Tag>
+            <div className="merchant-setting-row">
+              <span className="merchant-setting-row__label">国家 / 语言</span>
+              <div className="merchant-setting-row__body merchant-setting-row__body--split">
+                <Form.Item name="targetCountry" noStyle rules={[{ required: true, message: '填写国家' }]}>
+                  <Input size="small" className="merchant-setting-row__input" placeholder="US" />
+                </Form.Item>
+                <Form.Item name="languageCode" noStyle>
+                  <Input size="small" className="merchant-setting-row__input" placeholder="en" />
+                </Form.Item>
+              </div>
             </div>
-            <div className="merchant-setting-line">
-              <span>国家</span>
-              <Form.Item name="targetCountry" noStyle rules={[{ required: true, message: '填写国家' }]}>
-                <Input size="small" />
-              </Form.Item>
-              <span>语言</span>
-              <Form.Item name="languageCode" noStyle>
-                <Input size="small" />
-              </Form.Item>
-              <span>金额</span>
-              <span className="merchant-blank">—</span>
+            <div className="merchant-setting-row">
+              <span className="merchant-setting-row__label">欧盟政治广告</span>
+              <Tag className="merchant-eu">不含</Tag>
             </div>
           </Form>
         </section>
 
-        <section className="merchant-panel">
+        <section className="merchant-panel merchant-panel--engine">
           <div className="merchant-panel__title"><ThunderboltOutlined /> 上广告引擎</div>
-          <div className="merchant-engine">
-            <div>
-              <div className="merchant-engine__name"><SearchOutlined /> 落地页证明引导</div>
-              <div className="merchant-engine__text">只记在这台电脑。新建广告时还不会读取。</div>
-            </div>
-            <Switch size="small" checked={engines.landingProof} onChange={(checked) => persistEngines({ ...engines, landingProof: checked })} />
-          </div>
-          <div className="merchant-engine">
-            <div>
-              <div className="merchant-engine__name"><ThunderboltOutlined className="merchant-engine__bolt" /> 单品同投引擎</div>
-              <div className="merchant-engine__text">只记在这台电脑。新建广告时还不会读取。</div>
-            </div>
-            <Switch size="small" checked={engines.singleProduct} onChange={(checked) => persistEngines({ ...engines, singleProduct: checked })} />
-          </div>
+          <Radio.Group
+            className="merchant-engine-group"
+            value={engineMode}
+            onChange={(event) => {
+              const value = event.target.value as 'none' | 'landingProof' | 'singleProduct';
+              persistEngines({
+                ...engines,
+                landingProof: value === 'landingProof',
+                singleProduct: value === 'singleProduct',
+              });
+            }}
+          >
+            <label className={`merchant-engine-card${engineMode === 'landingProof' ? ' is-active' : ''}`}>
+              <Radio value="landingProof" />
+              <span>
+                <span className="merchant-engine__name"><SearchOutlined /> 落地页证明引导</span>
+                <span className="merchant-engine__text">只记在这台电脑。新建广告时还不会读取。</span>
+              </span>
+            </label>
+            <label className={`merchant-engine-card${engineMode === 'singleProduct' ? ' is-active' : ''}`}>
+              <Radio value="singleProduct" />
+              <span>
+                <span className="merchant-engine__name"><ThunderboltOutlined className="merchant-engine__bolt" /> 单品同投引擎</span>
+                <span className="merchant-engine__text">只记在这台电脑。新建广告时还不会读取。</span>
+              </span>
+            </label>
+            <Button
+              type="link"
+              size="small"
+              className="merchant-engine-clear"
+              disabled={engineMode === 'none'}
+              onClick={() => persistEngines({ ...engines, landingProof: false, singleProduct: false })}
+            >
+              清除选择
+            </Button>
+          </Radio.Group>
         </section>
 
         <section className="merchant-panel merchant-panel--ai">

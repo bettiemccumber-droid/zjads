@@ -50,6 +50,7 @@ interface SitePublishInput {
 export class ArticlePublisher {
   /**
    * 向内容站提交一篇文章，并取回公开地址。
+   * Vercel Blob 偶发 ETag mismatch 时自动重试几次。
    */
   async publish(input: SitePublishInput): Promise<{ articleUrl: string }> {
     const publishUrl = input.publishUrl.trim();
@@ -58,40 +59,54 @@ export class ArticlePublisher {
     const title = input.title.trim();
     const bodyHtml = input.bodyHtml.trim();
     if (!title || !bodyHtml) throw new BadRequestException('文章标题和正文不能为空');
-    let response;
-    try {
-      response = await axios.post(
-        publishUrl,
-        {
-          title,
-          bodyHtml,
-          excerpt: excerptFromHtml(bodyHtml),
-          trackUrl: input.trackUrl,
-          merchantUrl: input.merchantUrl,
-          merchantName: input.merchantName,
-          image: input.image?.trim() || '',
-          images: (input.images ?? []).filter((url) => /^https?:\/\//i.test(url)).slice(0, 8),
-          category: 'Product Review',
-          author: 'Alex Jius',
-        },
-        {
+
+    const payload = {
+      title,
+      bodyHtml,
+      excerpt: excerptFromHtml(bodyHtml),
+      trackUrl: input.trackUrl,
+      merchantUrl: input.merchantUrl,
+      merchantName: input.merchantName,
+      image: input.image?.trim() || '',
+      images: (input.images ?? []).filter((url) => /^https?:\/\//i.test(url)).slice(0, 8),
+      category: 'Product Review',
+      author: 'Alex Jius',
+    };
+
+    const maxAttempts = 3;
+    let lastDetail = '';
+    for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+      let response;
+      try {
+        response = await axios.post(publishUrl, payload, {
           headers: {
             Authorization: `Bearer ${token}`,
             'Content-Type': 'application/json',
+            // 避免中间层把重试当成同一条件写
+            'X-Idempotency-Key': `${Date.now()}-${attempt}-${Math.random().toString(36).slice(2, 10)}`,
           },
-          timeout: 20000,
+          timeout: 30000,
           validateStatus: () => true,
-        },
-      );
-    } catch (error) {
-      const message = error instanceof Error ? error.message : '内容站没有响应';
-      throw new BadRequestException(`内容站没有响应：${message}`);
+        });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : '内容站没有响应';
+        throw new BadRequestException(`内容站没有响应：${message}`);
+      }
+      if (response.status >= 200 && response.status < 300) {
+        return { articleUrl: readPublishedUrl(response.data) };
+      }
+      lastDetail = publishErrorText(response.data) || `HTTP ${response.status}`;
+      if (attempt < maxAttempts && isTransientBlobConflict_(lastDetail)) {
+        await sleepMs_(400 * attempt);
+        continue;
+      }
+      break;
     }
-    if (response.status < 200 || response.status >= 300) {
-      const detail = publishErrorText(response.data);
-      throw new BadRequestException(detail ? `内容站拒绝了这篇文章：${detail}` : `内容站拒绝了这篇文章（${response.status}）`);
-    }
-    return { articleUrl: readPublishedUrl(response.data) };
+    throw new BadRequestException(
+      isTransientBlobConflict_(lastDetail)
+        ? `内容站存储冲突（可再点一次发布）：${lastDetail}`
+        : `内容站拒绝了这篇文章：${lastDetail}`,
+    );
   }
 
   /**
@@ -1813,4 +1828,13 @@ function publishErrorText(data: unknown): string {
     if (Array.isArray(message)) return message.map((item) => String(item)).join('；').slice(0, 200);
   }
   return '';
+}
+
+/** Vercel Blob 条件写冲突，重试往往能过 */
+function isTransientBlobConflict_(detail: string) {
+  return /etag\s*mismatch|precondition failed|412|conflict/i.test(detail);
+}
+
+function sleepMs_(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }

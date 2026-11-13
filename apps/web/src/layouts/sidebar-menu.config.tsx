@@ -32,7 +32,7 @@ function group(label: string, children: MenuItem[]): MenuItem {
   return { type: 'group', label, children };
 }
 
-/** 员工 / 组长侧边栏（分组参考竞品：商家管理 · 数据中心 · 账户配置） */
+/** 员工 / 组长侧边栏（分组：商家管理 · 数据中心 · 文章管理 · 账户配置） */
 export function buildEmployeeSidebarMenu(): MenuProps['items'] {
   return [
     group('商家管理', [
@@ -52,7 +52,22 @@ export function buildEmployeeSidebarMenu(): MenuProps['items'] {
         <Link to="/merchants/chargebacks">拒付商家</Link>,
       ),
     ]),
-    group('投放', [
+    group('数据中心', [
+      item(
+        '/dashboard',
+        <DashboardOutlined />,
+        <Link to="/dashboard">数据采集</Link>,
+      ),
+      item(
+        '/settlement',
+        <BarChartOutlined />,
+        <Link to="/settlement">结算查询</Link>,
+      ),
+      item(
+        '/settlement-report',
+        <FileExcelOutlined />,
+        <Link to="/settlement-report">结算报表</Link>,
+      ),
       item(
         '/ads/accounts',
         <IdcardOutlined />,
@@ -69,23 +84,6 @@ export function buildEmployeeSidebarMenu(): MenuProps['items'] {
         '/ads/articles',
         <FileTextOutlined />,
         <Link to="/ads/articles">文章管理</Link>,
-      ),
-    ]),
-    group('数据中心', [
-      item(
-        '/dashboard',
-        <DashboardOutlined />,
-        <Link to="/dashboard">数据采集</Link>,
-      ),
-      item(
-        '/settlement',
-        <BarChartOutlined />,
-        <Link to="/settlement">结算查询</Link>,
-      ),
-      item(
-        '/settlement-report',
-        <FileExcelOutlined />,
-        <Link to="/settlement-report">结算报表</Link>,
       ),
     ]),
     group('账户配置', [

@@ -24,6 +24,8 @@ import {
   validateDraft,
 } from './ads-automation.util';
 import { crawlMerchantImages } from './merchant-page-images';
+import { writeAdCopy, writeArticle } from './modelgo-copy';
+import { modelGoConfig } from './modelgo.client';
 import { buildCreateCampaignPayload } from './mutate-payload';
 
 interface SitePublishInput {
@@ -207,7 +209,13 @@ export class AdsAutomationService implements OnModuleInit {
   }
 
   /**
-   * 当前员工名下的子账号。已登记的 MCC 账户带 Google 状态；其余来自已导入日报，先把 CID 和在投系列显示出来。
+   * 当前员工名下的子账号。已登记的 MCC 账户带保存的 Google 状态；其余来自已导入日报。
+   *
+   * 接入 Google Ads API 时必须改这个方法，不能只接广告创建：
+   * 用 MCC 的 customer_client 列出当前子账号，不再把日报里出现过的全部 CID 都算进来。
+   * login-customer-id 用这个 CID 所属的 MCC。一个员工可以有多个 MCC，各自用自己的 refresh token。
+   * 回填账户状态 ENABLED、SUSPENDED、CANCELED、CLOSED，替换现在的「未回传」。
+   * 在投系列改读接口里的当前系列状态，不再只用日报最近一天。版本用 v26。在此之前不要发 Google 请求。
    */
   async listAccountBoard(ownerUserId: number) {
     const connections = await this.prisma.googleAdsConnection.findMany({
@@ -769,7 +777,59 @@ export class AdsAutomationService implements OnModuleInit {
       logoItems,
       includeLogos ? undefined : { cacheOnly: true },
     );
-    return listed.map((row) => ({ ...row, logo: lookedUp.logos.get(row.mid) || '' }));
+    const offers = this.merchants.readCachedOffers(listed.map((row) => row.mid));
+    const advertiserCounts = await this.countLatestAdvertisers(listed.map((row) => row.mid));
+    return listed.map((row) => {
+      const offer = offers.get(row.mid);
+      return {
+        ...row,
+        logo: lookedUp.logos.get(row.mid) || '',
+        categories: offer?.categories || '',
+        commRate: offer?.commRate || '',
+        advertiserCount: advertiserCounts.get(`${row.platformCode}:${row.mid}`) ?? 0,
+      };
+    });
+  }
+
+  /**
+   * 每个商家按员工自己最近一天的日报，统计仍有启用系列的人数。
+   */
+  private async countLatestAdvertisers(merchantIds: string[]): Promise<Map<string, number>> {
+    const ids = [...new Set(merchantIds.map((mid) => mid.trim()).filter(Boolean))];
+    if (!ids.length) return new Map();
+    const latestByMerchant = await this.prisma.adCampaignDaily.groupBy({
+      by: ['ownerUserId', 'merchantId'],
+      where: {
+        source: 'sheet',
+        campaignId: { not: '__account_gap__' },
+        merchantId: { in: ids },
+      },
+      _max: { date: true },
+    });
+    const dated = latestByMerchant.filter((row) => row._max.date);
+    if (!dated.length) return new Map();
+    const rows = await this.prisma.adCampaignDaily.findMany({
+      where: {
+        source: 'sheet',
+        campaignStatus: 'ENABLED',
+        campaignId: { not: '__account_gap__' },
+        OR: dated.map((row) => ({
+          ownerUserId: row.ownerUserId,
+          merchantId: row.merchantId,
+          date: row._max.date as Date,
+        })),
+      },
+      select: { ownerUserId: true, merchantId: true, affiliateAlias: true },
+    });
+    const owners = new Map<string, Set<number>>();
+    for (const row of rows) {
+      const platform = platformCodeFromAlias(row.affiliateAlias);
+      const key = platform ? `${platform}:${row.merchantId}` : row.merchantId;
+      const set = owners.get(key) ?? new Set<number>();
+      set.add(row.ownerUserId);
+      owners.set(key, set);
+    }
+    return new Map([...owners.entries()].map(([key, set]) => [key, set.size]));
   }
 
   /**
@@ -1225,15 +1285,18 @@ export class AdsAutomationService implements OnModuleInit {
   }
 
   /**
-   * 按步骤写样例草稿。抓站和模型以后替换这一段。
+   * 配了 ModelGo 就按投放国家写文案，否则仍用示例草稿。
    */
   private async generate(jobId: string) {
-    const steps: Array<[string, number, string]> = [
-      ['COMPETITOR_CREATIVES', 15, '竞品在投创意'],
-      ['BRAND_TERMS', 35, '品牌核心词'],
-      ['CRAWLING', 55, '正在分析商家网站'],
-      ['GENERATING', 80, 'AI 生成文案'],
-    ];
+    const useModel = modelGoConfig().enabled;
+    const steps: Array<[string, number, string]> = useModel
+      ? [['GENERATING', 40, '正在按投放国家生成文案']]
+      : [
+          ['COMPETITOR_CREATIVES', 15, '竞品在投创意'],
+          ['BRAND_TERMS', 35, '品牌核心词'],
+          ['CRAWLING', 55, '正在分析商家网站'],
+          ['GENERATING', 80, 'AI 生成文案'],
+        ];
     try {
       const job = await this.prisma.adJob.findUnique({ where: { id: jobId } });
       if (!job || job.draft) return;
@@ -1254,22 +1317,32 @@ export class AdsAutomationService implements OnModuleInit {
         await this.addEvent(jobId, 'RUNNING', step, message);
       }
       const language = input.languageCode || 'en';
-      const draft = buildSampleDraft({
-        merchantName: input.merchantName,
-        merchantUrl: input.merchantUrl,
-        countryCode: input.countryCode,
-        languageCode: language,
-        bidding: input.bidding,
-        dailyBudgetUsd: input.dailyBudgetUsd,
-        cpcBidCeilingUsd: input.cpcBidCeilingUsd,
-      });
+      const draft = useModel
+        ? await writeAdCopy({
+            merchantName: input.merchantName,
+            merchantUrl: input.merchantUrl,
+            countryCode: input.countryCode,
+            languageCode: language,
+            bidding: input.bidding,
+            dailyBudgetUsd: input.dailyBudgetUsd,
+            cpcBidCeilingUsd: input.cpcBidCeilingUsd,
+          })
+        : buildSampleDraft({
+            merchantName: input.merchantName,
+            merchantUrl: input.merchantUrl,
+            countryCode: input.countryCode,
+            languageCode: language,
+            bidding: input.bidding,
+            dailyBudgetUsd: input.dailyBudgetUsd,
+            cpcBidCeilingUsd: input.cpcBidCeilingUsd,
+          });
       await this.prisma.adJob.update({
         where: { id: jobId },
         data: {
           status: 'READY_FOR_REVIEW',
           step: 'READY_FOR_REVIEW',
           progress: 80,
-          progressMessage: '最终预览',
+          progressMessage: useModel ? '已按投放国家生成文案' : '最终预览',
           languageCode: language,
           draft: draft as unknown as Prisma.InputJsonValue,
         },
@@ -1469,7 +1542,9 @@ export class AdsAutomationService implements OnModuleInit {
     if (!/^[A-Z]{2}$/.test(countryCode)) throw new BadRequestException('目标国家用两位代码，例如 US');
     const languageCode = input.languageCode.trim() || 'en';
     const trackUrl = buildTrackUrl(account.platform.code, merchantUrl, account.trackLinkPrefix);
-    const sample = buildSampleArticle({ merchantName: name, merchantUrl, trackUrl, languageCode });
+    const sample = modelGoConfig().enabled
+      ? await writeArticle({ merchantName: name, merchantUrl, countryCode, languageCode })
+      : buildSampleArticle({ merchantName: name, merchantUrl, trackUrl, languageCode });
     const imageUrls = (input.imageUrls ?? [])
       .map((url) => url.trim())
       .filter((url, index, all) => acceptedArticleImage(url) && all.indexOf(url) === index)

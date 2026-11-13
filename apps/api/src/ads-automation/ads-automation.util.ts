@@ -35,6 +35,9 @@ const GEO_BY_COUNTRY: Record<string, string> = {
   GB: '2826',
   DE: '2276',
   FR: '2250',
+  ES: '2724',
+  MX: '2484',
+  VN: '2704',
   AU: '2036',
   CA: '2124',
 };
@@ -44,6 +47,7 @@ const LANGUAGE_BY_CODE: Record<string, string> = {
   de: '1001',
   fr: '1002',
   es: '1003',
+  vi: '1040',
   zh: '1017',
 };
 

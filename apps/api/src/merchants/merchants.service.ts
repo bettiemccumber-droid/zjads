@@ -612,6 +612,26 @@ export class MerchantsService {
   }
 
   /**
+   * 从十分钟内已经缓存的联盟商家库读取主营业务和佣金率。没有缓存时不打接口。
+   */
+  readCachedOffers(mids: string[]): Map<string, { categories: string; commRate: string }> {
+    const wanted = new Set(mids.map((mid) => mid.trim()).filter(Boolean));
+    const result = new Map<string, { categories: string; commRate: string }>();
+    const now = Date.now();
+    for (const entry of this.discoverScanCache.values()) {
+      if (now - entry.at >= 10 * 60 * 1000) continue;
+      for (const row of entry.rows) {
+        const offer = mapCatalogOffer(row);
+        const mid = offer.merchantId?.trim() || '';
+        if (!mid || !wanted.has(mid) || result.has(mid)) continue;
+        if (!offer.categories && !offer.commRate) continue;
+        result.set(mid, { categories: offer.categories, commRate: offer.commRate });
+      }
+    }
+    return result;
+  }
+
+  /**
    * 名称搜索缓存一页 2000 条，10 分钟内重复搜索不再打平台。
    */
   private async loadDiscoverScan_(platformCode: string, channelAccountId: number, apiToken: string) {

@@ -275,6 +275,12 @@
   text-align: center;
 }
 
+.merchant-note {
+  margin: 0 0 12px;
+  color: #667085;
+  font-size: 13px;
+}
+
 .merchant-rate {
   color: #389e0d;
   font-variant-numeric: tabular-nums;

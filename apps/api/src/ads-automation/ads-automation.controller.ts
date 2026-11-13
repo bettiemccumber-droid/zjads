@@ -276,6 +276,9 @@ export class AdsAutomationController {
     return ok(await this.ads.createConnection(user.id, body.mccCustomerId));
   }
 
+  /**
+   * 子账号列表。现在仍读日报。接入 Google Ads API 时要改成 MCC 当前子账号和账户状态，见 listAccountBoard。
+   */
   @Get('google-ads/accounts')
   async listAccountBoard(@CurrentUser() user: AuthUser) {
     return ok(await this.ads.listAccountBoard(user.id));

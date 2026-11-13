@@ -44,6 +44,7 @@ function isAbnormal(row: AccountRow) {
 
 /**
  * 当前员工名下的子账号。空闲和占用可以投放，禁用是异常。
+ * 名单和「未回传」来自广告日报。接入 Google Ads API 时改成 MCC 当前子账号和真实账户状态。
  */
 export default function AccountStatusPage() {
   const { user } = useAuth();

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { Alert, Button, Card, Checkbox, Form, Input, Modal, Popconfirm, Select, Space, Spin, Switch, Table, Tabs, Tag, Typography, message } from 'antd';
+import { Alert, Button, Card, Checkbox, Form, Input, Modal, Popconfirm, Select, Space, Spin, Switch, Table, Tabs, Tag, Tooltip, Typography, message } from 'antd';
 import {
   AlertOutlined,
   CalendarOutlined,
@@ -57,6 +57,9 @@ interface AdvertisedMerchant {
   enabled: boolean;
   campaigns?: AdvertisedCampaign[];
   logo?: string;
+  categories?: string;
+  commRate?: string;
+  advertiserCount?: number;
 }
 
 interface AdSource {
@@ -106,6 +109,7 @@ interface SettlementRow {
   platformCode: string;
   orderCount: number;
   totalCommission: number;
+  settlementRate: number;
   rejectionRate: number;
 }
 
@@ -176,13 +180,57 @@ function EmptyList({ name }: { name: string }) {
   return <div className="merchant-empty">还没有{name}的数据。</div>;
 }
 
+/**
+ * 分类说明。规则接入模型后可以换掉。
+ */
+function TabNote({ children }: { children: string }) {
+  return <p className="merchant-note">{children}</p>;
+}
+
+/**
+ * 结算百分比。偏低或有拒付时用红色。
+ */
+function percentCell(rate: number, bad: boolean) {
+  return <span className={bad ? 'merchant-rate merchant-rate--bad' : 'merchant-rate'}>{rate.toFixed(2)}%</span>;
+}
+
+/**
+ * 热销和推荐共用近 30 天结算表。没有订单的分类不编商家。
+ */
+function SettlementInsight({ rows, empty }: { rows: SettlementRow[]; empty: string }) {
+  if (rows.length === 0) return <div className="merchant-empty">{empty}</div>;
+  return (
+    <Table
+      className="merchant-table"
+      rowKey={(row) => `${row.platformCode}:${row.merchantId}`}
+      size="middle"
+      pagination={{ pageSize: 10, showSizeChanger: true, pageSizeOptions: ['10', '20', '50'], showTotal: (total) => `共 ${total} 条` }}
+      dataSource={rows}
+      columns={[
+        { title: '商家名称', dataIndex: 'merchantName', render: (value: string) => <MerchantMark name={value} /> },
+        { title: '平台', dataIndex: 'platformCode', width: 72, render: (value: string) => platformTag(value) },
+        { title: 'MID', dataIndex: 'merchantId', width: 120 },
+        { title: '订单数', dataIndex: 'orderCount', width: 90 },
+        { title: '佣金', dataIndex: 'totalCommission', width: 110, render: (value: number) => value.toFixed(2) },
+        {
+          title: '结算率',
+          dataIndex: 'settlementRate',
+          width: 90,
+          render: (value: number, row: SettlementRow) => (row.totalCommission > 0 ? percentCell(value, value < 50) : blank()),
+        },
+        { title: '拒付率', dataIndex: 'rejectionRate', width: 90, render: (value: number) => percentCell(value, value > 0) },
+      ]}
+    />
+  );
+}
+
 function platformTag(code: string) {
   const short = PLATFORM_SHORT[code] || (code ? code.slice(0, 2).toUpperCase() : '—');
   return <span className={`merchant-platform merchant-platform--${code || 'default'}`}>{short}</span>;
 }
 
 /**
- * 空字段用横线，避免编造拒付率、结算率这些日报里没有的数。
+ * 空字段用横线。结算率、在投人数有来源才显示，加购率没有来源时留横线。
  */
 function blank(value?: string) {
   const text = value?.trim();
@@ -333,6 +381,7 @@ export default function MyMerchantsPage() {
   const [sources, setSources] = useState<AdSource[]>([]);
   const [blocked, setBlocked] = useState<CatalogMerchant[]>([]);
   const [chargebacks, setChargebacks] = useState<SettlementRow[]>([]);
+  const [settlementLoaded, setSettlementLoaded] = useState(false);
   const [engines, setEngines] = useState<EnginePrefs>({ landingProof: false, singleProduct: false, ecpc: false });
   const [settings, setSettings] = useState<AdLaunchSettings | null>(null);
   const [launchMerchant, setLaunchMerchant] = useState<DiscoverRow | null>(null);
@@ -442,7 +491,8 @@ export default function MyMerchantsPage() {
     setEngines(loadEngines(scopeUserId));
     setHiddenMids(readHiddenMids(scopeUserId));
     void load();
-    const [start, end] = lastNDaysToYesterday(30);
+    const [start, end] = lastNDaysToYesterday(90);
+    setSettlementLoaded(false);
     void api.get<ApiResult<{ items: SettlementRow[] }>>('/orders/settlement/merchant-summary', {
       params: {
         startDate: start.format('YYYY-MM-DD'),
@@ -450,8 +500,12 @@ export default function MyMerchantsPage() {
         ...(viewUserId ? { userId: viewUserId } : {}),
       },
     }).then((res) => {
-      if (res.data.success) setChargebacks(res.data.data.items ?? []);
-    }).catch(() => setChargebacks([]));
+      setChargebacks(res.data.success ? res.data.data.items ?? [] : []);
+      setSettlementLoaded(true);
+    }).catch(() => {
+      setChargebacks([]);
+      setSettlementLoaded(true);
+    });
     return () => {
       loadGen.current += 1;
     };
@@ -525,8 +579,8 @@ export default function MyMerchantsPage() {
       mid: row.mid,
       name: row.name,
       merchantUrl: row.merchantUrl,
-      commRate: '',
-      categories: '',
+      commRate: row.commRate || '',
+      categories: row.categories || '',
       countryCode: row.countryCode,
       supportRegion: row.countryCode,
       tags: '',
@@ -560,8 +614,59 @@ export default function MyMerchantsPage() {
   const rejectionCell = (platformCode: string, mid: string) => {
     const rate = rejectionByKey.get(`${platformCode}:${mid}`);
     if (rate == null) return blank();
-    return <span className={rate > 0 ? 'merchant-rate merchant-rate--bad' : 'merchant-rate'}>{rate.toFixed(2)}%</span>;
+    return percentCell(rate, rate > 0);
   };
+  const settlementByKey = useMemo(() => {
+    const map = new Map<string, SettlementRow>();
+    chargebacks.forEach((item) => {
+      const key = `${item.platformCode}:${item.merchantId}`;
+      const current = map.get(key);
+      if (!current || item.totalCommission > current.totalCommission) map.set(key, item);
+    });
+    return map;
+  }, [chargebacks]);
+  /**
+   * 有佣金才显示结算率。没有结算记录时留横线。
+   */
+  const settlementCell = (platformCode: string, mid: string) => {
+    const row = settlementByKey.get(`${platformCode}:${mid}`);
+    if (!row || !(row.totalCommission > 0)) return blank();
+    return percentCell(row.settlementRate, row.settlementRate < 50);
+  };
+  const advertiserByKey = useMemo(() => {
+    const map = new Map<string, number>();
+    advertised.forEach((item) => {
+      if (item.advertiserCount != null) map.set(`${item.platformCode}:${item.mid}`, item.advertiserCount);
+    });
+    return map;
+  }, [advertised]);
+  /**
+   * 在投人数只统计最新一天日报里仍启用的员工。名单里没有这个商家时留横线。
+   */
+  const advertiserCell = (platformCode: string, mid: string) => {
+    const count = advertiserByKey.get(`${platformCode}:${mid}`);
+    if (count == null) return blank();
+    return count;
+  };
+  const hotRows = useMemo(
+    () => [...chargebacks].filter((item) => item.orderCount > 0).sort((a, b) => b.orderCount - a.orderCount || b.totalCommission - a.totalCommission),
+    [chargebacks],
+  );
+  const recommendRows = useMemo(
+    () => chargebacks
+      .filter((item) => item.orderCount >= 3 && item.totalCommission > 0 && item.rejectionRate < 15)
+      .sort((a, b) => b.orderCount - a.orderCount || b.totalCommission - a.totalCommission),
+    [chargebacks],
+  );
+  const runningRows = useMemo(
+    () => visibleAdvertised.filter((item) => (item.campaigns ?? []).some((campaign) => campaign.localId == null && campaign.status === 'ENABLED')),
+    [visibleAdvertised],
+  );
+  const nodeCountry = (settings?.targetCountry || 'US').toUpperCase();
+  const nodeRows = useMemo(() => {
+    const ordered = new Set(chargebacks.filter((item) => item.orderCount > 0).map((item) => `${item.platformCode}:${item.merchantId}`));
+    return visibleAdvertised.filter((item) => (item.countryCode || '').toUpperCase() === nodeCountry && ordered.has(`${item.platformCode}:${item.mid}`));
+  }, [chargebacks, visibleAdvertised, nodeCountry]);
 
   const persistEngines = (next: EnginePrefs) => {
     setEngines(next);
@@ -738,10 +843,10 @@ export default function MyMerchantsPage() {
                       { title: '商家名称', dataIndex: 'name', width: 220, render: (value: string, row: AdvertisedMerchant) => <MerchantMark name={value} logo={row.logo} merchantUrl={row.merchantUrl} /> },
                       { title: '平台', dataIndex: 'platformCode', width: 72, render: (value: string) => platformTag(value) },
                       { title: 'MID', dataIndex: 'mid', width: 100 },
-                      { title: '主营业务', width: 110, render: () => blank() },
-                      { title: '佣金率', width: 80, render: () => blank() },
+                      { title: '主营业务', dataIndex: 'categories', width: 140, ellipsis: true, render: (value: string) => blank(value) },
+                      { title: '佣金率', dataIndex: 'commRate', width: 110, ellipsis: true, render: (value: string) => blank(value) },
                       { title: '拒付率', width: 90, render: (_: unknown, row: AdvertisedMerchant) => rejectionCell(row.platformCode, row.mid) },
-                      { title: '结算率', width: 80, render: () => blank() },
+                      { title: '结算率', width: 80, render: (_: unknown, row: AdvertisedMerchant) => settlementCell(row.platformCode, row.mid) },
                       { title: '协商佣金率', width: 100, render: () => blank() },
                       { title: '支持地区', dataIndex: 'countryCode', width: 100, render: (value: string) => regionTags(value) },
                       {
@@ -750,8 +855,8 @@ export default function MyMerchantsPage() {
                         width: 90,
                         render: (value: boolean) => <span className={value ? 'merchant-state merchant-state--on' : 'merchant-state merchant-state--off'}>{value ? '已启用' : '已暂停'}</span>,
                       },
-                      { title: 'ATC备单率', width: 90, render: () => blank() },
-                      { title: '在投人数', width: 80, render: () => blank() },
+                      { title: <Tooltip title="还没有加购数据，接入后显示">ATC备单率</Tooltip>, width: 90, render: () => blank() },
+                      { title: '在投人数', dataIndex: 'advertiserCount', width: 80, render: (value: number | undefined) => (value == null ? blank() : value) },
                       { title: '标签', width: 70, render: () => blank() },
                       {
                         title: '操作',
@@ -831,11 +936,11 @@ export default function MyMerchantsPage() {
                       { title: '主营业务', dataIndex: 'categories', width: 140, ellipsis: true, render: (value: string) => blank(value) },
                       { title: '佣金率', dataIndex: 'commRate', width: 90, render: (value: string) => blank(value) },
                       { title: '拒付率', width: 90, render: (_: unknown, row: DiscoverRow) => rejectionCell(row.platformCode, row.mid) },
-                      { title: '结算率', width: 80, render: () => blank() },
+                      { title: '结算率', width: 80, render: (_: unknown, row: DiscoverRow) => settlementCell(row.platformCode, row.mid) },
                       { title: '协商佣金率', width: 110, render: () => blank() },
                       { title: '支持地区', dataIndex: 'supportRegion', width: 140, render: (value: string, row: DiscoverRow) => regionTags(value || row.countryCode) },
-                      { title: 'ATC备单率', width: 100, render: () => blank() },
-                      { title: '在投人数', width: 90, render: () => '—' },
+                      { title: <Tooltip title="还没有加购数据，接入后显示">ATC备单率</Tooltip>, width: 100, render: () => blank() },
+                      { title: '在投人数', width: 90, render: (_: unknown, row: DiscoverRow) => advertiserCell(row.platformCode, row.mid) },
                       { title: '标签', dataIndex: 'tags', ellipsis: true, render: (value: string) => blank(value) },
                       {
                         title: '操作',
@@ -869,10 +974,87 @@ export default function MyMerchantsPage() {
                 />
               ),
             },
-            { key: 'hot', label: tabLabel(<FireOutlined />, '热销商家', 'hot'), children: <EmptyList name="热销商家" /> },
-            { key: 'recommend', label: tabLabel(<StarOutlined />, '推荐商家', 'star'), children: <EmptyList name="推荐商家" /> },
-            { key: 'nodes', label: tabLabel(<CalendarOutlined />, '节点推荐', 'node'), children: <EmptyList name="节点推荐" /> },
-            { key: 'running', label: tabLabel(<FundOutlined />, '经营商家', 'run'), children: <EmptyList name="经营商家" /> },
+            {
+              key: 'hot',
+              label: tabLabel(<FireOutlined />, settlementLoaded ? `热销商家 (${hotRows.length})` : '热销商家', 'hot'),
+              children: (
+                <>
+                  <TabNote>近 90 天有订单的商家，按订单数从高到低。</TabNote>
+                  {settlementLoaded ? <SettlementInsight rows={hotRows} empty="近 90 天没有出单商家。" /> : <Spin />}
+                </>
+              ),
+            },
+            {
+              key: 'recommend',
+              label: tabLabel(<StarOutlined />, settlementLoaded ? `推荐商家 (${recommendRows.length})` : '推荐商家', 'star'),
+              children: (
+                <>
+                  <TabNote>近 90 天至少 3 单、有佣金、拒付率低于 15%。已确认佣金还是 0 时不按结算率过滤。模型接入后会替换这套规则。</TabNote>
+                  {settlementLoaded ? <SettlementInsight rows={recommendRows} empty="近 90 天没有达到推荐条件的商家。" /> : <Spin />}
+                </>
+              ),
+            },
+            {
+              key: 'nodes',
+              label: tabLabel(<CalendarOutlined />, merchantsLoaded && settlementLoaded ? `节点推荐 (${nodeRows.length})` : '节点推荐', 'node'),
+              children: (
+                <>
+                  <TabNote>{`按当前投放国家 ${nodeCountry} 里近 90 天有订单的商家。促销节点日历接入后会改成按节点推荐。`}</TabNote>
+                  {merchantsLoaded && settlementLoaded ? (
+                    nodeRows.length === 0 ? <div className="merchant-empty">这个国家近 90 天没有出单商家。</div> : (
+                      <Table
+                        className="merchant-table"
+                        rowKey={(row) => `${row.channelAccountId}:${row.mid}`}
+                        size="middle"
+                        pagination={{ pageSize: 10, showTotal: (total) => `共 ${total} 条` }}
+                        dataSource={nodeRows}
+                        columns={[
+                          { title: '商家名称', dataIndex: 'name', render: (value: string, row: AdvertisedMerchant) => <MerchantMark name={value} logo={row.logo} merchantUrl={row.merchantUrl} /> },
+                          { title: '平台', dataIndex: 'platformCode', width: 72, render: (value: string) => platformTag(value) },
+                          { title: 'MID', dataIndex: 'mid', width: 120 },
+                          { title: '支持地区', dataIndex: 'countryCode', width: 120, render: (value: string) => regionTags(value) },
+                          { title: '结算率', width: 90, render: (_: unknown, row: AdvertisedMerchant) => settlementCell(row.platformCode, row.mid) },
+                          { title: '订单数', width: 90, render: (_: unknown, row: AdvertisedMerchant) => settlementByKey.get(`${row.platformCode}:${row.mid}`)?.orderCount ?? blank() },
+                        ]}
+                      />
+                    )
+                  ) : <Spin />}
+                </>
+              ),
+            },
+            {
+              key: 'running',
+              label: tabLabel(<FundOutlined />, merchantsLoaded ? `经营商家 (${runningRows.length})` : '经营商家', 'run'),
+              children: (
+                <>
+                  <TabNote>最近一天日报里仍有启用系列的商家。</TabNote>
+                  {!merchantsLoaded ? <Spin /> : runningRows.length === 0 ? <div className="merchant-empty">最近一天没有启用中的商家。</div> : (
+                    <Table
+                      className="merchant-table"
+                      rowKey={(row) => `${row.channelAccountId}:${row.mid}`}
+                      size="middle"
+                      pagination={{ pageSize: 10, showSizeChanger: true, pageSizeOptions: ['10', '20', '50'], showTotal: (total) => `共 ${total} 条` }}
+                      dataSource={runningRows}
+                      columns={[
+                        { title: '商家名称', dataIndex: 'name', width: 220, render: (value: string, row: AdvertisedMerchant) => <MerchantMark name={value} logo={row.logo} merchantUrl={row.merchantUrl} /> },
+                        { title: '平台', dataIndex: 'platformCode', width: 72, render: (value: string) => platformTag(value) },
+                        { title: 'MID', dataIndex: 'mid', width: 120 },
+                        { title: '主营业务', dataIndex: 'categories', width: 140, ellipsis: true, render: (value: string) => blank(value) },
+                        { title: '在投人数', dataIndex: 'advertiserCount', width: 90, render: (value: number | undefined) => (value == null ? blank() : value) },
+                        { title: '支持地区', dataIndex: 'countryCode', width: 120, render: (value: string) => regionTags(value) },
+                        {
+                          title: '操作',
+                          width: 110,
+                          render: (_: unknown, row: AdvertisedMerchant) => (
+                            <Button type="link" size="small" disabled={!row.merchantUrl || !row.channelAccountId} onClick={() => launchAdvertised(row)}>新增广告</Button>
+                          ),
+                        },
+                      ]}
+                    />
+                  )}
+                </>
+              ),
+            },
             {
               key: 'chargeback',
               label: tabLabel(<AlertOutlined />, '拒付商家', 'back'),

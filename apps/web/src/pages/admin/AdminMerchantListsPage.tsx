@@ -64,8 +64,7 @@ function dedupeRows(rows: MerchantOpsListImportRow[]) {
 }
 
 /**
- * 管理员上传违规 / 推荐名单。
- * 违规：合并导入并去重。推荐：一次可选多个平台文件批量合并。
+ * 管理员上传违规 / 推荐名单；支持多文件、多 sheet，按平台+MID 去重。
  */
 export default function AdminMerchantListsPage() {
   const [listType, setListType] = useState<ListType>('violation');
@@ -205,11 +204,7 @@ export default function AdminMerchantListsPage() {
       <Alert
         type="info"
         showIcon
-        message={
-          isRecommend
-            ? '推荐表：一次可选多个平台文件，系统会合并后按平台+MID 去重再入库，不会冲掉未出现在本次文件里的其他平台。'
-            : '违规表：合并导入，按平台+MID 自动去重。同一商家重复上传只会保留一条。'
-        }
+        message="去重规则：合并导入，按平台+MID 自动去重。同一商家重复上传只会保留一条。支持多文件、多 sheet；表头可为「平台+商家ID」或「Merchant ID + BU」。"
       />
       <Card size="small">
         <Tabs
@@ -225,21 +220,15 @@ export default function AdminMerchantListsPage() {
                 options={platformOptions}
                 onChange={(value) => setPlatformFilter(value)}
               />
-              <Upload {...pickFiles('merge', isRecommend)}>
+              <Upload {...pickFiles('merge', true)}>
                 <Button type="primary" icon={<UploadOutlined />} loading={uploading}>
-                  {isRecommend ? '多文件合并导入' : '合并导入（去重）'}
+                  合并导入（去重）
                 </Button>
               </Upload>
-              {isRecommend ? (
-                <Upload {...pickFiles('replace_platforms', true)}>
-                  <Button loading={uploading}>多文件覆盖本次平台</Button>
-                </Upload>
-              ) : (
-                <Upload {...pickFiles('replace_platforms', false)}>
-                  <Button loading={uploading}>覆盖本次平台</Button>
-                </Upload>
-              )}
-              <Upload {...pickFiles('replace_all', isRecommend)}>
+              <Upload {...pickFiles('replace_platforms', true)}>
+                <Button loading={uploading}>覆盖本次平台</Button>
+              </Upload>
+              <Upload {...pickFiles('replace_all', true)}>
                 <Button danger ghost loading={uploading}>整表替换</Button>
               </Upload>
               {platformFilter ? (

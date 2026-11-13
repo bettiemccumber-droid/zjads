@@ -23,6 +23,8 @@ const MID_HEADERS = [
   'mid',
   'merchantid',
   'merchant_id',
+  'bumerchantid',
+  'bumid',
   '商家id',
   '商家mid',
   '商家编号',
@@ -32,6 +34,7 @@ const NAME_HEADERS = [
   'merchant',
   'merchantname',
   'merchant_name',
+  'bumerchant',
   '商家名称',
   '商家名',
 ];
@@ -68,7 +71,7 @@ const NOTE_HEADERS = [
   '违规原因',
 ];
 const BU_HEADERS = ['bu', 'bucode', '业务线'];
-const SID_HEADERS = ['sid', '商家sid', 'icid', 'lcid', 'mcid'];
+const SID_HEADERS = ['sid', '商家sid', '商家cid', 'icid', 'lcid', 'mcid'];
 
 /** 表格里常见平台写法归一成系统 platformCode */
 const PLATFORM_ALIASES: Record<string, string> = {
@@ -257,7 +260,11 @@ function normalizeHeader_(cell: unknown) {
 function findCol_(header: string[], candidates: string[]) {
   const normalized = candidates.map((item) => item.toLowerCase().replace(/[\s_\-（）()]/g, ''));
   for (let i = 0; i < header.length; i += 1) {
-    if (normalized.includes(header[i])) return i;
+    const cell = header[i];
+    if (!cell) continue;
+    if (normalized.includes(cell)) return i;
+    // 「BU Merchant ID」→ bumerchantid 仍应命中 merchantid
+    if (normalized.some((item) => item.length >= 3 && cell.endsWith(item))) return i;
   }
   return null;
 }

@@ -228,7 +228,7 @@ export default function AdminMerchantListsPage() {
       <Alert
         type="info"
         showIcon
-        message="去重规则：合并导入，按平台+MID 自动去重。支持多文件、多 sheet；表头可为「平台+商家ID」「Merchant ID + BU」，或仅有 MID 且文件名/标题带平台（如 PM推荐商家表）。"
+        message="去重规则：按平台+MID 去重。支持多文件/多 sheet；识别 MID、BU Merchant ID（含 Mercahnt 拼写）、BU 列，以及标题里的 PM/LH 等平台。"
       />
       <Card size="small">
         <Tabs

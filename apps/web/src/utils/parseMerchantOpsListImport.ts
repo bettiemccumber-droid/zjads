@@ -184,7 +184,7 @@ function parseSheet_(
   }
 
   const header = matrix[headerIndex].map((cell) => normalizeHeader_(cell));
-  const colMid = findCol_(header, MID_HEADERS);
+  const colMid = findMidCol_(header);
   const colPlatform = findCol_(header, PLATFORM_HEADERS);
   const colBu = findCol_(header, BU_HEADERS);
   if (colMid == null) throw new Error('缺少商家ID / MID / Merchant ID 列');
@@ -301,11 +301,15 @@ function normalizeHeader_(cell: unknown) {
   return String(cell ?? '')
     .trim()
     .toLowerCase()
-    .replace(/[\s_\-（）()]/g, '');
+    // 表里常见拼写：Mercahnt → Merchant
+    .replace(/mercahnt/g, 'merchant')
+    .replace(/[\s_\-／/|（）()]/g, '');
 }
 
 function findCol_(header: string[], candidates: string[]) {
-  const normalized = candidates.map((item) => item.toLowerCase().replace(/[\s_\-（）()]/g, ''));
+  const normalized = candidates.map((item) =>
+    item.toLowerCase().replace(/mercahnt/g, 'merchant').replace(/[\s_\-／/|（）()]/g, ''),
+  );
   // 先精确匹配，避免「平均佣金…」等长表头误伤
   for (let i = 0; i < header.length; i += 1) {
     const cell = header[i];
@@ -320,12 +324,28 @@ function findCol_(header: string[], candidates: string[]) {
   return null;
 }
 
+/**
+ * MID 列：兼容 mid / Merchant ID / BU Merchant ID / BU Mercahnt ID（拼写错误）等。
+ */
+function findMidCol_(header: string[]) {
+  const exact = findCol_(header, MID_HEADERS);
+  if (exact != null) return exact;
+  for (let i = 0; i < header.length; i += 1) {
+    const cell = header[i];
+    if (!cell) continue;
+    if (cell === 'mid') return i;
+    // 含 id，且像 merchant / 商家
+    if (cell.includes('id') && (cell.includes('merchant') || cell.includes('商家'))) return i;
+  }
+  return null;
+}
+
 function findHeaderRow_(matrix: unknown[][]) {
   const limit = Math.min(matrix.length, 40);
   let best: { index: number; score: number } | null = null;
   for (let r = 0; r < limit; r += 1) {
     const header = matrix[r].map((cell) => normalizeHeader_(cell));
-    const hasMid = findCol_(header, MID_HEADERS) != null;
+    const hasMid = findMidCol_(header) != null;
     if (!hasMid) continue;
     const hasPlatform = findCol_(header, PLATFORM_HEADERS) != null;
     const hasBu = findCol_(header, BU_HEADERS) != null;

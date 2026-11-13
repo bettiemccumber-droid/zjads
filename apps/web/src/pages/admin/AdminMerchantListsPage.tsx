@@ -13,6 +13,7 @@ import {
   message,
 } from 'antd';
 import { UploadOutlined } from '@ant-design/icons';
+import type { RcFile } from 'antd/es/upload/interface';
 import { api, type ApiResult } from '../../api/client';
 import {
   parseMerchantOpsListImport,
@@ -186,7 +187,7 @@ export default function AdminMerchantListsPage() {
     accept: '.xlsx,.xls,.csv',
     multiple,
     showUploadList: false as const,
-    beforeUpload: (file: File, fileList: File[]) => {
+    beforeUpload: (file: RcFile, fileList: RcFile[]) => {
       if (file.uid !== fileList[fileList.length - 1]?.uid) return false;
       void (async () => {
         const parsed = await parseFiles(fileList);

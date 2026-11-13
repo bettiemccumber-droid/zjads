@@ -9,9 +9,33 @@
       name="description"
       content="Zhijun Ads Manager is an internal Google Ads management tool used only to manage our own Google Ads accounts. It does not generate AI content."
     />
+    <script>
+      (function () {
+        var path = location.pathname.replace(/\/+$/, '') || '/';
+        if (path === '/' || path === '/privacy' || path === '/terms') {
+          document.documentElement.setAttribute('data-public', '1');
+        }
+      })();
+    </script>
+    <style>
+      #compliance-fallback {
+        display: none;
+        max-width: 720px;
+        margin: 48px auto;
+        padding: 0 20px;
+        font-family: Georgia, 'Times New Roman', serif;
+        line-height: 1.6;
+        color: #111;
+      }
+      html[data-public='1'] #compliance-fallback {
+        display: block;
+      }
+    </style>
   </head>
   <body>
-    <div id="root">
+    <div id="root"></div>
+    <!-- 仅首页/隐私/条款刷新时短暂展示，避免业务页刷新先闪出合规文案 -->
+    <div id="compliance-fallback">
       <h1>Zhijun Ads Manager</h1>
       <p>
         Zhijun Ads Manager is an internal Google Ads management tool used only to manage our own

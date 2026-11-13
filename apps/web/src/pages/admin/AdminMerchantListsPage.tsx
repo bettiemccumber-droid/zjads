@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Alert,
   Button,
@@ -72,6 +72,12 @@ export default function AdminMerchantListsPage() {
   const [uploading, setUploading] = useState(false);
   const [data, setData] = useState<OpsListData | null>(null);
   const [platformFilter, setPlatformFilter] = useState<string | undefined>();
+  /** antd 多选会按文件多次触发 beforeUpload，用短延迟收齐同一批再解析 */
+  const batchTimerRef = useRef<number | null>(null);
+  const batchFilesRef = useRef<RcFile[]>([]);
+  const batchModeRef = useRef<ImportMode>('merge');
+  const listTypeRef = useRef(listType);
+  listTypeRef.current = listType;
 
   const load = useCallback(async (type: ListType) => {
     setLoading(true);
@@ -106,10 +112,10 @@ export default function AdminMerchantListsPage() {
     }
     setUploading(true);
     try {
-      const res = await api.post<ApiResult<OpsListData>>(`/merchant-ops-lists/${listType}/import`, {
-        rows: unique,
-        mode,
-      });
+      const res = await api.post<ApiResult<OpsListData>>(
+        `/merchant-ops-lists/${listTypeRef.current}/import`,
+        { rows: unique, mode },
+      );
       if (!res.data.success) {
         message.error(res.data.message || '上传失败');
         return;
@@ -133,7 +139,9 @@ export default function AdminMerchantListsPage() {
   const parseFiles = async (files: File[]) => {
     const allRows: MerchantOpsListImportRow[] = [];
     const failures: string[] = [];
-    for (const file of files) {
+    // 按文件名去重，避免 antd 批次回调重复塞入同一文件
+    const uniqueFiles = [...new Map(files.map((file) => [file.name + file.size, file])).values()];
+    for (const file of uniqueFiles) {
       try {
         const parsed = parseMerchantOpsListImport(await file.arrayBuffer(), file.name);
         allRows.push(...parsed);
@@ -180,18 +188,34 @@ export default function AdminMerchantListsPage() {
   }, [data, listType, platformFilter]);
 
   /**
-   * 一次选多个文件时，等本批最后一个文件到位再统一解析导入。
+   * 多选时 beforeUpload 会按文件多次回调；用 50ms 防抖收齐同一批后再解析导入。
    */
-  const pickFiles = (mode: ImportMode, multiple: boolean) => ({
+  const pickFiles = (mode: ImportMode) => ({
     accept: '.xlsx,.xls,.csv',
-    multiple,
+    multiple: true,
     showUploadList: false as const,
     beforeUpload: (file: RcFile, fileList: RcFile[]) => {
-      if (file.uid !== fileList[fileList.length - 1]?.uid) return false;
-      void (async () => {
-        const parsed = await parseFiles(fileList);
-        await uploadRows(parsed, mode, { fileCount: fileList.length, rawCount: parsed.length });
-      })();
+      batchModeRef.current = mode;
+      // fileList 为本轮对话框选中的全部文件；单次回调也至少带上当前 file
+      const incoming = fileList.length > 0 ? fileList : [file];
+      const merged = new Map(batchFilesRef.current.map((item) => [item.uid, item]));
+      for (const item of incoming) merged.set(item.uid, item);
+      batchFilesRef.current = [...merged.values()];
+      if (batchTimerRef.current != null) window.clearTimeout(batchTimerRef.current);
+      batchTimerRef.current = window.setTimeout(() => {
+        batchTimerRef.current = null;
+        const files = batchFilesRef.current;
+        const batchMode = batchModeRef.current;
+        batchFilesRef.current = [];
+        if (!files.length) return;
+        void (async () => {
+          const parsed = await parseFiles(files);
+          await uploadRows(parsed, batchMode, {
+            fileCount: files.length,
+            rawCount: parsed.length,
+          });
+        })();
+      }, 50);
       return false;
     },
   });
@@ -220,15 +244,15 @@ export default function AdminMerchantListsPage() {
                 options={platformOptions}
                 onChange={(value) => setPlatformFilter(value)}
               />
-              <Upload {...pickFiles('merge', true)}>
+              <Upload {...pickFiles('merge')}>
                 <Button type="primary" icon={<UploadOutlined />} loading={uploading}>
-                  合并导入（去重）
+                  合并导入（可多选）
                 </Button>
               </Upload>
-              <Upload {...pickFiles('replace_platforms', true)}>
+              <Upload {...pickFiles('replace_platforms')}>
                 <Button loading={uploading}>覆盖本次平台</Button>
               </Upload>
-              <Upload {...pickFiles('replace_all', true)}>
+              <Upload {...pickFiles('replace_all')}>
                 <Button danger ghost loading={uploading}>整表替换</Button>
               </Upload>
               {platformFilter ? (

@@ -59,8 +59,9 @@ function handle(req, res) {
       res.end('Not found');
       return;
     }
-    const type = types[path.extname(filePath)] || 'application/octet-stream';
-    const cache = type.startsWith('text/html') ? 'no-cache' : 'public, max-age=31536000, immutable';
+    const ext = path.extname(filePath);
+    const type = types[ext] || 'application/octet-stream';
+    const cache = type.startsWith('text/html') || ext === '.css' ? 'no-cache' : 'public, max-age=31536000, immutable';
     res.writeHead(200, { 'Content-Type': type, 'Cache-Control': cache });
     res.end(data);
   });

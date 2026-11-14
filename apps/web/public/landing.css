@@ -168,57 +168,59 @@ body {
   margin-top: 28px;
 }
 
-.lp-detail {
+.lp-panels {
+  display: grid;
+  gap: 16px;
   width: min(760px, calc(100% - 32px));
-  margin: 0 auto 56px;
-  padding: 8px 28px 12px;
+  margin: 8px auto 64px;
+}
+
+.lp-panels article {
+  padding: 22px 26px 8px;
   background: #fff;
   border: 1px solid #e8edf3;
   border-radius: 16px;
   text-align: left;
-  overflow-wrap: anywhere;
 }
 
-.lp-detail h2 {
-  margin: 28px 0 8px;
+.lp-panels h2 {
+  margin: 0 0 10px;
   color: #111827;
-  font-size: 20px;
+  font-size: 18px;
   line-height: 1.35;
 }
 
-.lp-detail p,
-.lp-detail li {
+.lp-panels p,
+.lp-panels li {
   color: #1f2937;
   font-size: 15px;
-  line-height: 1.75;
+  line-height: 1.7;
 }
 
-.lp-detail p {
-  margin: 0 0 10px;
-}
-
-.lp-detail ul {
+.lp-panels p {
   margin: 0 0 12px;
+}
+
+.lp-panels ul {
+  margin: 0 0 14px;
   padding-left: 1.2em;
 }
 
-.lp-detail code {
-  font-size: 0.92em;
-  overflow-wrap: anywhere;
-  word-break: break-all;
-}
-
-.lp-nowrap {
-  white-space: nowrap;
-}
-
-.lp-url {
-  overflow-wrap: anywhere;
-  word-break: break-all;
-}
-
-.lp-detail a {
+.lp-panels a {
   color: #2563eb;
+}
+
+.lp-scope {
+  margin: 0 0 12px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: #f3f6fb;
+  color: #1e3a5f;
+  font-family: Consolas, "Segoe UI", monospace;
+  font-size: 13px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+  word-break: break-all;
 }
 
 .lp-btn {

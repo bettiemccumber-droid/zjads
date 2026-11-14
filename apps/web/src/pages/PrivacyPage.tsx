@@ -20,7 +20,43 @@ export default function PrivacyPage() {
         </Link>
         <p className="legal-page__eyebrow">Zhijun Ads Manager</p>
         <h1>Privacy Policy</h1>
-        <p className="legal-page__updated">Last updated: November 10, 2026</p>
+        <p className="legal-page__updated">Last updated: November 14, 2026</p>
+
+        <h2>Google Ads API scope</h2>
+        <p>
+          Zhijun Ads Manager requests the Google Ads scope (
+          <code>https://www.googleapis.com/auth/adwords</code>
+          ). Through that scope the application accesses only these types of data from Google Ads
+          accounts the firm owns or is authorized to manage:
+        </p>
+        <ul>
+          <li>Account and manager-account (MCC) identifiers, names, and relationships</li>
+          <li>Campaign structure, including campaigns, ad groups, and ads, with their identifiers, names, and status</li>
+          <li>Keywords and match types</li>
+          <li>Budgets, bids, and spend</li>
+          <li>Clicks, impressions, and conversion data</li>
+          <li>Ad assets used on those campaigns, such as sitelinks and callouts</li>
+        </ul>
+        <p>
+          The data is used only inside Zhijun Ads Manager, and only to provide advertising
+          management, data viewing, and adjustment of the firm’s own campaigns.
+        </p>
+        <p>
+          The data is not sold. It is not used to target advertisements to consumers. It is not used
+          to train artificial-intelligence or machine-learning models. It is not shared with
+          advertisers, data brokers, or other companies for their own use.
+        </p>
+        <p>
+          The data is stored in the application database hosted for the firm. Transmission is
+          encrypted with HTTPS. Records are kept while the Google Ads account stays connected, and
+          for no more than 24 months after that account is disconnected.
+        </p>
+        <p>
+          An authorized user can ask for deletion by emailing{' '}
+          <a href="mailto:marshallmarsxybasi01318@gmail.com">marshallmarsxybasi01318@gmail.com</a>.
+          We delete the requested Google Ads data, including stored API tokens, within 30 days of a
+          verified request, unless a longer period is required by law.
+        </p>
 
         <h2>Who we are</h2>
         <p>

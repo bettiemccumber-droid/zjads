@@ -8,6 +8,7 @@ const port = Number(process.env.PORT || 4173);
 
 /** 审核爬虫直接请求这些地址，必须返回完整 HTML，不能再落到首页。 */
 const pages = {
+  '/': 'home.html',
   '/privacy': 'privacy.html',
   '/privacy/': 'privacy.html',
   '/terms': 'terms.html',

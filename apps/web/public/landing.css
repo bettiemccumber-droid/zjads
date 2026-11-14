@@ -95,6 +95,14 @@ body {
   line-height: 1.25;
 }
 
+.lp-hero h2 {
+  max-width: 760px;
+  margin: 28px auto 8px;
+  color: #111827;
+  font-size: 20px;
+  line-height: 1.35;
+}
+
 .lp-kicker {
   margin: -8px 0 16px;
   color: #374151;
@@ -158,6 +166,44 @@ body {
   justify-content: center;
   gap: 12px;
   margin-top: 28px;
+}
+
+.lp-detail {
+  max-width: 760px;
+  margin: 0 auto;
+  padding: 8px 24px 72px;
+  text-align: left;
+}
+
+.lp-detail h2 {
+  margin: 28px 0 8px;
+  color: #111827;
+  font-size: 20px;
+  line-height: 1.35;
+}
+
+.lp-detail p,
+.lp-detail li {
+  color: #1f2937;
+  font-size: 15px;
+  line-height: 1.75;
+}
+
+.lp-detail p {
+  margin: 0 0 10px;
+}
+
+.lp-detail ul {
+  margin: 0 0 12px;
+  padding-left: 1.2em;
+}
+
+.lp-detail code {
+  font-size: 0.92em;
+}
+
+.lp-detail a {
+  color: #2563eb;
 }
 
 .lp-btn {
@@ -237,6 +283,7 @@ body {
 @media (max-width: 900px) {
   .lp-header,
   .lp-hero,
+  .lp-detail,
   .lp-footer {
     padding-left: 16px;
     padding-right: 16px;

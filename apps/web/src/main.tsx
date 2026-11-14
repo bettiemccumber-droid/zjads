@@ -5,9 +5,14 @@ import zhCN from 'antd/locale/zh_CN';
 import App from './App';
 import './index.css';
 
-/** 去掉 index.html 里的静态合规文案，避免业务页刷新先闪出首页。 */
-document.documentElement.removeAttribute('data-public');
-document.getElementById('compliance-fallback')?.remove();
+/**
+ * 首页、隐私政策、条款的正文写在 HTML 里，给不执行脚本的审核程序看。
+ * 其它页面才删掉这段，避免后台刷新时闪出首页说明。
+ */
+const publicPath = location.pathname.replace(/\/+$/, '') || '/';
+if (publicPath !== '/' && publicPath !== '/privacy' && publicPath !== '/terms') {
+  document.getElementById('compliance-fallback')?.remove();
+}
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>

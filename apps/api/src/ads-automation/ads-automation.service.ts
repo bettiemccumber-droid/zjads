@@ -30,6 +30,13 @@ import { AiPersonaService } from './ai-persona.service';
 import { writeAdCopy, writeArticle } from './modelgo-copy';
 import { modelGoConfig } from './modelgo.client';
 import { buildCreateCampaignPayload } from './mutate-payload';
+import {
+  GoogleAdsClient,
+  GoogleAdsCredentials,
+  googleAdsAppConfig,
+  googleAdsAppReady,
+  readCreatedResources,
+} from './google-ads.client';
 
 interface SitePublishInput {
   publishUrl: string;
@@ -148,6 +155,7 @@ export class AdsAutomationService implements OnModuleInit {
     private readonly merchants: MerchantsService,
     private readonly crypto: CryptoService,
     private readonly personas: AiPersonaService,
+    private readonly googleAds: GoogleAdsClient,
   ) {}
 
   /**
@@ -234,11 +242,8 @@ export class AdsAutomationService implements OnModuleInit {
   /**
    * 当前员工名下的子账号。已登记的 MCC 账户带保存的 Google 状态；其余来自已导入日报。
    *
-   * 接入 Google Ads API 时必须改这个方法，不能只接广告创建：
-   * 用 MCC 的 customer_client 列出当前子账号，不再把日报里出现过的全部 CID 都算进来。
-   * login-customer-id 用这个 CID 所属的 MCC。一个员工可以有多个 MCC，各自用自己的 refresh token。
-   * 回填账户状态 ENABLED、SUSPENDED、CANCELED、CLOSED，替换现在的「未回传」。
-   * 在投系列改读接口里的当前系列状态，不再只用日报最近一天。版本用 v26。在此之前不要发 Google 请求。
+   * 配好 Google Ads 后只返回 MCC 当前子账号和接口里的账户状态、在投系列数。
+   * 还没配好时仍用已导入日报，避免账户页空白。
    */
   async listAccountBoard(ownerUserId: number) {
     const connections = await this.prisma.googleAdsConnection.findMany({
@@ -246,6 +251,8 @@ export class AdsAutomationService implements OnModuleInit {
       include: { customers: { orderBy: { id: 'desc' } } },
       orderBy: { id: 'desc' },
     });
+    const liveConnections = connections.filter((row) => this.credentialsFor(row));
+    if (liveConnections.length) return this.liveAccountBoard(liveConnections);
     const registered = new Map<string, {
       mccCustomerId: string;
       googleStatus: string;
@@ -326,6 +333,7 @@ export class AdsAutomationService implements OnModuleInit {
     }));
     rows.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
     return {
+      live: false,
       summary: {
         total: rows.length,
         enabled: rows.filter((row) => row.googleStatus === 'ENABLED').length,
@@ -943,15 +951,85 @@ export class AdsAutomationService implements OnModuleInit {
   }
 
   /**
-   * 登记 MCC。令牌留空，本期不访问 Google。
+   * 登记 MCC。刷新令牌留空表示沿用原来的或环境变量里的。
    */
-  async createConnection(ownerUserId: number, mccCustomerId: string) {
-    const mcc = digits(mccCustomerId);
-    return this.prisma.googleAdsConnection.upsert({
+  async createConnection(
+    ownerUserId: number,
+    input: { mccCustomerId: string; loginCustomerId?: string; refreshToken?: string },
+  ) {
+    const mcc = normalizeMccKey(input.mccCustomerId);
+    const login = digits(input.loginCustomerId ?? '');
+    const token = input.refreshToken?.trim() ?? '';
+    const row = await this.prisma.googleAdsConnection.upsert({
       where: { ownerUserId_mccCustomerId: { ownerUserId, mccCustomerId: mcc } },
-      create: { ownerUserId, mccCustomerId: mcc },
-      update: {},
+      create: {
+        ownerUserId,
+        mccCustomerId: mcc,
+        loginCustomerId: login,
+        refreshTokenEnc: token ? this.encryptRefreshToken(token) : '',
+      },
+      update: {
+        ...(input.loginCustomerId != null ? { loginCustomerId: login } : {}),
+        ...(token ? { refreshTokenEnc: this.encryptRefreshToken(token) } : {}),
+      },
     });
+    return this.connectionView(row);
+  }
+
+  /**
+   * 告诉页面 Google Ads 应用配置缺哪几项，不返回令牌原文。
+   */
+  async googleAdsSetup(ownerUserId: number) {
+    const app = googleAdsAppConfig();
+    const missing: string[] = [];
+    if (!app.developerToken) missing.push('GOOGLE_ADS_DEVELOPER_TOKEN');
+    if (!app.clientId) missing.push('GOOGLE_ADS_CLIENT_ID');
+    if (!app.clientSecret) missing.push('GOOGLE_ADS_CLIENT_SECRET');
+    const connections = await this.prisma.googleAdsConnection.findMany({
+      where: { ownerUserId },
+      orderBy: { id: 'desc' },
+      include: { _count: { select: { customers: true } } },
+    });
+    return {
+      appReady: googleAdsAppReady(app),
+      hasEnvRefreshToken: Boolean(app.refreshToken),
+      hasEnvLoginCustomerId: Boolean(app.loginCustomerId),
+      apiVersion: app.apiVersion,
+      missing,
+      connections: connections.map((row) => ({
+        id: row.id,
+        mccCustomerId: row.mccCustomerId,
+        loginCustomerId: row.loginCustomerId,
+        hasRefreshToken: Boolean(row.refreshTokenEnc),
+        customerCount: row._count.customers,
+      })),
+    };
+  }
+
+  /**
+   * 从每个已配好的 MCC 拉取子账号，并补发还停在队列里的请求。
+   */
+  async syncGoogleAds(ownerUserId: number) {
+    if (!googleAdsAppReady()) {
+      throw new BadRequestException('请先在服务器环境变量里配置 Google Ads 开发者令牌和 OAuth 客户端');
+    }
+    const connections = await this.prisma.googleAdsConnection.findMany({ where: { ownerUserId } });
+    const synced: Array<{ mccCustomerId: string; loginCustomerId: string; customerCount: number }> = [];
+    for (const connection of connections) {
+      if (!this.credentialsFor(connection)) continue;
+      const customerCount = await this.syncConnection(connection);
+      const creds = this.credentialsFor(connection);
+      synced.push({
+        mccCustomerId: connection.mccCustomerId,
+        loginCustomerId: creds?.loginCustomerId ?? '',
+        customerCount,
+      });
+    }
+    if (!synced.length) {
+      throw new BadRequestException('请先保存 MCC 客户号。刷新令牌可以写在环境变量，也可以按 MCC 单独保存');
+    }
+    const flushed = await this.flushHeld(ownerUserId);
+    return { connections: synced, flushed };
   }
 
   /**
@@ -1113,10 +1191,20 @@ export class AdsAutomationService implements OnModuleInit {
   }
 
   /**
-   * 确认发布：写文章、本地系列和待提交报文。不调用 Google。
+   * 确认发布。Google Ads 已配置时直接创建搜索广告；否则仍只写入待提交队列。
    */
   async publish(ownerUserId: number, id: string, customerId?: string) {
     const job = await this.mustJob(ownerUserId, id);
+    const connection = await this.prisma.googleAdsConnection.findUnique({
+      where: { ownerUserId_mccCustomerId: { ownerUserId, mccCustomerId: job.mccCustomerId } },
+    });
+    const creds = connection ? this.credentialsFor(connection) : null;
+    if (creds && connection && job.campaign && (job.campaign.status === 'WAITING_SUBMIT' || job.campaign.status === 'SUBMIT_FAILED')) {
+      const ready = await this.prisma.googleAdsCustomer.count({ where: { connectionId: connection.id } });
+      if (!ready) await this.syncConnection(connection);
+      await this.submitCreate(ownerUserId, job.campaign.id, creds);
+      return this.getJob(ownerUserId, id);
+    }
     if (job.status === 'COMPLETED' && job.campaign) {
       return this.getJob(ownerUserId, id);
     }
@@ -1133,6 +1221,10 @@ export class AdsAutomationService implements OnModuleInit {
     });
     if (!account?.site) throw new BadRequestException('联盟账号还没有绑定内容站');
 
+    if (creds && connection) {
+      const ready = await this.prisma.googleAdsCustomer.count({ where: { connectionId: connection.id } });
+      if (!ready) await this.syncConnection(connection);
+    }
     const customer = await this.pickCustomer(ownerUserId, job.mccCustomerId, customerId);
     const merchant = await this.prisma.catalogMerchant.findUniqueOrThrow({
       where: { id: job.catalogMerchantId },
@@ -1167,6 +1259,7 @@ export class AdsAutomationService implements OnModuleInit {
     });
     const budgetMicros = BigInt(usdToMicros(draft.dailyBudgetUsd));
     const ceilingMicros = BigInt(usdToMicros(draft.cpcBidCeilingUsd));
+    let campaignId = 0;
 
     await this.prisma.$transaction(async (tx) => {
       await tx.adJob.update({
@@ -1175,7 +1268,7 @@ export class AdsAutomationService implements OnModuleInit {
           status: 'SUBMITTING',
           step: 'READY_FOR_REVIEW',
           progress: 90,
-          progressMessage: '正在保存待提交记录',
+          progressMessage: creds ? '正在提交到 Google Ads' : '正在保存待提交记录',
           customerId: customer.customerId,
           campaignName,
           idempotencyKey,
@@ -1209,6 +1302,7 @@ export class AdsAutomationService implements OnModuleInit {
           cpcBidCeilingMicros: ceilingMicros,
         },
       });
+      campaignId = campaign.id;
       await tx.adsOutbox.create({
         data: {
           ownerUserId,
@@ -1219,20 +1313,25 @@ export class AdsAutomationService implements OnModuleInit {
           snapshot: { articleId: article.id } as Prisma.InputJsonValue,
         },
       });
-      await tx.adJob.update({
-        where: { id: job.id },
-        data: { status: 'COMPLETED', progress: 100, progressMessage: '待提交', errorMessage: null },
-      });
-      await tx.adJobEvent.create({
-        data: {
-          jobId: job.id,
-          status: 'COMPLETED',
-          step: 'READY_FOR_REVIEW',
-          message: '已写入待提交队列，尚未调用 Google Ads',
-        },
-      });
+      if (!creds) {
+        await tx.adJob.update({
+          where: { id: job.id },
+          data: { status: 'COMPLETED', progress: 100, progressMessage: '待提交', errorMessage: null },
+        });
+        await tx.adJobEvent.create({
+          data: {
+            jobId: job.id,
+            status: 'COMPLETED',
+            step: 'READY_FOR_REVIEW',
+            message: '已写入待提交队列。配置 Google Ads API 后会自动发出',
+          },
+        });
+      }
     });
 
+    if (creds) {
+      await this.submitCreate(ownerUserId, campaignId, creds);
+    }
     return this.getJob(ownerUserId, id);
   }
 
@@ -1253,10 +1352,45 @@ export class AdsAutomationService implements OnModuleInit {
   }
 
   /**
-   * 把启用或暂停写成待提交记录。
+   * 启用或暂停。已接通 Google Ads 时立刻改远程系列，否则记成待提交。
    */
   async updateStatus(ownerUserId: number, id: number, status: 'ENABLED' | 'PAUSED') {
     const row = await this.mustCampaign(ownerUserId, id);
+    const creds = await this.credentialsForCampaign(ownerUserId, row.mccCustomerId);
+    if (creds) {
+      if (!row.googleCampaignResource) {
+        throw new BadRequestException('这个系列还没有同步到 Google，不能改状态');
+      }
+      const payload = {
+        partialFailure: false,
+        validateOnly: false,
+        mutateOperations: [
+          {
+            campaignOperation: {
+              update: { resourceName: row.googleCampaignResource, status },
+              updateMask: 'status',
+            },
+          },
+        ],
+      };
+      await this.googleAds.mutate(row.customerId, payload, creds);
+      const updated = await this.prisma.adAutomationCampaign.update({
+        where: { id: row.id },
+        data: { status },
+      });
+      await this.prisma.adsOutbox.create({
+        data: {
+          ownerUserId,
+          campaignId: row.id,
+          kind: 'UPDATE_STATUS',
+          status: 'SENT',
+          sentAt: new Date(),
+          payload,
+          snapshot: { status: row.status } as Prisma.InputJsonValue,
+        },
+      });
+      return this.campaignJson(updated);
+    }
     const next = status === 'PAUSED' ? 'WAITING_PAUSE' : 'WAITING_ENABLE';
     if (row.status === next) return this.campaignJson(row);
     const payload = {
@@ -1289,6 +1423,41 @@ export class AdsAutomationService implements OnModuleInit {
     const amountMicros = usdToMicros(dailyBudgetUsd);
     if (BigInt(amountMicros) <= 0n) throw new BadRequestException('日预算必须大于 0');
     const row = await this.mustCampaign(ownerUserId, id);
+    const creds = await this.credentialsForCampaign(ownerUserId, row.mccCustomerId);
+    if (creds) {
+      if (!row.googleBudgetResource) {
+        throw new BadRequestException('这个系列还没有同步到 Google，不能改预算');
+      }
+      const payload = {
+        partialFailure: false,
+        validateOnly: false,
+        mutateOperations: [
+          {
+            campaignBudgetOperation: {
+              update: { resourceName: row.googleBudgetResource, amountMicros },
+              updateMask: 'amountMicros',
+            },
+          },
+        ],
+      };
+      await this.googleAds.mutate(row.customerId, payload, creds);
+      const updated = await this.prisma.adAutomationCampaign.update({
+        where: { id: row.id },
+        data: { dailyBudgetMicros: BigInt(amountMicros) },
+      });
+      await this.prisma.adsOutbox.create({
+        data: {
+          ownerUserId,
+          campaignId: row.id,
+          kind: 'UPDATE_BUDGET',
+          status: 'SENT',
+          sentAt: new Date(),
+          payload,
+          snapshot: { dailyBudgetMicros: row.dailyBudgetMicros.toString() },
+        },
+      });
+      return this.campaignJson(updated);
+    }
     const payload = {
       operations: [
         {
@@ -1425,7 +1594,9 @@ export class AdsAutomationService implements OnModuleInit {
       return found;
     }
     const eligible = customers.filter((item) => isCustomerEligible(item));
-    if (!eligible.length) throw new BadRequestException('该 MCC 下没有可投放的 CID');
+    if (!eligible.length) {
+      throw new BadRequestException('该 MCC 下没有可投放的美元子账号。请先同步账户，并确认子账号已启用且币种为 USD');
+    }
     return eligible[0];
   }
 
@@ -1500,13 +1671,312 @@ export class AdsAutomationService implements OnModuleInit {
   }
 
   private async mustConnection(ownerUserId: number, mccCustomerId: string) {
-    const connection = await this.prisma.googleAdsConnection.findUnique({
-      where: {
-        ownerUserId_mccCustomerId: { ownerUserId, mccCustomerId: digits(mccCustomerId) },
-      },
+    const key = normalizeMccKey(mccCustomerId);
+    let connection = await this.prisma.googleAdsConnection.findUnique({
+      where: { ownerUserId_mccCustomerId: { ownerUserId, mccCustomerId: key } },
     });
+    const numeric = digits(mccCustomerId);
+    if (!connection && numeric && numeric !== key) {
+      connection = await this.prisma.googleAdsConnection.findUnique({
+        where: { ownerUserId_mccCustomerId: { ownerUserId, mccCustomerId: numeric } },
+      });
+    }
     if (!connection) throw new NotFoundException('MCC 不存在');
     return connection;
+  }
+
+  /**
+   * 已接通的 MCC 只展示接口同步下来的子账号。
+   */
+  private liveAccountBoard(connections: Array<{
+    mccCustomerId: string;
+    loginCustomerId: string;
+    customers: Array<{
+      customerId: string;
+      googleStatus: string;
+      availability: string;
+      activeCampaignCount: number;
+      updatedAt: Date;
+    }>;
+  }>) {
+    const rows = connections.flatMap((connection) => connection.customers.map((customer) => {
+      const customerId = digits(customer.customerId);
+      return {
+        id: customerId,
+        mccCustomerId: connection.mccCustomerId,
+        mccLabel: connection.loginCustomerId ? digits(connection.loginCustomerId) : connection.mccCustomerId,
+        customerId,
+        googleStatus: customer.googleStatus,
+        availability: accountAvailability(customer.googleStatus, customer.activeCampaignCount, customer.availability),
+        activeCampaignCount: customer.activeCampaignCount,
+        updatedAt: customer.updatedAt.toISOString(),
+      };
+    }));
+    rows.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+    return {
+      live: true,
+      summary: {
+        total: rows.length,
+        enabled: rows.filter((row) => row.googleStatus === 'ENABLED').length,
+        suspended: rows.filter((row) => row.googleStatus === 'SUSPENDED').length,
+        closed: rows.filter((row) => row.googleStatus === 'CANCELED' || row.googleStatus === 'CLOSED').length,
+        unknown: rows.filter((row) => row.googleStatus === 'UNKNOWN').length,
+      },
+      rows,
+    };
+  }
+
+  private connectionView(row: {
+    id: number;
+    mccCustomerId: string;
+    loginCustomerId: string;
+    refreshTokenEnc: string;
+  }) {
+    return {
+      id: row.id,
+      mccCustomerId: row.mccCustomerId,
+      loginCustomerId: row.loginCustomerId,
+      hasRefreshToken: Boolean(row.refreshTokenEnc),
+    };
+  }
+
+  private credentialsFor(connection: {
+    mccCustomerId: string;
+    loginCustomerId: string;
+    refreshTokenEnc: string;
+  }): GoogleAdsCredentials | null {
+    const app = googleAdsAppConfig();
+    if (!googleAdsAppReady(app)) return null;
+    const refreshToken = this.readRefreshToken(connection.refreshTokenEnc) || app.refreshToken;
+    const fromKey = digits(connection.mccCustomerId);
+    const loginCustomerId = digits(connection.loginCustomerId) || app.loginCustomerId || (fromKey.length >= 10 ? fromKey : '');
+    if (!refreshToken || loginCustomerId.length < 10) return null;
+    return {
+      developerToken: app.developerToken,
+      clientId: app.clientId,
+      clientSecret: app.clientSecret,
+      refreshToken,
+      loginCustomerId,
+      apiVersion: app.apiVersion,
+    };
+  }
+
+  private async credentialsForCampaign(ownerUserId: number, mccCustomerId: string) {
+    const connection = await this.prisma.googleAdsConnection.findUnique({
+      where: { ownerUserId_mccCustomerId: { ownerUserId, mccCustomerId } },
+    });
+    return connection ? this.credentialsFor(connection) : null;
+  }
+
+  private encryptRefreshToken(token: string): string {
+    return this.crypto.encrypt({ refreshToken: token.trim() });
+  }
+
+  private readRefreshToken(payload: string): string {
+    if (!payload) return '';
+    try {
+      return this.crypto.decrypt<{ refreshToken: string }>(payload).refreshToken.trim();
+    } catch {
+      return '';
+    }
+  }
+
+  /**
+   * 用 customer_client 覆盖这条 MCC 下的子账号，并统计当前启用的系列。
+   */
+  private async syncConnection(connection: {
+    id: number;
+    mccCustomerId: string;
+    loginCustomerId: string;
+    refreshTokenEnc: string;
+  }): Promise<number> {
+    const creds = this.credentialsFor(connection);
+    if (!creds) throw new BadRequestException('这条 MCC 还不能调用 Google Ads');
+    const children = await this.googleAds.listChildAccounts(creds);
+    const seen = new Set<string>();
+    for (const child of children) {
+      seen.add(child.customerId);
+      let activeCampaignCount = 0;
+      if (child.googleStatus === 'ENABLED') {
+        try {
+          activeCampaignCount = await this.googleAds.countEnabledCampaigns(child.customerId, creds);
+        } catch {
+          activeCampaignCount = 0;
+        }
+      }
+      const availability = child.googleStatus === 'ENABLED' ? 'available' : 'disabled';
+      await this.prisma.googleAdsCustomer.upsert({
+        where: { connectionId_customerId: { connectionId: connection.id, customerId: child.customerId } },
+        create: {
+          connectionId: connection.id,
+          customerId: child.customerId,
+          googleStatus: child.googleStatus,
+          availability,
+          currencyCode: child.currencyCode || 'USD',
+          timeZone: child.timeZone || 'UTC',
+          activeCampaignCount,
+        },
+        update: {
+          googleStatus: child.googleStatus,
+          availability,
+          currencyCode: child.currencyCode || 'USD',
+          timeZone: child.timeZone || 'UTC',
+          activeCampaignCount,
+        },
+      });
+    }
+    if (seen.size === 0) {
+      await this.prisma.googleAdsCustomer.deleteMany({ where: { connectionId: connection.id } });
+    } else {
+      await this.prisma.googleAdsCustomer.deleteMany({
+        where: { connectionId: connection.id, customerId: { notIn: [...seen] } },
+      });
+    }
+    return children.length;
+  }
+
+  /**
+   * 把还没发出的队列按当前保存的资源名补发给 Google。
+   */
+  private async flushHeld(ownerUserId: number) {
+    const pending = await this.prisma.adsOutbox.findMany({
+      where: { ownerUserId, status: 'HELD' },
+      orderBy: { id: 'asc' },
+      include: { campaign: true },
+    });
+    const flushed: Array<{ id: number; ok: boolean; message: string }> = [];
+    for (const row of pending) {
+      const creds = await this.credentialsForCampaign(ownerUserId, row.campaign.mccCustomerId);
+      if (!creds) continue;
+      try {
+        if (row.kind === 'CREATE_CAMPAIGN') {
+          await this.submitCreate(ownerUserId, row.campaignId, creds);
+        } else if (row.kind === 'UPDATE_STATUS') {
+          const status = row.campaign.status === 'WAITING_PAUSE' ? 'PAUSED' : 'ENABLED';
+          await this.updateStatus(ownerUserId, row.campaignId, status);
+          await this.prisma.adsOutbox.update({
+            where: { id: row.id },
+            data: { status: 'SENT', sentAt: new Date(), errorMessage: null },
+          });
+        } else if (row.kind === 'UPDATE_BUDGET' && row.campaign.googleBudgetResource) {
+          await this.googleAds.mutate(row.campaign.customerId, {
+            partialFailure: false,
+            validateOnly: false,
+            mutateOperations: [
+              {
+                campaignBudgetOperation: {
+                  update: {
+                    resourceName: row.campaign.googleBudgetResource,
+                    amountMicros: row.campaign.dailyBudgetMicros.toString(),
+                  },
+                  updateMask: 'amountMicros',
+                },
+              },
+            ],
+          }, creds);
+          await this.prisma.adsOutbox.update({
+            where: { id: row.id },
+            data: { status: 'SENT', sentAt: new Date(), errorMessage: null },
+          });
+        }
+        flushed.push({ id: row.id, ok: true, message: '已提交' });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : '提交失败';
+        await this.prisma.adsOutbox.update({
+          where: { id: row.id },
+          data: { status: 'FAILED', errorMessage: message },
+        });
+        flushed.push({ id: row.id, ok: false, message });
+      }
+    }
+    return flushed;
+  }
+
+  /**
+   * 发送创建系列的原子请求，并把 Google 返回的资源名记下来。
+   */
+  private async submitCreate(ownerUserId: number, campaignId: number, creds: GoogleAdsCredentials) {
+    const campaign = await this.mustCampaign(ownerUserId, campaignId);
+    if (campaign.googleCampaignResource) {
+      await this.prisma.adAutomationCampaign.update({
+        where: { id: campaign.id },
+        data: { status: 'ENABLED' },
+      });
+      return;
+    }
+    const outbox = await this.prisma.adsOutbox.findFirst({
+      where: { campaignId, ownerUserId, kind: 'CREATE_CAMPAIGN', status: { in: ['HELD', 'FAILED'] } },
+      orderBy: { id: 'desc' },
+    });
+    if (!outbox) throw new BadRequestException('没有可提交的创建请求');
+    const payload = outbox.payload;
+    if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
+      throw new BadRequestException('创建请求无效');
+    }
+    try {
+      const data = await this.googleAds.mutate(campaign.customerId, payload as Record<string, unknown>, creds);
+      const resources = readCreatedResources(data);
+      if (!resources.campaign) throw new Error('Google Ads 没有返回广告系列编号');
+      await this.prisma.$transaction(async (tx) => {
+        await tx.adAutomationCampaign.update({
+          where: { id: campaign.id },
+          data: {
+            status: 'ENABLED',
+            googleCampaignResource: resources.campaign,
+            googleBudgetResource: resources.budget,
+          },
+        });
+        await tx.adsOutbox.update({
+          where: { id: outbox.id },
+          data: { status: 'SENT', sentAt: new Date(), errorMessage: null },
+        });
+        await tx.adJob.update({
+          where: { id: campaign.jobId },
+          data: { status: 'COMPLETED', progress: 100, progressMessage: '已提交到 Google Ads', errorMessage: null },
+        });
+        await tx.adJobEvent.create({
+          data: {
+            jobId: campaign.jobId,
+            status: 'COMPLETED',
+            step: 'READY_FOR_REVIEW',
+            message: `已在 Google Ads 创建系列 ${resources.campaign}`,
+          },
+        });
+        const customers = await tx.googleAdsCustomer.findMany({
+          where: {
+            customerId: campaign.customerId,
+            connection: { ownerUserId, mccCustomerId: campaign.mccCustomerId },
+          },
+          select: { id: true },
+        });
+        if (customers.length) {
+          await tx.googleAdsCustomer.updateMany({
+            where: { id: { in: customers.map((item) => item.id) } },
+            data: { activeCampaignCount: { increment: 1 } },
+          });
+        }
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : '提交 Google Ads 失败';
+      await this.prisma.adsOutbox.update({
+        where: { id: outbox.id },
+        data: { status: 'FAILED', errorMessage: message },
+      });
+      await this.prisma.adAutomationCampaign.update({
+        where: { id: campaign.id },
+        data: { status: 'SUBMIT_FAILED' },
+      });
+      await this.prisma.adJob.update({
+        where: { id: campaign.jobId },
+        data: {
+          status: 'READY_FOR_REVIEW',
+          progress: 80,
+          progressMessage: '提交 Google Ads 失败',
+          errorMessage: message,
+        },
+      });
+      throw new BadRequestException(message);
+    }
   }
 
   private async mustJob(ownerUserId: number, id: string) {

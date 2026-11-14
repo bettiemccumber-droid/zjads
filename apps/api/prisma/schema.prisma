@@ -524,11 +524,12 @@ model CatalogMerchant {
   @@map("catalog_merchants")
 }
 
-/// 一个 MCC 一条连接。刷新令牌可空，本期不调用 Google。
+/// 一个 MCC 一条连接。刷新令牌加密保存；loginCustomerId 是 Google 上的经理账号客户号。
 model GoogleAdsConnection {
   id              Int      @id @default(autoincrement())
   ownerUserId     Int      @map("owner_user_id")
   mccCustomerId   String   @map("mcc_customer_id") @db.VarChar(16)
+  loginCustomerId String   @default("") @map("login_customer_id") @db.VarChar(16)
   refreshTokenEnc String   @default("") @map("refresh_token_enc") @db.VarChar(2048)
   createdAt       DateTime @default(now()) @map("created_at")
   updatedAt       DateTime @updatedAt @map("updated_at")
@@ -628,7 +629,7 @@ model Article {
   @@map("articles")
 }
 
-/// 本地广告系列。状态停留在待提交，不表示 Google 已启用。
+/// 本地广告系列。ENABLED / PAUSED 表示 Google 上的状态；WAITING_* 表示还没发出。
 model AdAutomationCampaign {
   id                  Int      @id @default(autoincrement())
   ownerUserId         Int      @map("owner_user_id")
@@ -642,6 +643,8 @@ model AdAutomationCampaign {
   dailyBudgetMicros   BigInt   @map("daily_budget_micros")
   bidding             String   @db.VarChar(32)
   cpcBidCeilingMicros BigInt   @map("cpc_bid_ceiling_micros")
+  googleCampaignResource String @default("") @map("google_campaign_resource") @db.VarChar(128)
+  googleBudgetResource   String @default("") @map("google_budget_resource") @db.VarChar(128)
   createdAt           DateTime @default(now()) @map("created_at")
   updatedAt           DateTime @updatedAt @map("updated_at")
 
@@ -653,7 +656,7 @@ model AdAutomationCampaign {
   @@map("ad_automation_campaigns")
 }
 
-/// 将来发给 Google Ads API 的请求。本期只保存，不发送。
+/// 发给 Google Ads API 的请求。HELD 表示还没发出，SENT 已成功，FAILED 可重试。
 model AdsOutbox {
   id         Int      @id @default(autoincrement())
   ownerUserId Int     @map("owner_user_id")
@@ -662,6 +665,8 @@ model AdsOutbox {
   status     String   @default("HELD") @db.VarChar(16)
   payload    Json
   snapshot   Json
+  errorMessage String? @map("error_message") @db.Text
+  sentAt     DateTime? @map("sent_at")
   createdAt  DateTime @default(now()) @map("created_at")
 
   campaign AdAutomationCampaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)

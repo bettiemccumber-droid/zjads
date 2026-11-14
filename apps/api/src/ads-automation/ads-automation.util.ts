@@ -446,7 +446,7 @@ function escapeHtml(value: string): string {
 }
 
 /**
- * 判断子账户能否承接新系列。
+ * 判断子账户能否承接新系列。币种跟日预算的美元一致；时区只记录，不作为门槛。
  */
 export function isCustomerEligible(customer: {
   googleStatus: string;
@@ -457,7 +457,6 @@ export function isCustomerEligible(customer: {
   return (
     customer.availability === 'available' &&
     customer.googleStatus === 'ENABLED' &&
-    customer.currencyCode === 'USD' &&
-    customer.timeZone === 'Asia/Shanghai'
+    customer.currencyCode === 'USD'
   );
 }

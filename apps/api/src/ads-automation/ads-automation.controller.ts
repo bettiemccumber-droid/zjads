@@ -456,14 +456,28 @@ export class AdsAutomationController {
     return ok(await this.ads.createMerchant(user.id, body));
   }
 
+  @Get('google-ads/setup')
+  async googleAdsSetup(@CurrentUser() user: AuthUser) {
+    return ok(await this.ads.googleAdsSetup(user.id));
+  }
+
   @Post('google-ads/connections')
-  async createConnection(@CurrentUser() user: AuthUser, @Body() body: { mccCustomerId: string }) {
+  async createConnection(
+    @CurrentUser() user: AuthUser,
+    @Body() body: { mccCustomerId: string; loginCustomerId?: string; refreshToken?: string },
+  ) {
     this.assertWriter(user);
-    return ok(await this.ads.createConnection(user.id, body.mccCustomerId));
+    return ok(await this.ads.createConnection(user.id, body));
+  }
+
+  @Post('google-ads/sync')
+  async syncGoogleAds(@CurrentUser() user: AuthUser) {
+    this.assertWriter(user);
+    return ok(await this.ads.syncGoogleAds(user.id), '已从 Google Ads 同步子账号');
   }
 
   /**
-   * 子账号列表。现在仍读日报。接入 Google Ads API 时要改成 MCC 当前子账号和账户状态，见 listAccountBoard。
+   * 子账号列表。配好 Google Ads 后返回 MCC 当前子账号；否则仍读日报。
    */
   @Get('google-ads/accounts')
   async listAccountBoard(@CurrentUser() user: AuthUser) {

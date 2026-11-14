@@ -105,6 +105,7 @@ interface AdJob {
   progressMessage: string;
   errorMessage: string | null;
   draft?: { headlines?: string[]; merchantUrl?: string; dailyBudgetUsd?: string; cpcBidCeilingUsd?: string } | null;
+  campaign?: { status: string } | null;
 }
 
 interface SettlementRow {
@@ -342,6 +343,7 @@ function campaignStatusView(status: string) {
   if (status === 'WAITING_SUBMIT') return { text: '待提交', tone: 'wait' };
   if (status === 'WAITING_PAUSE') return { text: '待暂停', tone: 'off' };
   if (status === 'WAITING_ENABLE') return { text: '待启用', tone: 'on' };
+  if (status === 'SUBMIT_FAILED') return { text: '提交失败', tone: 'off' };
   return { text: status || '—', tone: 'wait' };
 }
 
@@ -1576,8 +1578,14 @@ export default function MyMerchantsPage() {
                   <Button type="primary" onClick={() => void api.post<ApiResult<AdJob>>(`/ad-jobs/${job.id}/publish`, {}).then(async (res) => {
                     if (!res.data.success) return message.error(res.data.message || '发布失败');
                     setJob(res.data.data);
-                    message.success('已写入待提交，文章到文章管理里查看');
+                    const submitted = res.data.data.campaign?.status === 'ENABLED';
+                    message.success(submitted ? '已提交到 Google Ads，文章到文章管理里查看' : '已写入待提交，文章到文章管理里查看');
                     await load();
+                  }).catch(async (err: { response?: { data?: { message?: string | string[] } } }) => {
+                    const apiMessage = err.response?.data?.message;
+                    message.error(Array.isArray(apiMessage) ? apiMessage.join('；') : apiMessage || '发布失败');
+                    const again = await api.get<ApiResult<AdJob>>(`/ad-jobs/${job.id}`).catch(() => null);
+                    if (again?.data.success) setJob(again.data.data);
                   })}>确认发布</Button>
                 )}
               </Space>

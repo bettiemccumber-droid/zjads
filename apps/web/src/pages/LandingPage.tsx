@@ -194,6 +194,7 @@ export default function LandingPage() {
   useEffect(() => {
     document.title = 'Zhijun Ads Manager';
     document.documentElement.lang = lang === 'zh' ? 'zh-CN' : 'en';
+    document.documentElement.setAttribute('data-rendered', '1');
     setCanonical('/');
   }, [lang]);
 

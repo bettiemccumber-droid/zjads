@@ -9,6 +9,7 @@
       name="description"
       content="Zhijun Ads Manager is an internal Google Ads management tool used only to manage our own Google Ads accounts. It does not generate AI content."
     />
+    <meta name="application-name" content="Zhijun Ads Manager" />
     <style>
       #compliance-fallback {
         display: block;
@@ -19,14 +20,9 @@
         line-height: 1.6;
         color: #111;
       }
-      html[data-rendered='1'] #compliance-fallback {
-        display: none;
-      }
     </style>
   </head>
   <body>
-    <div id="root"></div>
-    <!-- 仅首页/隐私/条款刷新时短暂展示，避免业务页刷新先闪出合规文案 -->
     <div id="compliance-fallback">
       <h1>Zhijun Ads Manager</h1>
       <p>
@@ -47,6 +43,7 @@
         <a href="https://www.zjads.top/terms">Terms of Service</a>
       </p>
     </div>
+    <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

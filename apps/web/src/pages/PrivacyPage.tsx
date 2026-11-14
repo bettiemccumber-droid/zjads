@@ -39,7 +39,14 @@ export default function PrivacyPage() {
         </ul>
         <p>
           The data is used only inside Zhijun Ads Manager, and only to provide advertising
-          management, data viewing, and adjustment of the firm’s own campaigns.
+          management, data viewing, and adjustment of the firm’s own campaigns. Zhijun Ads Manager
+          complies with the{' '}
+          <a href="https://developers.google.com/terms/api-services-user-data-policy" rel="noreferrer">
+            Google API Services User Data Policy
+          </a>
+          , including the Limited Use requirements. adwords data is not used for any purpose unrelated
+          to that advertising management, including resale, industry-data analysis, or training
+          models.
         </p>
         <p>
           The data is not sold. It is not used to target advertisements to consumers. It is not used

@@ -24,6 +24,9 @@ const picked = pickArticleImages([
 assert.strictEqual(picked.cover, 'https://cdn.example.com/a.jpg');
 assert.deepStrictEqual(picked.body, ['https://cdn.example.com/a.jpg', 'https://cdn.example.com/b.jpg']);
 
+const many = pickArticleImages([1, 2, 3, 4, 5, 6].map((n) => `https://cdn.example.com/${n}.jpg`));
+assert.strictEqual(many.body.length, 5);
+
 const linked = renderAffiliateText('Try [[affiliate:ClassPass UK]] today http://evil.example', 'https://track.example/x');
 assert.ok(linked.includes('href="https://track.example/x"'));
 assert.ok(linked.includes('>ClassPass UK</a>'));
@@ -33,7 +36,8 @@ const html = sampleArticleHtml(article, 'ClassPass', 'https://track.example/x', 
 assert.ok(html.includes('<figure>'));
 assert.ok(html.includes('class="link--affiliate"'));
 assert.ok((html.match(/link--affiliate/g) || []).length >= 2);
-assert.ok(html.indexOf('<p>I tried') < html.indexOf('<figure>'));
-assert.ok(html.indexOf('<figure>') < html.indexOf('<h2>What you get</h2>'));
+assert.ok(html.indexOf('<p>I tried') < html.indexOf('<h2>What you get</h2>'));
+assert.ok(html.indexOf('<h2>What you get</h2>') < html.indexOf('<figure>'));
 assert.ok(!html.startsWith('<p><img'));
+assert.ok(!html.trimEnd().endsWith('</figure>'));
 console.log('ok');

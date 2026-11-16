@@ -76,7 +76,7 @@ export class ArticlePublisher {
       merchantUrl: input.merchantUrl,
       merchantName: input.merchantName,
       image: input.image?.trim() || '',
-      images: (input.images ?? []).filter((url) => /^https?:\/\//i.test(url)).slice(0, 8),
+      images: (input.images ?? []).filter((url) => /^https?:\/\//i.test(url)).slice(0, 5),
       category: 'Product Review',
       author: 'Alex Jius',
     };

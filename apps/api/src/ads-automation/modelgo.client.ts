@@ -1,12 +1,16 @@
 import axios from 'axios';
 
 /**
- * ModelGo 的调用配置。密钥只从环境变量读取。
+ * GemAI 调用配置。优先读 GEMAI_*，兼容旧的 MODELGO_*。
  */
 export function modelGoConfig(): { apiKey: string; baseUrl: string; model: string; enabled: boolean } {
-  const apiKey = process.env.MODELGO_API_KEY?.trim() ?? '';
-  const baseUrl = (process.env.MODELGO_BASE_URL?.trim() || 'https://api.modelgo.ai/v1').replace(/\/$/, '');
-  const model = process.env.MODELGO_MODEL?.trim() ?? '';
+  const apiKey = (process.env.GEMAI_API_KEY ?? process.env.MODELGO_API_KEY)?.trim() ?? '';
+  const baseUrl = (
+    process.env.GEMAI_BASE_URL?.trim()
+    || process.env.MODELGO_BASE_URL?.trim()
+    || 'https://api.gemai.cc/v1'
+  ).replace(/\/$/, '');
+  const model = (process.env.GEMAI_MODEL ?? process.env.MODELGO_MODEL)?.trim() ?? '';
   return { apiKey, baseUrl, model, enabled: apiKey.length > 0 };
 }
 
@@ -17,7 +21,7 @@ let resolvedModel = '';
  */
 export async function resolveModelGoModel(): Promise<string> {
   const config = modelGoConfig();
-  if (!config.enabled) throw new Error('还没有配置 ModelGo 密钥');
+  if (!config.enabled) throw new Error('还没有配置 AI 密钥');
   if (config.model) return config.model;
   if (resolvedModel) return resolvedModel;
   const response = await axios.get(`${config.baseUrl}/models`, {
@@ -29,7 +33,7 @@ export async function resolveModelGoModel(): Promise<string> {
   const ids = modelIds(response.data).filter((id) => !/embed|image|whisper|tts|rerank|video|audio/i.test(id));
   const preferred = [/sonnet/i, /claude/i, /gpt/i, /gemini/i];
   const picked = preferred.map((pattern) => ids.find((id) => pattern.test(id))).find(Boolean) ?? ids[0];
-  if (!picked) throw new Error('ModelGo 没有可用的文本模型');
+  if (!picked) throw new Error('当前密钥没有可用的文本模型');
   resolvedModel = picked;
   return picked;
 }
@@ -54,7 +58,7 @@ export async function completeModelGoChat(
   );
   if (response.status >= 400) throw new Error(explainModelGoError(response.status, response.data));
   const content = messageText(response.data?.choices?.[0]?.message);
-  if (!content) throw new Error('ModelGo 没有返回文案');
+  if (!content) throw new Error('AI 没有返回文案');
   return content;
 }
 
@@ -63,12 +67,12 @@ export async function completeModelGoChat(
  */
 export function explainModelGoError(status: number, body: unknown): string {
   const text = JSON.stringify(body ?? '').slice(0, 400);
-  if (status === 401) return 'ModelGo 密钥无效，请在控制台重新建一把并更新服务器配置';
-  if (status === 402 || /insufficient|balance|quota|credit|余额/i.test(text)) return 'ModelGo 余额不足，请先在控制台充值';
-  if (status === 403) return 'ModelGo 不允许调用这个模型，请在模型广场换一个当前密钥能用的模型';
+  if (status === 401) return 'AI 密钥无效，请在控制台重新建一把并更新服务器配置';
+  if (status === 402 || /insufficient|balance|quota|credit|余额/i.test(text)) return 'AI 余额不足，请先在控制台充值';
+  if (status === 403) return '当前密钥不允许调用这个模型，请换成可用的模型名';
   const detail = errorDetail(body);
-  if (detail) return `ModelGo 调用失败：${detail}`;
-  return `ModelGo 调用失败（${status}）`;
+  if (detail) return `AI 调用失败：${detail}`;
+  return `AI 调用失败（${status}）`;
 }
 
 /**

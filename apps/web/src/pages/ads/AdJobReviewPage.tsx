@@ -409,7 +409,11 @@ export default function AdJobReviewPage() {
           setJob(res.data.data);
           if (res.data.data.draft) setDraft(hydrateDraft(res.data.data.draft));
           const submitted = res.data.data.campaign?.status === 'ENABLED';
-          message.success(submitted ? '已提交到 Google Ads' : '已写入待提交队列');
+          message.success(
+            submitted
+              ? '已提交到 Google Ads（文章需在「快速发布文章」单独生成）'
+              : '已写入待提交队列（文章需在「快速发布文章」单独生成）',
+          );
         } catch (err) {
           if (err instanceof Error && (err.message === 'save failed' || err.message === 'publish failed')) {
             await loadJob().catch(() => undefined);

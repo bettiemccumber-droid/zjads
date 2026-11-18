@@ -1364,16 +1364,13 @@ export class AdsAutomationService implements OnModuleInit {
       where: { id: job.channelAccountId, ownerUserId },
       include: { platform: true, site: true },
     });
-    if (!account?.site) throw new BadRequestException('联盟账号还没有绑定内容站');
+    if (!account) throw new BadRequestException('联盟账号不存在');
 
     if (creds && connection) {
       const ready = await this.prisma.googleAdsCustomer.count({ where: { connectionId: connection.id } });
       if (!ready) await this.syncConnection(connection);
     }
     const customer = await this.pickCustomer(ownerUserId, job.mccCustomerId, customerId);
-    const merchant = await this.prisma.catalogMerchant.findUniqueOrThrow({
-      where: { id: job.catalogMerchantId },
-    });
     const suggested = await this.suggestCampaignName(ownerUserId, job, account.affiliateAlias);
     let campaignName = suggested.name;
     if (campaignNameInput?.trim()) {
@@ -1389,22 +1386,16 @@ export class AdsAutomationService implements OnModuleInit {
     });
     if (duplicate) return this.getJob(ownerUserId, duplicate.id);
 
-    const trackUrl = buildTrackUrl(account.platform.code, draft.merchantUrl, account.trackLinkPrefix);
-    const body = articleBody(merchant.name, trackUrl);
-    const published = await this.publishToSite(account.site, {
-      title: draft.headlines[0] || merchant.name,
-      bodyHtml: body,
-      trackUrl,
-      merchantUrl: draft.merchantUrl,
-      merchantName: merchant.name,
-    });
+    // 提交广告不再自动发内容站文章（旧逻辑只会发一行商家链接，正文不对）。
+    // 文章请走「快速发布文章」流程，生成完整正文后再发。
     const payload = buildCreateCampaignPayload({
       customerId: customer.customerId,
       campaignName,
       draft,
     });
     const budgetMicros = BigInt(usdToMicros(draft.dailyBudgetUsd));
-    const ceilingMicros = BigInt(usdToMicros(draft.cpcBidCeilingUsd));
+    const ceilingRaw = draft.cpcBidCeilingUsd?.trim() || '';
+    const ceilingMicros = ceilingRaw ? BigInt(usdToMicros(ceilingRaw)) : 0n;
     let campaignId = 0;
 
     await this.prisma.$transaction(async (tx) => {
@@ -1418,19 +1409,6 @@ export class AdsAutomationService implements OnModuleInit {
           customerId: customer.customerId,
           campaignName,
           idempotencyKey,
-        },
-      });
-      const article = await tx.article.create({
-        data: {
-          ownerUserId,
-          siteId: account.site!.id,
-          adJobId: job.id,
-          title: draft.headlines[0],
-          body,
-          trackUrl,
-          merchantUrl: draft.merchantUrl,
-          articleUrl: published.articleUrl,
-          publishStatus: published.articleUrl ? 'published' : 'pending_site',
         },
       });
       const campaign = await tx.adAutomationCampaign.create({
@@ -1456,7 +1434,7 @@ export class AdsAutomationService implements OnModuleInit {
           kind: 'CREATE_CAMPAIGN',
           status: 'HELD',
           payload: payload as Prisma.InputJsonValue,
-          snapshot: { articleId: article.id } as Prisma.InputJsonValue,
+          snapshot: {} as Prisma.InputJsonValue,
         },
       });
       if (!creds) {
@@ -2579,13 +2557,6 @@ function midFromUrl(url: string): string {
   } catch {
     return 'merchant';
   }
-}
-
-/**
- * 文章正文只放联盟跟踪链接，广告最终到达网址仍是商家网址。
- */
-function articleBody(merchantName: string, trackUrl: string): string {
-  return `<p><a href="${trackUrl}">${merchantName}</a></p>`;
 }
 
 /**

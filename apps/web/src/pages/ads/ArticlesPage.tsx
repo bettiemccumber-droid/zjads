@@ -64,7 +64,7 @@ export default function ArticlesPage() {
         type="info"
         showIcon
         style={{ marginBottom: 16 }}
-        message="文章地址是内容站上的文章。广告最终到达网址是商家网址。正文里的超链接是联盟跟踪链接。"
+        message="文章地址是内容站上的文章。广告最终到达网址是商家网址。正文里的超链接是联盟跟踪链接。提交广告系列不会再自动发文，请用「快速发布文章」生成完整正文后再发。"
       />
       <Table
         rowKey="id"

@@ -1017,13 +1017,19 @@ export class AdsAutomationService implements OnModuleInit {
     const synced: Array<{ mccCustomerId: string; loginCustomerId: string; customerCount: number }> = [];
     for (const connection of connections) {
       if (!this.credentialsFor(connection)) continue;
-      const customerCount = await this.syncConnection(connection);
-      const creds = this.credentialsFor(connection);
-      synced.push({
-        mccCustomerId: connection.mccCustomerId,
-        loginCustomerId: creds?.loginCustomerId ?? '',
-        customerCount,
-      });
+      try {
+        const customerCount = await this.syncConnection(connection);
+        const creds = this.credentialsFor(connection);
+        synced.push({
+          mccCustomerId: connection.mccCustomerId,
+          loginCustomerId: creds?.loginCustomerId ?? '',
+          customerCount,
+        });
+      } catch (error) {
+        if (error instanceof BadRequestException) throw error;
+        const reason = error instanceof Error ? error.message : '同步 Google Ads 失败';
+        throw new BadRequestException(reason);
+      }
     }
     if (!synced.length) {
       throw new BadRequestException('请先保存 MCC 客户号。刷新令牌可以写在环境变量，也可以按 MCC 单独保存');
@@ -1749,7 +1755,9 @@ export class AdsAutomationService implements OnModuleInit {
     if (!googleAdsAppReady(app)) return null;
     const refreshToken = this.readRefreshToken(connection.refreshTokenEnc) || app.refreshToken;
     const fromKey = digits(connection.mccCustomerId);
-    const loginCustomerId = digits(connection.loginCustomerId) || app.loginCustomerId || (fromKey.length >= 10 ? fromKey : '');
+    // 优先用本条 MCC 自己的登录客户号；不要被全局环境变量盖成别的经理号。
+    const loginCustomerId =
+      digits(connection.loginCustomerId) || (fromKey.length >= 10 ? fromKey : '') || app.loginCustomerId;
     if (!refreshToken || loginCustomerId.length < 10) return null;
     return {
       developerToken: app.developerToken,

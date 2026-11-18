@@ -1,0 +1,1358 @@
+{
+  "geo": {
+    "AF": "2004",
+    "AL": "2008",
+    "AQ": "2010",
+    "DZ": "2012",
+    "AS": "2016",
+    "AD": "2020",
+    "AO": "2024",
+    "AG": "2028",
+    "AZ": "2031",
+    "AR": "2032",
+    "AU": "2036",
+    "AT": "2040",
+    "BS": "2044",
+    "BH": "2048",
+    "BD": "2050",
+    "AM": "2051",
+    "BB": "2052",
+    "BE": "2056",
+    "BT": "2064",
+    "BO": "2068",
+    "BA": "2070",
+    "BW": "2072",
+    "BR": "2076",
+    "BZ": "2084",
+    "SB": "2090",
+    "BN": "2096",
+    "BG": "2100",
+    "MM": "2104",
+    "BI": "2108",
+    "BY": "2112",
+    "KH": "2116",
+    "CM": "2120",
+    "CA": "2124",
+    "CV": "2132",
+    "CF": "2140",
+    "LK": "2144",
+    "TD": "2148",
+    "CL": "2152",
+    "CN": "2156",
+    "CX": "2162",
+    "CC": "2166",
+    "CO": "2170",
+    "KM": "2174",
+    "CG": "2178",
+    "CD": "2180",
+    "CK": "2184",
+    "CR": "2188",
+    "HR": "2191",
+    "CY": "2196",
+    "CZ": "2203",
+    "BJ": "2204",
+    "DK": "2208",
+    "DM": "2212",
+    "DO": "2214",
+    "EC": "2218",
+    "SV": "2222",
+    "GQ": "2226",
+    "ET": "2231",
+    "ER": "2232",
+    "EE": "2233",
+    "GS": "2239",
+    "FJ": "2242",
+    "FI": "2246",
+    "FR": "2250",
+    "PF": "2258",
+    "TF": "2260",
+    "DJ": "2262",
+    "GA": "2266",
+    "GE": "2268",
+    "GM": "2270",
+    "DE": "2276",
+    "GH": "2288",
+    "KI": "2296",
+    "GR": "2300",
+    "GD": "2308",
+    "GU": "2316",
+    "GT": "2320",
+    "GN": "2324",
+    "GY": "2328",
+    "HT": "2332",
+    "HM": "2334",
+    "VA": "2336",
+    "HN": "2340",
+    "HU": "2348",
+    "IS": "2352",
+    "IN": "2356",
+    "ID": "2360",
+    "IQ": "2368",
+    "IE": "2372",
+    "IL": "2376",
+    "IT": "2380",
+    "CI": "2384",
+    "JM": "2388",
+    "JP": "2392",
+    "KZ": "2398",
+    "JO": "2400",
+    "KE": "2404",
+    "KR": "2410",
+    "KW": "2414",
+    "KG": "2417",
+    "LA": "2418",
+    "LB": "2422",
+    "LS": "2426",
+    "LV": "2428",
+    "LR": "2430",
+    "LY": "2434",
+    "LI": "2438",
+    "LT": "2440",
+    "LU": "2442",
+    "MG": "2450",
+    "MW": "2454",
+    "MY": "2458",
+    "MV": "2462",
+    "ML": "2466",
+    "MT": "2470",
+    "MR": "2478",
+    "MU": "2480",
+    "MX": "2484",
+    "MC": "2492",
+    "MN": "2496",
+    "MD": "2498",
+    "ME": "2499",
+    "MA": "2504",
+    "MZ": "2508",
+    "OM": "2512",
+    "NA": "2516",
+    "NR": "2520",
+    "NP": "2524",
+    "NL": "2528",
+    "CW": "2531",
+    "SX": "2534",
+    "BQ": "2535",
+    "NC": "2540",
+    "VU": "2548",
+    "NZ": "2554",
+    "NI": "2558",
+    "NE": "2562",
+    "NG": "2566",
+    "NU": "2570",
+    "NF": "2574",
+    "NO": "2578",
+    "MP": "2580",
+    "UM": "2581",
+    "FM": "2583",
+    "MH": "2584",
+    "PW": "2585",
+    "PK": "2586",
+    "PA": "2591",
+    "PG": "2598",
+    "PY": "2600",
+    "PE": "2604",
+    "PH": "2608",
+    "PN": "2612",
+    "PL": "2616",
+    "PT": "2620",
+    "GW": "2624",
+    "TL": "2626",
+    "QA": "2634",
+    "RO": "2642",
+    "RU": "2643",
+    "RW": "2646",
+    "BL": "2652",
+    "KN": "2659",
+    "LC": "2662",
+    "MF": "2663",
+    "PM": "2666",
+    "VC": "2670",
+    "SM": "2674",
+    "ST": "2678",
+    "SA": "2682",
+    "SN": "2686",
+    "RS": "2688",
+    "SC": "2690",
+    "SL": "2694",
+    "SG": "2702",
+    "SK": "2703",
+    "VN": "2704",
+    "SI": "2705",
+    "SO": "2706",
+    "ZA": "2710",
+    "ZW": "2716",
+    "ES": "2724",
+    "SS": "2728",
+    "SD": "2736",
+    "SR": "2740",
+    "SZ": "2748",
+    "SE": "2752",
+    "CH": "2756",
+    "TJ": "2762",
+    "TH": "2764",
+    "TG": "2768",
+    "TK": "2772",
+    "TO": "2776",
+    "TT": "2780",
+    "AE": "2784",
+    "TN": "2788",
+    "TR": "2792",
+    "TM": "2795",
+    "TV": "2798",
+    "UG": "2800",
+    "UA": "2804",
+    "MK": "2807",
+    "EG": "2818",
+    "GB": "2826",
+    "GG": "2831",
+    "JE": "2832",
+    "IM": "2833",
+    "TZ": "2834",
+    "US": "2840",
+    "BF": "2854",
+    "UY": "2858",
+    "UZ": "2860",
+    "VE": "2862",
+    "WF": "2876",
+    "WS": "2882",
+    "YE": "2887",
+    "ZM": "2894",
+    "UK": "2826"
+  },
+  "language": {
+    "ar": "1019",
+    "bn": "1056",
+    "bg": "1020",
+    "ca": "1038",
+    "zh_CN": "1017",
+    "zh": "1017",
+    "zh-CN": "1017",
+    "zh_cn": "1017",
+    "zh_TW": "1018",
+    "zh-TW": "1018",
+    "zh_tw": "1018",
+    "hr": "1039",
+    "cs": "1021",
+    "da": "1009",
+    "nl": "1010",
+    "en": "1000",
+    "et": "1043",
+    "tl": "1042",
+    "fil": "1042",
+    "fi": "1011",
+    "fr": "1002",
+    "de": "1001",
+    "el": "1022",
+    "gu": "1072",
+    "iw": "1027",
+    "he": "1027",
+    "hi": "1023",
+    "hu": "1024",
+    "is": "1026",
+    "id": "1025",
+    "it": "1004",
+    "ja": "1005",
+    "kn": "1086",
+    "ko": "1012",
+    "lv": "1028",
+    "lt": "1029",
+    "ms": "1102",
+    "ml": "1098",
+    "mr": "1101",
+    "no": "1013",
+    "fa": "1064",
+    "pl": "1030",
+    "pt": "1014",
+    "pa": "1110",
+    "ro": "1032",
+    "ru": "1031",
+    "sr": "1035",
+    "sk": "1033",
+    "sl": "1034",
+    "es": "1003",
+    "sv": "1015",
+    "ta": "1130",
+    "te": "1131",
+    "th": "1044",
+    "tr": "1037",
+    "uk": "1036",
+    "ur": "1041",
+    "vi": "1040"
+  },
+  "countryOpts": [
+    {
+      "value": "AF",
+      "label": "AF - Afghanistan"
+    },
+    {
+      "value": "AL",
+      "label": "AL - Albania"
+    },
+    {
+      "value": "AQ",
+      "label": "AQ - Antarctica"
+    },
+    {
+      "value": "DZ",
+      "label": "DZ - Algeria"
+    },
+    {
+      "value": "AS",
+      "label": "AS - American Samoa"
+    },
+    {
+      "value": "AD",
+      "label": "AD - Andorra"
+    },
+    {
+      "value": "AO",
+      "label": "AO - Angola"
+    },
+    {
+      "value": "AG",
+      "label": "AG - Antigua and Barbuda"
+    },
+    {
+      "value": "AZ",
+      "label": "AZ - Azerbaijan"
+    },
+    {
+      "value": "AR",
+      "label": "AR - Argentina"
+    },
+    {
+      "value": "AU",
+      "label": "AU - Australia"
+    },
+    {
+      "value": "AT",
+      "label": "AT - Austria"
+    },
+    {
+      "value": "BS",
+      "label": "BS - The Bahamas"
+    },
+    {
+      "value": "BH",
+      "label": "BH - Bahrain"
+    },
+    {
+      "value": "BD",
+      "label": "BD - Bangladesh"
+    },
+    {
+      "value": "AM",
+      "label": "AM - Armenia"
+    },
+    {
+      "value": "BB",
+      "label": "BB - Barbados"
+    },
+    {
+      "value": "BE",
+      "label": "BE - Belgium"
+    },
+    {
+      "value": "BT",
+      "label": "BT - Bhutan"
+    },
+    {
+      "value": "BO",
+      "label": "BO - Bolivia"
+    },
+    {
+      "value": "BA",
+      "label": "BA - Bosnia and Herzegovina"
+    },
+    {
+      "value": "BW",
+      "label": "BW - Botswana"
+    },
+    {
+      "value": "BR",
+      "label": "BR - Brazil"
+    },
+    {
+      "value": "BZ",
+      "label": "BZ - Belize"
+    },
+    {
+      "value": "SB",
+      "label": "SB - Solomon Islands"
+    },
+    {
+      "value": "BN",
+      "label": "BN - Brunei"
+    },
+    {
+      "value": "BG",
+      "label": "BG - Bulgaria"
+    },
+    {
+      "value": "MM",
+      "label": "MM - Myanmar (Burma)"
+    },
+    {
+      "value": "BI",
+      "label": "BI - Burundi"
+    },
+    {
+      "value": "BY",
+      "label": "BY - Belarus"
+    },
+    {
+      "value": "KH",
+      "label": "KH - Cambodia"
+    },
+    {
+      "value": "CM",
+      "label": "CM - Cameroon"
+    },
+    {
+      "value": "CA",
+      "label": "CA - Canada"
+    },
+    {
+      "value": "CV",
+      "label": "CV - Cabo Verde"
+    },
+    {
+      "value": "CF",
+      "label": "CF - Central African Republic"
+    },
+    {
+      "value": "LK",
+      "label": "LK - Sri Lanka"
+    },
+    {
+      "value": "TD",
+      "label": "TD - Chad"
+    },
+    {
+      "value": "CL",
+      "label": "CL - Chile"
+    },
+    {
+      "value": "CN",
+      "label": "CN - China"
+    },
+    {
+      "value": "CX",
+      "label": "CX - Christmas Island"
+    },
+    {
+      "value": "CC",
+      "label": "CC - Cocos (Keeling) Islands"
+    },
+    {
+      "value": "CO",
+      "label": "CO - Colombia"
+    },
+    {
+      "value": "KM",
+      "label": "KM - Comoros"
+    },
+    {
+      "value": "CG",
+      "label": "CG - Republic of the Congo"
+    },
+    {
+      "value": "CD",
+      "label": "CD - Democratic Republic of the Congo"
+    },
+    {
+      "value": "CK",
+      "label": "CK - Cook Islands"
+    },
+    {
+      "value": "CR",
+      "label": "CR - Costa Rica"
+    },
+    {
+      "value": "HR",
+      "label": "HR - Croatia"
+    },
+    {
+      "value": "CY",
+      "label": "CY - Cyprus"
+    },
+    {
+      "value": "CZ",
+      "label": "CZ - Czechia"
+    },
+    {
+      "value": "BJ",
+      "label": "BJ - Benin"
+    },
+    {
+      "value": "DK",
+      "label": "DK - Denmark"
+    },
+    {
+      "value": "DM",
+      "label": "DM - Dominica"
+    },
+    {
+      "value": "DO",
+      "label": "DO - Dominican Republic"
+    },
+    {
+      "value": "EC",
+      "label": "EC - Ecuador"
+    },
+    {
+      "value": "SV",
+      "label": "SV - El Salvador"
+    },
+    {
+      "value": "GQ",
+      "label": "GQ - Equatorial Guinea"
+    },
+    {
+      "value": "ET",
+      "label": "ET - Ethiopia"
+    },
+    {
+      "value": "ER",
+      "label": "ER - Eritrea"
+    },
+    {
+      "value": "EE",
+      "label": "EE - Estonia"
+    },
+    {
+      "value": "GS",
+      "label": "GS - South Georgia and the South Sandwich Islands"
+    },
+    {
+      "value": "FJ",
+      "label": "FJ - Fiji"
+    },
+    {
+      "value": "FI",
+      "label": "FI - Finland"
+    },
+    {
+      "value": "FR",
+      "label": "FR - France"
+    },
+    {
+      "value": "PF",
+      "label": "PF - French Polynesia"
+    },
+    {
+      "value": "TF",
+      "label": "TF - French Southern and Antarctic Lands"
+    },
+    {
+      "value": "DJ",
+      "label": "DJ - Djibouti"
+    },
+    {
+      "value": "GA",
+      "label": "GA - Gabon"
+    },
+    {
+      "value": "GE",
+      "label": "GE - Georgia"
+    },
+    {
+      "value": "GM",
+      "label": "GM - The Gambia"
+    },
+    {
+      "value": "DE",
+      "label": "DE - Germany"
+    },
+    {
+      "value": "GH",
+      "label": "GH - Ghana"
+    },
+    {
+      "value": "KI",
+      "label": "KI - Kiribati"
+    },
+    {
+      "value": "GR",
+      "label": "GR - Greece"
+    },
+    {
+      "value": "GD",
+      "label": "GD - Grenada"
+    },
+    {
+      "value": "GU",
+      "label": "GU - Guam"
+    },
+    {
+      "value": "GT",
+      "label": "GT - Guatemala"
+    },
+    {
+      "value": "GN",
+      "label": "GN - Guinea"
+    },
+    {
+      "value": "GY",
+      "label": "GY - Guyana"
+    },
+    {
+      "value": "HT",
+      "label": "HT - Haiti"
+    },
+    {
+      "value": "HM",
+      "label": "HM - Heard Island and McDonald Islands"
+    },
+    {
+      "value": "VA",
+      "label": "VA - Vatican City"
+    },
+    {
+      "value": "HN",
+      "label": "HN - Honduras"
+    },
+    {
+      "value": "HU",
+      "label": "HU - Hungary"
+    },
+    {
+      "value": "IS",
+      "label": "IS - Iceland"
+    },
+    {
+      "value": "IN",
+      "label": "IN - India"
+    },
+    {
+      "value": "ID",
+      "label": "ID - Indonesia"
+    },
+    {
+      "value": "IQ",
+      "label": "IQ - Iraq"
+    },
+    {
+      "value": "IE",
+      "label": "IE - Ireland"
+    },
+    {
+      "value": "IL",
+      "label": "IL - Israel"
+    },
+    {
+      "value": "IT",
+      "label": "IT - Italy"
+    },
+    {
+      "value": "CI",
+      "label": "CI - Cote d'Ivoire"
+    },
+    {
+      "value": "JM",
+      "label": "JM - Jamaica"
+    },
+    {
+      "value": "JP",
+      "label": "JP - Japan"
+    },
+    {
+      "value": "KZ",
+      "label": "KZ - Kazakhstan"
+    },
+    {
+      "value": "JO",
+      "label": "JO - Jordan"
+    },
+    {
+      "value": "KE",
+      "label": "KE - Kenya"
+    },
+    {
+      "value": "KR",
+      "label": "KR - South Korea"
+    },
+    {
+      "value": "KW",
+      "label": "KW - Kuwait"
+    },
+    {
+      "value": "KG",
+      "label": "KG - Kyrgyzstan"
+    },
+    {
+      "value": "LA",
+      "label": "LA - Laos"
+    },
+    {
+      "value": "LB",
+      "label": "LB - Lebanon"
+    },
+    {
+      "value": "LS",
+      "label": "LS - Lesotho"
+    },
+    {
+      "value": "LV",
+      "label": "LV - Latvia"
+    },
+    {
+      "value": "LR",
+      "label": "LR - Liberia"
+    },
+    {
+      "value": "LY",
+      "label": "LY - Libya"
+    },
+    {
+      "value": "LI",
+      "label": "LI - Liechtenstein"
+    },
+    {
+      "value": "LT",
+      "label": "LT - Lithuania"
+    },
+    {
+      "value": "LU",
+      "label": "LU - Luxembourg"
+    },
+    {
+      "value": "MG",
+      "label": "MG - Madagascar"
+    },
+    {
+      "value": "MW",
+      "label": "MW - Malawi"
+    },
+    {
+      "value": "MY",
+      "label": "MY - Malaysia"
+    },
+    {
+      "value": "MV",
+      "label": "MV - Maldives"
+    },
+    {
+      "value": "ML",
+      "label": "ML - Mali"
+    },
+    {
+      "value": "MT",
+      "label": "MT - Malta"
+    },
+    {
+      "value": "MR",
+      "label": "MR - Mauritania"
+    },
+    {
+      "value": "MU",
+      "label": "MU - Mauritius"
+    },
+    {
+      "value": "MX",
+      "label": "MX - Mexico"
+    },
+    {
+      "value": "MC",
+      "label": "MC - Monaco"
+    },
+    {
+      "value": "MN",
+      "label": "MN - Mongolia"
+    },
+    {
+      "value": "MD",
+      "label": "MD - Moldova"
+    },
+    {
+      "value": "ME",
+      "label": "ME - Montenegro"
+    },
+    {
+      "value": "MA",
+      "label": "MA - Morocco"
+    },
+    {
+      "value": "MZ",
+      "label": "MZ - Mozambique"
+    },
+    {
+      "value": "OM",
+      "label": "OM - Oman"
+    },
+    {
+      "value": "NA",
+      "label": "NA - Namibia"
+    },
+    {
+      "value": "NR",
+      "label": "NR - Nauru"
+    },
+    {
+      "value": "NP",
+      "label": "NP - Nepal"
+    },
+    {
+      "value": "NL",
+      "label": "NL - Netherlands"
+    },
+    {
+      "value": "CW",
+      "label": "CW - Curacao"
+    },
+    {
+      "value": "SX",
+      "label": "SX - Sint Maarten"
+    },
+    {
+      "value": "BQ",
+      "label": "BQ - Caribbean Netherlands"
+    },
+    {
+      "value": "NC",
+      "label": "NC - New Caledonia"
+    },
+    {
+      "value": "VU",
+      "label": "VU - Vanuatu"
+    },
+    {
+      "value": "NZ",
+      "label": "NZ - New Zealand"
+    },
+    {
+      "value": "NI",
+      "label": "NI - Nicaragua"
+    },
+    {
+      "value": "NE",
+      "label": "NE - Niger"
+    },
+    {
+      "value": "NG",
+      "label": "NG - Nigeria"
+    },
+    {
+      "value": "NU",
+      "label": "NU - Niue"
+    },
+    {
+      "value": "NF",
+      "label": "NF - Norfolk Island"
+    },
+    {
+      "value": "NO",
+      "label": "NO - Norway"
+    },
+    {
+      "value": "MP",
+      "label": "MP - Northern Mariana Islands"
+    },
+    {
+      "value": "UM",
+      "label": "UM - United States Minor Outlying Islands"
+    },
+    {
+      "value": "FM",
+      "label": "FM - Micronesia"
+    },
+    {
+      "value": "MH",
+      "label": "MH - Marshall Islands"
+    },
+    {
+      "value": "PW",
+      "label": "PW - Palau"
+    },
+    {
+      "value": "PK",
+      "label": "PK - Pakistan"
+    },
+    {
+      "value": "PA",
+      "label": "PA - Panama"
+    },
+    {
+      "value": "PG",
+      "label": "PG - Papua New Guinea"
+    },
+    {
+      "value": "PY",
+      "label": "PY - Paraguay"
+    },
+    {
+      "value": "PE",
+      "label": "PE - Peru"
+    },
+    {
+      "value": "PH",
+      "label": "PH - Philippines"
+    },
+    {
+      "value": "PN",
+      "label": "PN - Pitcairn Islands"
+    },
+    {
+      "value": "PL",
+      "label": "PL - Poland"
+    },
+    {
+      "value": "PT",
+      "label": "PT - Portugal"
+    },
+    {
+      "value": "GW",
+      "label": "GW - Guinea-Bissau"
+    },
+    {
+      "value": "TL",
+      "label": "TL - Timor-Leste"
+    },
+    {
+      "value": "QA",
+      "label": "QA - Qatar"
+    },
+    {
+      "value": "RO",
+      "label": "RO - Romania"
+    },
+    {
+      "value": "RU",
+      "label": "RU - Russia"
+    },
+    {
+      "value": "RW",
+      "label": "RW - Rwanda"
+    },
+    {
+      "value": "BL",
+      "label": "BL - Saint Barthelemy"
+    },
+    {
+      "value": "KN",
+      "label": "KN - Saint Kitts and Nevis"
+    },
+    {
+      "value": "LC",
+      "label": "LC - Saint Lucia"
+    },
+    {
+      "value": "MF",
+      "label": "MF - Saint Martin"
+    },
+    {
+      "value": "PM",
+      "label": "PM - Saint Pierre and Miquelon"
+    },
+    {
+      "value": "VC",
+      "label": "VC - Saint Vincent and the Grenadines"
+    },
+    {
+      "value": "SM",
+      "label": "SM - San Marino"
+    },
+    {
+      "value": "ST",
+      "label": "ST - Sao Tome and Principe"
+    },
+    {
+      "value": "SA",
+      "label": "SA - Saudi Arabia"
+    },
+    {
+      "value": "SN",
+      "label": "SN - Senegal"
+    },
+    {
+      "value": "RS",
+      "label": "RS - Serbia"
+    },
+    {
+      "value": "SC",
+      "label": "SC - Seychelles"
+    },
+    {
+      "value": "SL",
+      "label": "SL - Sierra Leone"
+    },
+    {
+      "value": "SG",
+      "label": "SG - Singapore"
+    },
+    {
+      "value": "SK",
+      "label": "SK - Slovakia"
+    },
+    {
+      "value": "VN",
+      "label": "VN - Vietnam"
+    },
+    {
+      "value": "SI",
+      "label": "SI - Slovenia"
+    },
+    {
+      "value": "SO",
+      "label": "SO - Somalia"
+    },
+    {
+      "value": "ZA",
+      "label": "ZA - South Africa"
+    },
+    {
+      "value": "ZW",
+      "label": "ZW - Zimbabwe"
+    },
+    {
+      "value": "ES",
+      "label": "ES - Spain"
+    },
+    {
+      "value": "SS",
+      "label": "SS - South Sudan"
+    },
+    {
+      "value": "SD",
+      "label": "SD - Sudan"
+    },
+    {
+      "value": "SR",
+      "label": "SR - Suriname"
+    },
+    {
+      "value": "SZ",
+      "label": "SZ - Eswatini"
+    },
+    {
+      "value": "SE",
+      "label": "SE - Sweden"
+    },
+    {
+      "value": "CH",
+      "label": "CH - Switzerland"
+    },
+    {
+      "value": "TJ",
+      "label": "TJ - Tajikistan"
+    },
+    {
+      "value": "TH",
+      "label": "TH - Thailand"
+    },
+    {
+      "value": "TG",
+      "label": "TG - Togo"
+    },
+    {
+      "value": "TK",
+      "label": "TK - Tokelau"
+    },
+    {
+      "value": "TO",
+      "label": "TO - Tonga"
+    },
+    {
+      "value": "TT",
+      "label": "TT - Trinidad and Tobago"
+    },
+    {
+      "value": "AE",
+      "label": "AE - United Arab Emirates"
+    },
+    {
+      "value": "TN",
+      "label": "TN - Tunisia"
+    },
+    {
+      "value": "TR",
+      "label": "TR - Turkiye"
+    },
+    {
+      "value": "TM",
+      "label": "TM - Turkmenistan"
+    },
+    {
+      "value": "TV",
+      "label": "TV - Tuvalu"
+    },
+    {
+      "value": "UG",
+      "label": "UG - Uganda"
+    },
+    {
+      "value": "UA",
+      "label": "UA - Ukraine"
+    },
+    {
+      "value": "MK",
+      "label": "MK - North Macedonia"
+    },
+    {
+      "value": "EG",
+      "label": "EG - Egypt"
+    },
+    {
+      "value": "GB",
+      "label": "GB - United Kingdom"
+    },
+    {
+      "value": "GG",
+      "label": "GG - Guernsey"
+    },
+    {
+      "value": "JE",
+      "label": "JE - Jersey"
+    },
+    {
+      "value": "IM",
+      "label": "IM - Isle of Man"
+    },
+    {
+      "value": "TZ",
+      "label": "TZ - Tanzania"
+    },
+    {
+      "value": "US",
+      "label": "US - United States"
+    },
+    {
+      "value": "BF",
+      "label": "BF - Burkina Faso"
+    },
+    {
+      "value": "UY",
+      "label": "UY - Uruguay"
+    },
+    {
+      "value": "UZ",
+      "label": "UZ - Uzbekistan"
+    },
+    {
+      "value": "VE",
+      "label": "VE - Venezuela"
+    },
+    {
+      "value": "WF",
+      "label": "WF - Wallis and Futuna"
+    },
+    {
+      "value": "WS",
+      "label": "WS - Samoa"
+    },
+    {
+      "value": "YE",
+      "label": "YE - Yemen"
+    },
+    {
+      "value": "ZM",
+      "label": "ZM - Zambia"
+    }
+  ],
+  "langOpts": [
+    {
+      "value": "ar",
+      "label": "ar - Arabic"
+    },
+    {
+      "value": "bn",
+      "label": "bn - Bengali"
+    },
+    {
+      "value": "bg",
+      "label": "bg - Bulgarian"
+    },
+    {
+      "value": "ca",
+      "label": "ca - Catalan"
+    },
+    {
+      "value": "zh",
+      "label": "zh - Chinese (simplified)"
+    },
+    {
+      "value": "zh-TW",
+      "label": "zh-TW - Chinese (traditional)"
+    },
+    {
+      "value": "hr",
+      "label": "hr - Croatian"
+    },
+    {
+      "value": "cs",
+      "label": "cs - Czech"
+    },
+    {
+      "value": "da",
+      "label": "da - Danish"
+    },
+    {
+      "value": "nl",
+      "label": "nl - Dutch"
+    },
+    {
+      "value": "en",
+      "label": "en - English"
+    },
+    {
+      "value": "et",
+      "label": "et - Estonian"
+    },
+    {
+      "value": "tl",
+      "label": "tl - Filipino"
+    },
+    {
+      "value": "fi",
+      "label": "fi - Finnish"
+    },
+    {
+      "value": "fr",
+      "label": "fr - French"
+    },
+    {
+      "value": "de",
+      "label": "de - German"
+    },
+    {
+      "value": "el",
+      "label": "el - Greek"
+    },
+    {
+      "value": "gu",
+      "label": "gu - Gujarati"
+    },
+    {
+      "value": "iw",
+      "label": "iw - Hebrew"
+    },
+    {
+      "value": "hi",
+      "label": "hi - Hindi"
+    },
+    {
+      "value": "hu",
+      "label": "hu - Hungarian"
+    },
+    {
+      "value": "is",
+      "label": "is - Icelandic"
+    },
+    {
+      "value": "id",
+      "label": "id - Indonesian"
+    },
+    {
+      "value": "it",
+      "label": "it - Italian"
+    },
+    {
+      "value": "ja",
+      "label": "ja - Japanese"
+    },
+    {
+      "value": "kn",
+      "label": "kn - Kannada"
+    },
+    {
+      "value": "ko",
+      "label": "ko - Korean"
+    },
+    {
+      "value": "lv",
+      "label": "lv - Latvian"
+    },
+    {
+      "value": "lt",
+      "label": "lt - Lithuanian"
+    },
+    {
+      "value": "ms",
+      "label": "ms - Malay"
+    },
+    {
+      "value": "ml",
+      "label": "ml - Malayalam"
+    },
+    {
+      "value": "mr",
+      "label": "mr - Marathi"
+    },
+    {
+      "value": "no",
+      "label": "no - Norwegian"
+    },
+    {
+      "value": "fa",
+      "label": "fa - Persian"
+    },
+    {
+      "value": "pl",
+      "label": "pl - Polish"
+    },
+    {
+      "value": "pt",
+      "label": "pt - Portuguese"
+    },
+    {
+      "value": "pa",
+      "label": "pa - Punjabi"
+    },
+    {
+      "value": "ro",
+      "label": "ro - Romanian"
+    },
+    {
+      "value": "ru",
+      "label": "ru - Russian"
+    },
+    {
+      "value": "sr",
+      "label": "sr - Serbian"
+    },
+    {
+      "value": "sk",
+      "label": "sk - Slovak"
+    },
+    {
+      "value": "sl",
+      "label": "sl - Slovenian"
+    },
+    {
+      "value": "es",
+      "label": "es - Spanish"
+    },
+    {
+      "value": "sv",
+      "label": "sv - Swedish"
+    },
+    {
+      "value": "ta",
+      "label": "ta - Tamil"
+    },
+    {
+      "value": "te",
+      "label": "te - Telugu"
+    },
+    {
+      "value": "th",
+      "label": "th - Thai"
+    },
+    {
+      "value": "tr",
+      "label": "tr - Turkish"
+    },
+    {
+      "value": "uk",
+      "label": "uk - Ukrainian"
+    },
+    {
+      "value": "ur",
+      "label": "ur - Urdu"
+    },
+    {
+      "value": "vi",
+      "label": "vi - Vietnamese"
+    }
+  ]
+}

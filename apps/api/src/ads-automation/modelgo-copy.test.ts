@@ -16,8 +16,16 @@ assert.strictEqual(geoTargetForCountry('MX'), '2484');
 assert.strictEqual(geoTargetForCountry('ES'), '2724');
 assert.strictEqual(geoTargetForCountry('BR'), '2076');
 assert.strictEqual(geoTargetForCountry('IT'), '2380');
+assert.strictEqual(geoTargetForCountry('NG'), '2566');
+assert.strictEqual(geoTargetForCountry('PL'), '2616');
+assert.strictEqual(geoTargetForCountry('KR'), '2410');
 assert.strictEqual(languageConstant('vi'), '1040');
 assert.strictEqual(languageConstant('pt'), '1014');
+assert.strictEqual(languageConstant('zh'), '1017');
+assert.strictEqual(languageConstant('zh-CN'), '1017');
+assert.strictEqual(languageConstant('zh_TW'), '1018');
+assert.strictEqual(languageConstant('he'), '1027');
+assert.strictEqual(languageConstant('fil'), '1042');
 
 const base = buildSampleDraft({
   merchantName: 'Acegolfs',

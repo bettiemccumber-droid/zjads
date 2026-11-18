@@ -8,6 +8,7 @@ export interface SemrushKeywordRow {
   traffic: number | null;
 }
 
+/** Semrush database 代码；未列出的国家回退 us。 */
 const DATABASE_BY_COUNTRY: Record<string, string> = {
   US: 'us',
   GB: 'uk',
@@ -19,15 +20,38 @@ const DATABASE_BY_COUNTRY: Record<string, string> = {
   ES: 'es',
   IT: 'it',
   NL: 'nl',
+  BE: 'be',
+  AT: 'at',
+  CH: 'ch',
+  SE: 'se',
+  DK: 'dk',
+  NO: 'no',
+  FI: 'fi',
+  IE: 'ie',
+  PT: 'pt',
+  PL: 'pl',
   BR: 'br',
   MX: 'mx',
+  AR: 'ar',
+  CL: 'cl',
+  CO: 'co',
   IN: 'in',
   JP: 'jp',
+  KR: 'kr',
   SG: 'sg',
   HK: 'hk',
   TW: 'tw',
   VN: 'vn',
-  IE: 'ie',
+  TH: 'th',
+  MY: 'my',
+  ID: 'id',
+  PH: 'ph',
+  NZ: 'nz',
+  ZA: 'za',
+  TR: 'tr',
+  AE: 'ae',
+  IL: 'il',
+  RU: 'ru',
 };
 
 /**

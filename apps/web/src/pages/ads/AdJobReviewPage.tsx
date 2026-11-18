@@ -150,7 +150,7 @@ const SNIPPET_HEADERS = [
 ];
 
 const HEADLINE_MAX = 30;
-const DESC_MAX = 70;
+const DESC_MAX = 90;
 const SITELINK_TEXT_MAX = 20;
 const SITELINK_DESC_MAX = 25;
 
@@ -603,7 +603,7 @@ export default function AdJobReviewPage() {
                   添加描述
                 </Button>
               ) : null}
-              <div className="ad-review__hint">内部规范描述 ≤70 字（严于 Google 90）。</div>
+              <div className="ad-review__hint">描述 ≤90 字（与 Google Ads 一致）。</div>
             </Card>
 
             <Card

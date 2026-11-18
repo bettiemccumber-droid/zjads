@@ -1,9 +1,9 @@
 import { GEO_TARGET_BY_COUNTRY, LANGUAGE_CONSTANT_BY_CODE } from './geo-language.constants';
 
-/** RSA / 附加信息字数上限（空格标点均计 1）。描述按内部规范 70，严于 Google 90。 */
+/** RSA / 附加信息字数上限（空格标点均计 1）。描述按 Google Ads 90。 */
 export const AD_COPY_LIMITS = {
   headline: 30,
-  description: 70,
+  description: 90,
   callout: 25,
   sitelinkText: 20,
   sitelinkDescription: 25,

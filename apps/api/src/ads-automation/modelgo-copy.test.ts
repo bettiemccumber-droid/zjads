@@ -49,8 +49,8 @@ const sitelinkKeys = new Set(draft.sitelinks.map((link) => normalizePageKey(link
 assert.strictEqual(sitelinkKeys.size, draft.sitelinks.length);
 assert.ok(!sitelinkKeys.has(normalizePageKey(draft.merchantUrl)));
 
-const longDesc = `Discover travel deals and experiences with Klook across Australia including tours activities and attractions you can book today with flexible options.`;
-assert.ok(longDesc.length > 70);
+const longDesc = `Discover travel deals and experiences with Klook across Australia including tours activities and attractions you can book today with flexible options for every traveler.`;
+assert.ok(longDesc.length > 90);
 const repaired = applyAdCopy(base, {
   headlines: ['Klook AU', 'Book Klook', 'Klook Trips', 'x'.repeat(40)],
   descriptions: [longDesc],
@@ -59,7 +59,7 @@ const repaired = applyAdCopy(base, {
   structuredSnippets: [{ header: 'TYPES', values: ['Tours', 'Tickets', 'Activities', 'Transfers'] }],
 });
 assert.deepStrictEqual(validateDraft(repaired), []);
-assert.ok(repaired.descriptions.every((text) => text.length <= 70));
+assert.ok(repaired.descriptions.every((text) => text.length <= 90));
 assert.ok(repaired.descriptions.length >= 2);
 assert.ok(repaired.headlines.length >= 3);
 assert.ok(repaired.callouts.length >= 1);

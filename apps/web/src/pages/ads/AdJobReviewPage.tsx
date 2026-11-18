@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import {
   Alert,
@@ -253,6 +253,9 @@ export default function AdJobReviewPage() {
   const [negInput, setNegInput] = useState('');
   const [campaignName, setCampaignName] = useState('');
   const [campaignNameDirty, setCampaignNameDirty] = useState(false);
+  // 用 ref 读脏标记，避免改系列名时重建 loadJob → 重新拉任务盖掉未保存的广告草稿
+  const campaignNameDirtyRef = useRef(false);
+  campaignNameDirtyRef.current = campaignNameDirty;
 
   const loadJob = useCallback(async () => {
     if (!id) return;
@@ -264,10 +267,10 @@ export default function AdJobReviewPage() {
     const next = res.data.data;
     setJob(next);
     if (next.draft) setDraft(hydrateDraft(next.draft));
-    if (next.suggestedCampaignName && !campaignNameDirty) {
+    if (next.suggestedCampaignName && !campaignNameDirtyRef.current) {
       setCampaignName(next.suggestedCampaignName);
     }
-  }, [id, campaignNameDirty]);
+  }, [id]);
 
   const loadCustomers = useCallback(async (mccCustomerId: string) => {
     if (!mccCustomerId || /^[A-Za-z]/.test(mccCustomerId)) {

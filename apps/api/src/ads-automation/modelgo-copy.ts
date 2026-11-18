@@ -9,6 +9,7 @@ import {
   normalizeStructuredSnippetHeader,
   SampleArticle,
   sanitizeDraftForReview,
+  softenExcessiveUppercase,
   stripKeywordDecorations,
   validateDraft,
 } from './ads-automation.util';
@@ -126,6 +127,7 @@ Content rules:
 - Strong purchase verbs; low repetition; language must match the audience.
 - Include several headlines about discounts and logistics when plausible (e.g. "20% Off Today", "Free Shipping", "Fast Delivery", "Easy Returns"). Prefer real merchant offers; if unknown, use soft logistics lines without inventing fake coupon codes.
 - Forbidden: free trial/gift wording, placeholders like $X or [link], Google risk words (gun/firearm/tactical/combat/military/prescription/Rx/wine/vodka/etc), medical cure claims.
+- Never use more than 4 consecutive uppercase Latin letters (SHOPNOW is bad; Shop Now / FREE is ok). Avoid ALL-CAPS words longer than 4 letters.
 - Callouts must NOT mention free shipping, discounts, coupons, returns, or sale numbers. Put real promos in promotionAsset (optional) instead.
 - promotionAsset: optional. Set enabled=true only when a concrete discount is known or strongly typical for this merchant; otherwise enabled=false or null. Use percentOff as whole percent (20 means 20%). moneyAmountOff is a decimal string. languageCode should match the ad language. finalUrl defaults to merchant URL if omitted. occasion may be empty.
 - translations: required Simplified Chinese glosses aligned by index with headlines/descriptions/callouts/sitelinks (and promotion if any). These are for human review only, not for Google Ads.
@@ -317,7 +319,7 @@ function parsePromotionAsset(value: unknown, base: AdDraft): AdPromotionAsset | 
  * 截到 Google Ads 字数上限；尽量在空格处截断，避免半截单词。
  */
 export function fitAdText(value: string, max: number): string {
-  const text = value.trim().replace(/\s+/g, ' ');
+  const text = softenExcessiveUppercase(value.trim().replace(/\s+/g, ' '));
   if (text.length <= max) return text;
   const sliced = text.slice(0, max);
   const space = sliced.lastIndexOf(' ');
@@ -379,7 +381,7 @@ async function askJson(
 ): Promise<Record<string, unknown>> {
   const system = [
     'You write affiliate Google Ads RSA copy and personal product-review blog posts. Reply with JSON only.',
-    'Follow Google Ads policies. Prefer real discount and logistics headlines when plausible. Never invent fake coupon codes, medical cures, weapons, alcohol SKUs, or placeholder tokens like $X.',
+    'Follow Google Ads policies. Prefer real discount and logistics headlines when plausible. Never invent fake coupon codes, medical cures, weapons, alcohol SKUs, or placeholder tokens like $X. Never use more than 4 consecutive uppercase Latin letters.',
     personaPrompt.trim(),
   ]
     .filter(Boolean)

@@ -554,6 +554,21 @@ export function validateDraft(draft: AdDraft): string[] {
   return errors;
 }
 
+/** Google 拒登风险：连续大写字母最多 4 个。 */
+export const MAX_CONSECUTIVE_UPPERCASE = 4;
+
+/**
+ * 把超过上限的连续大写压成「首字母大写 + 其余小写」，保留语义。
+ * 例：SHOPNOW → Shopnow；BEST DEALS → BEST Deals。
+ */
+export function softenExcessiveUppercase(
+  text: string,
+  maxRun = MAX_CONSECUTIVE_UPPERCASE,
+): string {
+  const pattern = new RegExp(`[A-Z]{${maxRun + 1},}`, 'g');
+  return text.replace(pattern, (run) => `${run.charAt(0)}${run.slice(1).toLowerCase()}`);
+}
+
 /**
  * Google Ads / 联盟投放常见拒登与禁忌词。命中则返回中文错误。
  * allowPromo：标题/描述可写折扣与物流；宣传信息仍禁止促销语。
@@ -566,6 +581,9 @@ export function policyHits(
   const value = text.toLowerCase();
   const hits: string[] = [];
   const allowPromo = Boolean(options.allowPromo);
+  if (new RegExp(`[A-Z]{${MAX_CONSECUTIVE_UPPERCASE + 1},}`).test(text)) {
+    hits.push(`${label} 连续大写不能超过 ${MAX_CONSECUTIVE_UPPERCASE} 个字母`);
+  }
   if (/\$x\b|\[\s*链接\s*\]|\[link\]/i.test(text)) {
     hits.push(`${label} 不要写占位符`);
   }
@@ -670,7 +688,7 @@ export function sanitizeDraftForReview(draft: AdDraft, fallback: AdDraft): AdDra
     const maxLen = kind === 'callout' ? limits.callout : kind === 'description' ? limits.description : limits.headline;
     for (const line of [...primary, ...reserve]) {
       if (out.length >= max) break;
-      const text = line.trim();
+      const text = softenExcessiveUppercase(line.trim());
       if (isUnsafeAdText(text, kind)) continue;
       const key = text.toLowerCase();
       if (used.has(key)) continue;
@@ -719,11 +737,14 @@ export function sanitizeDraftForReview(draft: AdDraft, fallback: AdDraft): AdDra
 
   const sitelinks = assignUniqueSitelinkUrls(
     (draft.sitelinks.length ? draft.sitelinks : fallback.sitelinks).map((link) => {
-      const linkText = isUnsafeAdText(link.linkText, 'general')
+      const softenedLink = softenExcessiveUppercase(link.linkText);
+      const softenedDesc1 = softenExcessiveUppercase(link.description1);
+      const softenedDesc2 = softenExcessiveUppercase(link.description2);
+      const linkText = isUnsafeAdText(softenedLink, 'general')
         ? (fallback.sitelinks[0]?.linkText || 'Shop now')
-        : link.linkText;
-      const description1 = isUnsafeAdText(link.description1, 'general') ? '' : link.description1;
-      const description2 = isUnsafeAdText(link.description2, 'general') ? '' : link.description2;
+        : softenedLink;
+      const description1 = isUnsafeAdText(softenedDesc1, 'general') ? '' : softenedDesc1;
+      const description2 = isUnsafeAdText(softenedDesc2, 'general') ? '' : softenedDesc2;
       const bothOrNeither = description1 && description2
         ? { description1, description2 }
         : { description1: '', description2: '' };
@@ -745,7 +766,7 @@ export function sanitizeDraftForReview(draft: AdDraft, fallback: AdDraft): AdDra
     .map((row) => ({
       header: normalizeStructuredSnippetHeader(row.header) || row.header,
       values: row.values
-        .map((value) => value.trim())
+        .map((value) => softenExcessiveUppercase(value.trim()))
         .filter((value) => value && !isUnsafeAdText(value, 'general'))
         .slice(0, 10),
     }))

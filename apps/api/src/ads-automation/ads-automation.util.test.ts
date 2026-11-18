@@ -5,6 +5,7 @@ import {
   buildSampleDraft,
   buildTrackUrl,
   isCustomerEligible,
+  softenExcessiveUppercase,
   usdToMicros,
   validateDraft,
 } from './ads-automation.util';
@@ -61,5 +62,15 @@ assert.strictEqual(
 
 const tooLong = { ...draft, headlines: ['x'.repeat(31), 'ab', 'cd'] };
 assert.ok(validateDraft(tooLong).length > 0);
+
+assert.strictEqual(softenExcessiveUppercase('SHOPNOW Today'), 'Shopnow Today');
+assert.strictEqual(softenExcessiveUppercase('BEST DEALS'), 'BEST Deals');
+assert.strictEqual(softenExcessiveUppercase('FREE'), 'FREE');
+const allCaps = { ...draft, headlines: ['SHOPNOW Official', 'Shop Brand', 'Visit Store'] };
+assert.ok(validateDraft(allCaps).some((msg) => /连续大写/.test(msg)));
+assert.deepStrictEqual(
+  validateDraft({ ...draft, headlines: ['FREE Shipping', 'Shop Brand', 'Visit Store'] }),
+  [],
+);
 
 console.log('ads-automation.util.test.ts: ok');

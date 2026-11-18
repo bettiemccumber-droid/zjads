@@ -26,7 +26,7 @@ import {
   usdToMicros,
   validateDraft,
 } from './ads-automation.util';
-import { crawlMerchantImages } from './merchant-page-images';
+import { crawlMerchantImages, crawlMerchantNavLinks } from './merchant-page-images';
 import { AiPersonaService } from './ai-persona.service';
 import { writeAdCopy, writeArticle } from './modelgo-copy';
 import { modelGoConfig } from './modelgo.client';
@@ -1650,6 +1650,15 @@ export class AdsAutomationService implements OnModuleInit {
       }
       const language = input.languageCode || 'en';
       const personaPrompt = useModel ? await this.personas.activePrompt(job.ownerUserId, 'ads') : '';
+      const pageLinks = useModel ? await crawlMerchantNavLinks(input.merchantUrl) : [];
+      if (useModel && pageLinks.length) {
+        await this.prisma.adJob.update({
+          where: { id: jobId },
+          data: {
+            progressMessage: `已找到 ${pageLinks.length} 个站内页面，正在生成文案`,
+          },
+        });
+      }
       const draft = useModel
         ? await writeAdCopy({
             merchantName: input.merchantName,
@@ -1660,6 +1669,7 @@ export class AdsAutomationService implements OnModuleInit {
             dailyBudgetUsd: input.dailyBudgetUsd,
             cpcBidCeilingUsd: input.cpcBidCeilingUsd,
             personaPrompt,
+            pageLinks,
           })
         : buildSampleDraft({
             merchantName: input.merchantName,

@@ -235,50 +235,61 @@ export function buildSampleDraft(input: {
       text,
       matchType: 'BROAD' as const,
     })),
-    sitelinks: [
-      {
-        linkText: 'Shop now'.slice(0, AD_COPY_LIMITS.sitelinkText),
-        description1: 'Current styles'.slice(0, AD_COPY_LIMITS.sitelinkDescription),
-        description2: 'View the latest'.slice(0, AD_COPY_LIMITS.sitelinkDescription),
-        finalUrl: input.merchantUrl,
-        verified: true,
-      },
-      {
-        linkText: 'New arrivals'.slice(0, AD_COPY_LIMITS.sitelinkText),
-        description1: 'Fresh picks'.slice(0, AD_COPY_LIMITS.sitelinkDescription),
-        description2: 'See what is new'.slice(0, AD_COPY_LIMITS.sitelinkDescription),
-        finalUrl: input.merchantUrl,
-        verified: true,
-      },
-      {
-        linkText: 'Best sellers'.slice(0, AD_COPY_LIMITS.sitelinkText),
-        description1: 'Popular items'.slice(0, AD_COPY_LIMITS.sitelinkDescription),
-        description2: 'Shop top choices'.slice(0, AD_COPY_LIMITS.sitelinkDescription),
-        finalUrl: input.merchantUrl,
-        verified: true,
-      },
-      {
-        linkText: 'Collections'.slice(0, AD_COPY_LIMITS.sitelinkText),
-        description1: 'Browse categories'.slice(0, AD_COPY_LIMITS.sitelinkDescription),
-        description2: 'Find your style'.slice(0, AD_COPY_LIMITS.sitelinkDescription),
-        finalUrl: input.merchantUrl,
-        verified: true,
-      },
-      {
-        linkText: 'About brand'.slice(0, AD_COPY_LIMITS.sitelinkText),
-        description1: 'Learn more'.slice(0, AD_COPY_LIMITS.sitelinkDescription),
-        description2: 'Brand story'.slice(0, AD_COPY_LIMITS.sitelinkDescription),
-        finalUrl: input.merchantUrl,
-        verified: true,
-      },
-      {
-        linkText: 'Start shopping'.slice(0, AD_COPY_LIMITS.sitelinkText),
-        description1: 'Ready to buy'.slice(0, AD_COPY_LIMITS.sitelinkDescription),
-        description2: 'Checkout online'.slice(0, AD_COPY_LIMITS.sitelinkDescription),
-        finalUrl: input.merchantUrl,
-        verified: true,
-      },
-    ],
+    sitelinks: assignUniqueSitelinkUrls(
+      [
+        {
+          linkText: 'Shop now'.slice(0, AD_COPY_LIMITS.sitelinkText),
+          description1: 'Current styles'.slice(0, AD_COPY_LIMITS.sitelinkDescription),
+          description2: 'View the latest'.slice(0, AD_COPY_LIMITS.sitelinkDescription),
+          finalUrl: '',
+          verified: false,
+        },
+        {
+          linkText: 'New arrivals'.slice(0, AD_COPY_LIMITS.sitelinkText),
+          description1: 'Fresh picks'.slice(0, AD_COPY_LIMITS.sitelinkDescription),
+          description2: 'See what is new'.slice(0, AD_COPY_LIMITS.sitelinkDescription),
+          finalUrl: '',
+          verified: false,
+        },
+        {
+          linkText: 'Best sellers'.slice(0, AD_COPY_LIMITS.sitelinkText),
+          description1: 'Popular items'.slice(0, AD_COPY_LIMITS.sitelinkDescription),
+          description2: 'Shop top choices'.slice(0, AD_COPY_LIMITS.sitelinkDescription),
+          finalUrl: '',
+          verified: false,
+        },
+        {
+          linkText: 'Collections'.slice(0, AD_COPY_LIMITS.sitelinkText),
+          description1: 'Browse categories'.slice(0, AD_COPY_LIMITS.sitelinkDescription),
+          description2: 'Find your style'.slice(0, AD_COPY_LIMITS.sitelinkDescription),
+          finalUrl: '',
+          verified: false,
+        },
+        {
+          linkText: 'About brand'.slice(0, AD_COPY_LIMITS.sitelinkText),
+          description1: 'Learn more'.slice(0, AD_COPY_LIMITS.sitelinkDescription),
+          description2: 'Brand story'.slice(0, AD_COPY_LIMITS.sitelinkDescription),
+          finalUrl: '',
+          verified: false,
+        },
+        {
+          linkText: 'Start shopping'.slice(0, AD_COPY_LIMITS.sitelinkText),
+          description1: 'Ready to buy'.slice(0, AD_COPY_LIMITS.sitelinkDescription),
+          description2: 'Checkout online'.slice(0, AD_COPY_LIMITS.sitelinkDescription),
+          finalUrl: '',
+          verified: false,
+        },
+      ],
+      input.merchantUrl,
+      [
+        { url: joinMerchantPath(input.merchantUrl, '/shop'), label: 'Shop now' },
+        { url: joinMerchantPath(input.merchantUrl, '/new-arrivals'), label: 'New arrivals' },
+        { url: joinMerchantPath(input.merchantUrl, '/best-sellers'), label: 'Best sellers' },
+        { url: joinMerchantPath(input.merchantUrl, '/collections'), label: 'Collections' },
+        { url: joinMerchantPath(input.merchantUrl, '/about'), label: 'About brand' },
+        { url: joinMerchantPath(input.merchantUrl, '/order'), label: 'Start shopping' },
+      ],
+    ),
     callouts: [
       'Official Site',
       'Shop Online',
@@ -337,6 +348,7 @@ export function validateDraft(draft: AdDraft): string[] {
     if (!keyword.text.trim()) errors.push('关键词不能为空');
   });
   if (!draft.negativeKeywords.length) errors.push('至少需要一条否定关键词');
+  const sitelinkUrlKeys = new Set<string>();
   draft.sitelinks.forEach((link, index) => {
     if (!link.verified) errors.push(`站内链接 ${index + 1} 尚未验证`);
     if (link.linkText.length > limits.sitelinkText) {
@@ -348,6 +360,16 @@ export function validateDraft(draft: AdDraft): string[] {
     }
     if (link.description1.length > limits.sitelinkDescription || link.description2.length > limits.sitelinkDescription) {
       errors.push(`站内链接 ${index + 1} 说明行超过 ${limits.sitelinkDescription} 个字符`);
+    }
+    if (!/^https?:\/\//i.test(link.finalUrl)) {
+      errors.push(`站内链接 ${index + 1} 需要有效落地页网址`);
+    } else {
+      const key = normalizePageKey(link.finalUrl);
+      if (key && sitelinkUrlKeys.has(key)) {
+        errors.push(`站内链接 ${index + 1} 的落地页与其它站内链接重复，请换成不同页面`);
+      } else if (key) {
+        sitelinkUrlKeys.add(key);
+      }
     }
     errors.push(...policyHits(`${link.linkText} ${link.description1} ${link.description2}`, `站内链接 ${index + 1}`));
   });
@@ -617,6 +639,132 @@ function escapeHtml(value: string): string {
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;');
+}
+
+/**
+ * 拼商家站内路径，保留原协议和主机。
+ */
+export function joinMerchantPath(merchantUrl: string, path: string): string {
+  try {
+    const base = new URL(merchantUrl);
+    const next = new URL(path.startsWith('/') ? path : `/${path}`, `${base.protocol}//${base.host}`);
+    next.hash = '';
+    return next.toString();
+  } catch {
+    return merchantUrl;
+  }
+}
+
+/**
+ * 比较两个网址是否同一页面（忽略尾斜杠、www、hash）。
+ */
+export function normalizePageKey(url: string): string {
+  try {
+    const parsed = new URL(url);
+    const host = parsed.hostname.toLowerCase().replace(/^www\./, '');
+    const path = parsed.pathname.replace(/\/+$/, '') || '/';
+    return `${host}${path.toLowerCase()}`;
+  } catch {
+    return '';
+  }
+}
+
+export function sameMerchantPage(left: string, right: string): boolean {
+  const a = normalizePageKey(left);
+  const b = normalizePageKey(right);
+  return Boolean(a && b && a === b);
+}
+
+/**
+ * 给站内链接分配互不相同的同站落地页：优先模型给的 URL，其次按文案匹配爬到的内链，再轮询剩余内链，最后按文案造路径。
+ */
+export function assignUniqueSitelinkUrls(
+  sitelinks: AdSitelink[],
+  merchantUrl: string,
+  pageLinks: Array<{ url: string; label?: string }> = [],
+): AdSitelink[] {
+  const homeKey = normalizePageKey(merchantUrl);
+  const used = new Set<string>();
+  const pool = pageLinks
+    .map((item) => ({
+      url: sameHostUrl(item.url, merchantUrl),
+      label: (item.label ?? '').trim().toLowerCase(),
+    }))
+    .filter((item): item is { url: string; label: string } => Boolean(item.url))
+    .filter((item) => normalizePageKey(item.url) !== homeKey);
+
+  return sitelinks.map((link) => {
+    const fromModel = sameHostUrl(link.finalUrl, merchantUrl);
+    let chosen = '';
+    if (fromModel) {
+      const key = normalizePageKey(fromModel);
+      if (key && key !== homeKey && !used.has(key)) chosen = fromModel;
+    }
+    if (!chosen) {
+      const needle = link.linkText.trim().toLowerCase();
+      const matched = pool.find((item) => {
+        const key = normalizePageKey(item.url);
+        if (!key || used.has(key)) return false;
+        if (!needle) return false;
+        return item.label.includes(needle) || needle.includes(item.label) || slugifyLabel(item.label) === slugifyLabel(needle);
+      });
+      if (matched) chosen = matched.url;
+    }
+    if (!chosen) {
+      const next = pool.find((item) => {
+        const key = normalizePageKey(item.url);
+        return key && !used.has(key);
+      });
+      if (next) chosen = next.url;
+    }
+    if (!chosen) {
+      chosen = inventSitelinkUrl(merchantUrl, link.linkText, used);
+    }
+    const key = normalizePageKey(chosen) || chosen;
+    used.add(key);
+    return {
+      ...link,
+      finalUrl: chosen,
+      verified: Boolean(chosen && /^https?:\/\//i.test(chosen)),
+    };
+  });
+}
+
+function sameHostUrl(candidate: string, merchantUrl: string): string {
+  const raw = (candidate || '').trim();
+  if (!raw) return '';
+  try {
+    const base = new URL(merchantUrl);
+    const absolute = new URL(raw, `${base.protocol}//${base.host}`);
+    if (absolute.protocol !== 'http:' && absolute.protocol !== 'https:') return '';
+    const baseHost = base.hostname.toLowerCase().replace(/^www\./, '');
+    const host = absolute.hostname.toLowerCase().replace(/^www\./, '');
+    if (host !== baseHost) return '';
+    absolute.hash = '';
+    return absolute.toString();
+  } catch {
+    return '';
+  }
+}
+
+function inventSitelinkUrl(merchantUrl: string, linkText: string, used: Set<string>): string {
+  const baseSlug = slugifyLabel(linkText) || 'page';
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    const slug = attempt === 0 ? baseSlug : `${baseSlug}-${attempt + 1}`;
+    const url = joinMerchantPath(merchantUrl, `/${slug}`);
+    const key = normalizePageKey(url);
+    if (key && !used.has(key) && key !== normalizePageKey(merchantUrl)) return url;
+  }
+  return joinMerchantPath(merchantUrl, `/${baseSlug}-${Date.now().toString(36)}`);
+}
+
+function slugifyLabel(value: string): string {
+  return value
+    .toLowerCase()
+    .normalize('NFKD')
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 48);
 }
 
 /**

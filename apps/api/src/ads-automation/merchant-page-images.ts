@@ -10,7 +10,14 @@ export interface MerchantPageImage {
   alt: string;
 }
 
+/** 首页导航里抽出的同站内链，用来给站内链接分配不同落地页。 */
+export interface MerchantNavLink {
+  url: string;
+  label: string;
+}
+
 const MAX_IMAGES = 12;
+const MAX_NAV_LINKS = 40;
 const MAX_HTML_BYTES = 1_500_000;
 
 /**
@@ -19,6 +26,86 @@ const MAX_HTML_BYTES = 1_500_000;
 export async function crawlMerchantImages(pageUrl: string): Promise<{ pageUrl: string; images: MerchantPageImage[] }> {
   const { html, finalUrl } = await fetchMerchantHtml(pageUrl);
   return { pageUrl: finalUrl, images: extractMerchantImages(html, finalUrl) };
+}
+
+/**
+ * 打开商家首页，抽出同站内链（带锚文本）。抓取失败时返回空列表，不阻断生成。
+ */
+export async function crawlMerchantNavLinks(pageUrl: string): Promise<MerchantNavLink[]> {
+  try {
+    const { html, finalUrl } = await fetchMerchantHtml(pageUrl);
+    return extractMerchantNavLinks(html, finalUrl);
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * 从 HTML 抽出同主机内链。单测用，不发起请求。
+ */
+export function extractMerchantNavLinks(html: string, baseUrl: string): MerchantNavLink[] {
+  let home: URL;
+  try {
+    home = new URL(baseUrl);
+  } catch {
+    return [];
+  }
+  const homeHost = normalizeHost(home.hostname);
+  const homeKey = pageKey(home);
+  const byUrl = new Map<string, MerchantNavLink>();
+
+  for (const tag of tags(html, 'a')) {
+    const href = attr(tag, 'href').trim();
+    if (!href || href.startsWith('#') || /^(mailto:|tel:|javascript:)/i.test(href)) continue;
+    let absolute: URL;
+    try {
+      absolute = new URL(href, baseUrl);
+    } catch {
+      continue;
+    }
+    if (absolute.protocol !== 'http:' && absolute.protocol !== 'https:') continue;
+    if (normalizeHost(absolute.hostname) !== homeHost) continue;
+    absolute.hash = '';
+    if (pageKey(absolute) === homeKey) continue;
+    if (isNoiseNavPath(absolute.pathname)) continue;
+    const label = decodeHtml(stripTags(tag)).replace(/\s+/g, ' ').trim().slice(0, 80);
+    const url = absolute.toString();
+    const existing = byUrl.get(url);
+    if (!existing || (label && label.length > existing.label.length)) {
+      byUrl.set(url, { url, label });
+    }
+  }
+
+  return [...byUrl.values()]
+    .sort((a, b) => navDepth(a.url) - navDepth(b.url) || a.url.localeCompare(b.url))
+    .slice(0, MAX_NAV_LINKS);
+}
+
+function navDepth(url: string): number {
+  try {
+    return new URL(url).pathname.split('/').filter(Boolean).length;
+  } catch {
+    return 99;
+  }
+}
+
+function normalizeHost(host: string): string {
+  return host.toLowerCase().replace(/^www\./, '');
+}
+
+function pageKey(url: URL): string {
+  const path = url.pathname.replace(/\/+$/, '') || '/';
+  return `${normalizeHost(url.hostname)}${path.toLowerCase()}`;
+}
+
+function isNoiseNavPath(pathname: string): boolean {
+  const path = pathname.toLowerCase();
+  return /(\.(jpg|jpeg|png|gif|webp|svg|pdf|css|js|zip|xml)$|\/(cart|checkout|login|signin|signup|account|wishlist|cdn-cgi)\b)/i.test(path);
+}
+
+function stripTags(tag: string): string {
+  const inner = tag.replace(/^<a\b[^>]*>/i, '').replace(/<\/a\s*>$/i, '');
+  return inner.replace(/<[^>]+>/g, ' ');
 }
 
 /**

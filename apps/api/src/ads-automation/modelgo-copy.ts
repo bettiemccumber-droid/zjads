@@ -3,6 +3,7 @@ import {
   AdDraft,
   AdStructuredSnippet,
   STRUCTURED_SNIPPET_HEADERS,
+  assignUniqueSitelinkUrls,
   buildSampleDraft,
   SampleArticle,
   stripKeywordDecorations,
@@ -41,17 +42,19 @@ export async function writeAdCopy(input: {
   dailyBudgetUsd?: string;
   cpcBidCeilingUsd?: string;
   personaPrompt?: string;
+  pageLinks?: Array<{ url: string; label?: string }>;
 }): Promise<AdDraft> {
+  const pageLinks = input.pageLinks ?? [];
   const base = buildSampleDraft(input);
   const language = audienceLanguage(input.countryCode, input.languageCode);
-  const shape = adCopyJsonShape(input.merchantUrl);
+  const shape = adCopyJsonShape(input.merchantUrl, pageLinks);
   const raw = await askJson(
     `Write Google search ads for ${input.merchantName}. Audience language: ${language}. Country: ${input.countryCode}. Use real brand tone; strong click and purchase intent.`,
     shape,
     2200,
     input.personaPrompt,
   );
-  let draft = applyAdCopy(base, raw);
+  let draft = applyAdCopy(base, raw, pageLinks);
   let errors = validateDraft(draft);
   if (!errors.length) return draft;
 
@@ -63,16 +66,20 @@ Fix every limit and policy issue. Prefer shorter lines.`,
     2200,
     input.personaPrompt,
   );
-  draft = applyAdCopy(base, retryRaw);
+  draft = applyAdCopy(base, retryRaw, pageLinks);
   errors = validateDraft(draft);
   if (errors.length) throw new Error(errors[0]);
   return draft;
 }
 
-function adCopyJsonShape(merchantUrl: string): string {
+function adCopyJsonShape(merchantUrl: string, pageLinks: Array<{ url: string; label?: string }> = []): string {
   const headers = STRUCTURED_SNIPPET_HEADERS.join(', ');
+  const knownPages = pageLinks
+    .slice(0, 20)
+    .map((item) => `- ${item.url}${item.label ? ` (${item.label})` : ''}`)
+    .join('\n');
   return `Return JSON only:
-{"headlines": string[${AD_COPY_LIMITS.headlineCount.prefer}], "descriptions": string[${AD_COPY_LIMITS.descriptionCount.prefer}], "keywords": string[1 to 8], "negativeKeywords": string[4 to 12], "sitelinks": [{"linkText": string, "description1": string, "description2": string}], "callouts": string[${AD_COPY_LIMITS.calloutCount.prefer}], "structuredSnippets": [{"header": string, "values": string[${AD_COPY_LIMITS.structuredValuesMin}+]}], "promotion": string}
+{"headlines": string[${AD_COPY_LIMITS.headlineCount.prefer}], "descriptions": string[${AD_COPY_LIMITS.descriptionCount.prefer}], "keywords": string[1 to 8], "negativeKeywords": string[4 to 12], "sitelinks": [{"linkText": string, "description1": string, "description2": string, "finalUrl": string}], "callouts": string[${AD_COPY_LIMITS.calloutCount.prefer}], "structuredSnippets": [{"header": string, "values": string[${AD_COPY_LIMITS.structuredValuesMin}+]}], "promotion": string}
 
 Hard character limits (spaces/punctuation count):
 - headline <= ${AD_COPY_LIMITS.headline}
@@ -89,7 +96,9 @@ Content rules:
 - Callouts must NOT mention free shipping, discounts, coupons, returns, or sale numbers. Put real promos only in "promotion".
 - structuredSnippets: pick exactly 2 headers from [${headers}] that best fit this merchant (e.g. travel platform: TYPES + DESTINATIONS; multi-brand: TYPES + BRANDS; own-brand: TYPES + STYLES, avoid BRANDS). Each needs at least ${AD_COPY_LIMITS.structuredValuesMin} short values.
 - Always include useful negativeKeywords (careers, login, free pdf, etc.).
-- Final URL stays ${merchantUrl}. No URLs inside copy text.`;
+- Ad final URL (RSA) stays ${merchantUrl}. No URLs inside headline/description/callout text.
+- Each sitelink MUST include its own finalUrl. finalUrl values must be distinct https pages on the same merchant host, not all ${merchantUrl}. Prefer real subpages (quote, locations, services, how-it-works). Absolute paths or full URLs are both ok.
+${knownPages ? `Known on-site pages to prefer for sitelink finalUrl:\n${knownPages}` : ''}`;
 }
 
 /**
@@ -143,8 +152,13 @@ export function parseModelJson(text: string): Record<string, unknown> {
 
 /**
  * 把模型文案套进草稿。超长截断到规范上限，条数不够时用示例草稿补齐。
+ * 站内链接落地页会去重并优先落到爬到的同站内链。
  */
-export function applyAdCopy(base: AdDraft, raw: Record<string, unknown>): AdDraft {
+export function applyAdCopy(
+  base: AdDraft,
+  raw: Record<string, unknown>,
+  pageLinks: Array<{ url: string; label?: string }> = [],
+): AdDraft {
   const limits = AD_COPY_LIMITS;
   const headlines = uniqueNonEmpty([
     ...textList(raw.headlines).map((text) => fitAdText(text, limits.headline)),
@@ -168,10 +182,14 @@ export function applyAdCopy(base: AdDraft, raw: Record<string, unknown>): AdDraf
     ...textList(raw.callouts).map((text) => fitAdText(text, limits.callout)),
     ...base.callouts,
   ]).slice(0, limits.calloutCount.max);
-  const sitelinks = [
-    ...sitelinkList(raw.sitelinks, base.merchantUrl),
-    ...base.sitelinks,
-  ].slice(0, limits.sitelinkCount.max);
+  const sitelinks = assignUniqueSitelinkUrls(
+    [
+      ...sitelinkList(raw.sitelinks),
+      ...base.sitelinks,
+    ].slice(0, limits.sitelinkCount.max),
+    base.merchantUrl,
+    pageLinks,
+  );
   const structuredSnippets = structuredSnippetList(raw.structuredSnippets, base.structuredSnippets);
   const promotion = typeof raw.promotion === 'string' ? raw.promotion.trim().slice(0, 120) : base.promotion;
 
@@ -187,7 +205,11 @@ export function applyAdCopy(base: AdDraft, raw: Record<string, unknown>): AdDraf
     callouts: callouts.length ? callouts : base.callouts,
     sitelinks: sitelinks.length
       ? sitelinks
-      : [{ ...base.sitelinks[0], linkText: fitAdText(headlines[0], limits.sitelinkText), description1: '', description2: '' }],
+      : assignUniqueSitelinkUrls(
+        [{ ...base.sitelinks[0], linkText: fitAdText(headlines[0], limits.sitelinkText), description1: '', description2: '', finalUrl: '' }],
+        base.merchantUrl,
+        pageLinks,
+      ),
     structuredSnippets: structuredSnippets.length ? structuredSnippets : base.structuredSnippets,
     promotion,
   };
@@ -294,9 +316,9 @@ function textList(value: unknown): string[] {
 }
 
 /**
- * 读出合格的站内链接。两条描述必须同时有或同时没有。
+ * 读出合格的站内链接。两条描述必须同时有或同时没有；finalUrl 可后置分配。
  */
-function sitelinkList(value: unknown, finalUrl: string): AdDraft['sitelinks'] {
+function sitelinkList(value: unknown): AdDraft['sitelinks'] {
   if (!Array.isArray(value)) return [];
   return value
     .map((item) => {
@@ -310,9 +332,12 @@ function sitelinkList(value: unknown, finalUrl: string): AdDraft['sitelinks'] {
       const description2 = typeof (item as { description2?: unknown }).description2 === 'string'
         ? fitAdText((item as { description2: string }).description2, AD_COPY_LIMITS.sitelinkDescription)
         : '';
+      const finalUrl = typeof (item as { finalUrl?: unknown }).finalUrl === 'string'
+        ? (item as { finalUrl: string }).finalUrl.trim()
+        : '';
       if (!linkText) return null;
       if ((description1 && !description2) || (!description1 && description2)) return null;
-      return { linkText, description1, description2, finalUrl, verified: true };
+      return { linkText, description1, description2, finalUrl, verified: false };
     })
     .filter((item): item is AdDraft['sitelinks'][number] => item != null)
     .slice(0, AD_COPY_LIMITS.sitelinkCount.max);

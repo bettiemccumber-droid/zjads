@@ -1,5 +1,11 @@
 import assert from 'assert';
-import { buildSampleDraft, geoTargetForCountry, languageConstant, validateDraft } from './ads-automation.util';
+import {
+  buildSampleDraft,
+  geoTargetForCountry,
+  languageConstant,
+  normalizePageKey,
+  validateDraft,
+} from './ads-automation.util';
 import { applyAdCopy, audienceLanguage, parseModelJson } from './modelgo-copy';
 
 assert.strictEqual(audienceLanguage('MX', 'es'), 'Spanish as used in Mexico');
@@ -26,6 +32,9 @@ assert.deepStrictEqual(validateDraft(draft), []);
 assert.ok(draft.headlines.length >= 3);
 assert.strictEqual(draft.merchantUrl, 'https://example.com/');
 assert.strictEqual(draft.dailyBudgetUsd, '3.00');
+const sitelinkKeys = new Set(draft.sitelinks.map((link) => normalizePageKey(link.finalUrl)));
+assert.strictEqual(sitelinkKeys.size, draft.sitelinks.length);
+assert.ok(!sitelinkKeys.has(normalizePageKey(draft.merchantUrl)));
 
 const longDesc = `Discover travel deals and experiences with Klook across Australia including tours activities and attractions you can book today with flexible options.`;
 assert.ok(longDesc.length > 70);

@@ -480,9 +480,16 @@ export class AdsAutomationController {
   }
 
   @Post('google-ads/sync')
-  async syncGoogleAds(@CurrentUser() user: AuthUser) {
+  async syncGoogleAds(
+    @CurrentUser() user: AuthUser,
+    @Body() body: { mccCustomerId?: string } = {},
+  ) {
     this.assertWriter(user);
-    return ok(await this.ads.syncGoogleAds(user.id), '已从 Google Ads 同步子账号');
+    const result = await this.ads.syncGoogleAds(user.id, body.mccCustomerId);
+    const failHint = result.failed.length
+      ? `；${result.failed.length} 个 MCC 失败：${result.failed.map((item) => item.mccCustomerId).join('、')}`
+      : '';
+    return ok(result, `已同步 ${result.connections.length} 个 MCC${failHint}`);
   }
 
   /**

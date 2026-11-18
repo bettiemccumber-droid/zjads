@@ -958,7 +958,10 @@ export class AdsAutomationService implements OnModuleInit {
     input: { mccCustomerId: string; loginCustomerId?: string; refreshToken?: string },
   ) {
     const mcc = normalizeMccKey(input.mccCustomerId);
-    const login = digits(input.loginCustomerId ?? '');
+    if (!/^\d{6,16}$/.test(mcc)) {
+      throw new BadRequestException('请填写 Google 经理账号客户号（10 位数字），不要选广告数据源');
+    }
+    const login = digits(input.loginCustomerId ?? '') || mcc;
     const token = input.refreshToken?.trim() ?? '';
     const row = await this.prisma.googleAdsConnection.upsert({
       where: { ownerUserId_mccCustomerId: { ownerUserId, mccCustomerId: mcc } },
@@ -969,7 +972,7 @@ export class AdsAutomationService implements OnModuleInit {
         refreshTokenEnc: token ? this.encryptRefreshToken(token) : '',
       },
       update: {
-        ...(input.loginCustomerId != null ? { loginCustomerId: login } : {}),
+        loginCustomerId: login,
         ...(token ? { refreshTokenEnc: this.encryptRefreshToken(token) } : {}),
       },
     });
@@ -1020,16 +1023,34 @@ export class AdsAutomationService implements OnModuleInit {
   }
 
   /**
-   * 从每个已配好的 MCC 拉取子账号，并补发还停在队列里的请求。
+   * 拉取子账号。可指定单个 MCC；不传则同步当前用户下全部已配置的 MCC。
+   * 多个 MCC 时某个失败不阻断其它，返回成功与失败明细。
    */
-  async syncGoogleAds(ownerUserId: number) {
+  async syncGoogleAds(ownerUserId: number, mccCustomerId?: string) {
     if (!googleAdsAppReady()) {
       throw new BadRequestException('请先在服务器环境变量里配置 Google Ads 开发者令牌和 OAuth 客户端');
     }
-    const connections = await this.prisma.googleAdsConnection.findMany({ where: { ownerUserId } });
+    const where = mccCustomerId?.trim()
+      ? { ownerUserId, mccCustomerId: normalizeMccKey(mccCustomerId) }
+      : { ownerUserId };
+    const connections = await this.prisma.googleAdsConnection.findMany({ where });
+    if (!connections.length) {
+      throw new BadRequestException(
+        mccCustomerId?.trim()
+          ? '找不到这条 MCC 连接，请先保存'
+          : '请先保存至少一个 MCC 客户号。刷新令牌可以写在环境变量，也可以按 MCC 单独保存',
+      );
+    }
     const synced: Array<{ mccCustomerId: string; loginCustomerId: string; customerCount: number }> = [];
+    const failed: Array<{ mccCustomerId: string; message: string }> = [];
     for (const connection of connections) {
-      if (!this.credentialsFor(connection)) continue;
+      if (!this.credentialsFor(connection)) {
+        failed.push({
+          mccCustomerId: connection.mccCustomerId,
+          message: '缺少刷新令牌或经理账号客户号，无法调用 Google Ads',
+        });
+        continue;
+      }
       try {
         const customerCount = await this.syncConnection(connection);
         const creds = this.credentialsFor(connection);
@@ -1039,16 +1060,17 @@ export class AdsAutomationService implements OnModuleInit {
           customerCount,
         });
       } catch (error) {
-        if (error instanceof BadRequestException) throw error;
         const reason = error instanceof Error ? error.message : '同步 Google Ads 失败';
-        throw new BadRequestException(reason);
+        failed.push({ mccCustomerId: connection.mccCustomerId, message: reason });
       }
     }
     if (!synced.length) {
-      throw new BadRequestException('请先保存 MCC 客户号。刷新令牌可以写在环境变量，也可以按 MCC 单独保存');
+      throw new BadRequestException(
+        failed.map((item) => `${item.mccCustomerId}: ${item.message}`).join('；') || '同步失败',
+      );
     }
     const flushed = await this.flushHeld(ownerUserId);
-    return { connections: synced, flushed };
+    return { connections: synced, failed, flushed };
   }
 
   /**
@@ -1723,7 +1745,7 @@ export class AdsAutomationService implements OnModuleInit {
       return {
         id: customerId,
         mccCustomerId: connection.mccCustomerId,
-        mccLabel: connection.loginCustomerId ? digits(connection.loginCustomerId) : connection.mccCustomerId,
+        mccLabel: connection.mccCustomerId,
         customerId,
         googleStatus: customer.googleStatus,
         availability: accountAvailability(customer.googleStatus, customer.activeCampaignCount, customer.availability),

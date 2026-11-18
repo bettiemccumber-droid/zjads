@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Alert, AutoComplete, Button, Card, Col, Form, Input, Row, Space, Statistic, Switch, Table, Tag, Tooltip, Typography, message } from 'antd';
-import { ReloadOutlined } from '@ant-design/icons';
+import { Alert, Button, Card, Col, Form, Input, Popconfirm, Row, Select, Space, Statistic, Switch, Table, Tag, Tooltip, Typography, message } from 'antd';
+import { DeleteOutlined, PlusOutlined, ReloadOutlined, SyncOutlined } from '@ant-design/icons';
 import { api, type ApiResult } from '../../api/client';
 import { useAuth } from '../../hooks/useAuth';
 import { formatCustomerId } from './ad-launch-settings';
@@ -22,18 +22,26 @@ interface Board {
   rows: AccountRow[];
 }
 
+interface AdsConnection {
+  id: number;
+  mccCustomerId: string;
+  loginCustomerId: string;
+  hasRefreshToken: boolean;
+  customerCount: number;
+}
+
 interface AdsSetup {
   appReady: boolean;
   hasEnvRefreshToken: boolean;
   hasEnvLoginCustomerId: boolean;
   apiVersion: string;
   missing: string[];
-  connections: Array<{ id: number; mccCustomerId: string; loginCustomerId: string; hasRefreshToken: boolean; customerCount: number }>;
+  connections: AdsConnection[];
 }
 
-interface AdSource {
-  id: number;
-  name: string;
+interface SyncResult {
+  connections: Array<{ mccCustomerId: string; loginCustomerId: string; customerCount: number }>;
+  failed: Array<{ mccCustomerId: string; message: string }>;
 }
 
 const AVAILABILITY: Record<string, { label: string; color: string; tip: string }> = {
@@ -50,16 +58,16 @@ const STATUS_LABEL: Record<string, string> = {
   UNKNOWN: '未回传',
 };
 
-/**
- * 暂停、取消、关闭的子账号算异常，不能拿来投放。
- */
 function isAbnormal(row: AccountRow) {
   return row.availability === 'disabled' || row.googleStatus === 'SUSPENDED' || row.googleStatus === 'CANCELED' || row.googleStatus === 'CLOSED';
 }
 
+function digitsOnly(value: string) {
+  return value.replace(/\D/g, '');
+}
+
 /**
- * 当前员工名下的子账号。空闲和占用可以投放，禁用是异常。
- * 名单和「未回传」来自广告日报。接入 Google Ads API 时改成 MCC 当前子账号和真实账户状态。
+ * 同一员工可挂多个 MCC。列表支持按 MCC 筛选；连接可单独同步或全部同步。
  */
 export default function AccountStatusPage() {
   const { user } = useAuth();
@@ -69,31 +77,42 @@ export default function AccountStatusPage() {
     rows: [],
   });
   const [setup, setSetup] = useState<AdsSetup | null>(null);
-  const [sources, setSources] = useState<AdSource[]>([]);
   const [keyword, setKeyword] = useState('');
+  const [mccFilter, setMccFilter] = useState<string>('all');
   const [abnormalOnly, setAbnormalOnly] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [syncingAll, setSyncingAll] = useState(false);
+  const [syncingMcc, setSyncingMcc] = useState<string | null>(null);
 
   const load = useCallback(async () => {
-    const [accounts, config, sourceList] = await Promise.all([
+    const [accounts, config] = await Promise.all([
       api.get<ApiResult<Board>>('/google-ads/accounts'),
       api.get<ApiResult<AdsSetup>>('/google-ads/setup'),
-      api.get<ApiResult<AdSource[]>>('/ad-sources'),
     ]);
     if (accounts.data.success) setBoard(accounts.data.data);
     if (config.data.success) setSetup(config.data.data);
-    if (sourceList.data.success) setSources(sourceList.data.data);
   }, []);
 
   useEffect(() => {
     void load().catch(() => message.error('加载账户状态失败'));
   }, [load]);
 
-  const abnormalCount = useMemo(() => board.rows.filter(isAbnormal).length, [board.rows]);
-  const visibleRows = useMemo(() => {
+  const mccOptions = useMemo(() => {
+    const ids = new Set<string>();
+    for (const connection of setup?.connections ?? []) {
+      if (connection.mccCustomerId) ids.add(connection.mccCustomerId);
+    }
+    for (const row of board.rows) {
+      if (row.mccCustomerId) ids.add(row.mccCustomerId);
+    }
+    return [...ids].sort();
+  }, [board.rows, setup?.connections]);
+
+  const filteredRows = useMemo(() => {
     const query = keyword.trim().toLowerCase();
     return board.rows.filter((row) => {
+      if (mccFilter !== 'all' && row.mccCustomerId !== mccFilter) return false;
       if (abnormalOnly && !isAbnormal(row)) return false;
       if (!query) return true;
       const owner = (user?.username ?? '').toLowerCase();
@@ -101,7 +120,52 @@ export default function AccountStatusPage() {
       const mcc = (row.mccLabel || row.mccCustomerId).toLowerCase();
       return cid.includes(query) || row.customerId.includes(query) || mcc.includes(query) || owner.includes(query);
     });
-  }, [abnormalOnly, board.rows, keyword, user?.username]);
+  }, [abnormalOnly, board.rows, keyword, mccFilter, user?.username]);
+
+  const filteredSummary = useMemo(() => ({
+    total: filteredRows.length,
+    enabled: filteredRows.filter((row) => row.googleStatus === 'ENABLED').length,
+    suspended: filteredRows.filter((row) => row.googleStatus === 'SUSPENDED').length,
+    closed: filteredRows.filter((row) => row.googleStatus === 'CANCELED' || row.googleStatus === 'CLOSED').length,
+  }), [filteredRows]);
+
+  const abnormalCount = useMemo(() => filteredRows.filter(isAbnormal).length, [filteredRows]);
+
+  const reportSync = (result: SyncResult) => {
+    const okCount = result.connections.length;
+    const failCount = result.failed?.length ?? 0;
+    if (failCount) {
+      message.warning(
+        `已同步 ${okCount} 个 MCC；失败 ${failCount} 个：${result.failed.map((item) => `${item.mccCustomerId}（${item.message}）`).join('；')}`,
+      );
+      return;
+    }
+    const totalKids = result.connections.reduce((sum, item) => sum + item.customerCount, 0);
+    message.success(`已同步 ${okCount} 个 MCC，共 ${totalKids} 个子账号`);
+  };
+
+  const syncConnections = async (mccCustomerId?: string) => {
+    const synced = await api.post<ApiResult<SyncResult>>('/google-ads/sync', mccCustomerId ? { mccCustomerId } : {});
+    if (!synced.data.success) {
+      message.error(synced.data.message || '同步失败');
+      return;
+    }
+    reportSync(synced.data.data);
+    await load();
+  };
+
+  const removeConnection = async (mccCustomerId: string) => {
+    const removed = await api.delete<ApiResult<unknown>>(
+      `/google-ads/connections/${encodeURIComponent(mccCustomerId)}`,
+    );
+    if (!removed.data.success) {
+      message.error(removed.data.message || '删除失败');
+      return;
+    }
+    message.success(`已删除 ${formatCustomerId(mccCustomerId)}`);
+    if (mccFilter === mccCustomerId) setMccFilter('all');
+    await load();
+  };
 
   return (
     <>
@@ -111,10 +175,10 @@ export default function AccountStatusPage() {
         showIcon
         style={{ marginBottom: 16 }}
         message={board.live
-          ? '名单来自 Google Ads MCC 当前子账号。空闲和占用可以投放，禁用是异常。在投系列按接口里当前启用的系列计算。'
+          ? '名单来自已连接的 Google Ads MCC。同一账号可挂多个 MCC；可按 MCC 筛选，也可单独同步。空闲和占用可投放，禁用是异常。'
           : '空闲和占用的子账号可以投放，禁用的是异常。还没接上 Google Ads 时，在投系列按该 CID 最新一天里启用的系列计算，账户状态显示「未回传」。'}
       />
-      <Card title="Google Ads API" style={{ marginBottom: 16 }}>
+      <Card title="Google Ads MCC" style={{ marginBottom: 16 }}>
         {setup && !setup.appReady ? (
           <Alert
             type="warning"
@@ -127,32 +191,116 @@ export default function AccountStatusPage() {
             type="success"
             showIcon
             style={{ marginBottom: 12 }}
-            message={`API ${setup?.apiVersion ?? 'v26'} 已就绪。${setup?.hasEnvRefreshToken ? '环境变量里已有刷新令牌。' : '刷新令牌请填在下面，或写入 GOOGLE_ADS_REFRESH_TOKEN。'}`}
+            message={`API ${setup?.apiVersion ?? 'v26'} 已就绪。${setup?.hasEnvRefreshToken ? '默认使用环境变量里的刷新令牌；某个 MCC 需要另一套令牌时可单独填写。' : '请在下方或环境变量中配置刷新令牌。'}`}
           />
         )}
+
+        <Table
+          rowKey="id"
+          size="small"
+          pagination={false}
+          style={{ marginBottom: 16 }}
+          locale={{ emptyText: '还没有 MCC。在下方添加 10 位经理账号客户号后同步。' }}
+          dataSource={setup?.connections ?? []}
+          columns={[
+            {
+              title: 'MCC',
+              dataIndex: 'mccCustomerId',
+              render: (value: string) => formatCustomerId(value),
+            },
+            {
+              title: '登录客户号',
+              dataIndex: 'loginCustomerId',
+              render: (value: string, row: AdsConnection) => formatCustomerId(value || row.mccCustomerId),
+            },
+            {
+              title: '子账号',
+              dataIndex: 'customerCount',
+            },
+            {
+              title: '令牌',
+              dataIndex: 'hasRefreshToken',
+              render: (value: boolean) => (value ? '本条已存' : setup?.hasEnvRefreshToken ? '用环境变量' : '缺失'),
+            },
+            {
+              title: '操作',
+              render: (_: unknown, row: AdsConnection) => (
+                <Space>
+                  <Button
+                    size="small"
+                    icon={<SyncOutlined />}
+                    loading={syncingMcc === row.mccCustomerId}
+                    disabled={setup != null && !setup.appReady}
+                    onClick={() => {
+                      setSyncingMcc(row.mccCustomerId);
+                      void syncConnections(row.mccCustomerId)
+                        .catch((err) => {
+                          const apiMessage = (err as { response?: { data?: { message?: string | string[] } } }).response?.data?.message;
+                          message.error(Array.isArray(apiMessage) ? apiMessage.join('；') : apiMessage || '同步失败');
+                        })
+                        .finally(() => setSyncingMcc(null));
+                    }}
+                  >
+                    同步
+                  </Button>
+                  <Popconfirm
+                    title={`删除 MCC ${formatCustomerId(row.mccCustomerId)}？`}
+                    description="会删掉这条连接和已同步的子账号列表，不影响 Google Ads 本身。"
+                    okText="删除"
+                    cancelText="取消"
+                    onConfirm={() => removeConnection(row.mccCustomerId).catch((err) => {
+                      const apiMessage = (err as { response?: { data?: { message?: string | string[] } } }).response?.data?.message;
+                      message.error(Array.isArray(apiMessage) ? apiMessage.join('；') : apiMessage || '删除失败');
+                    })}
+                  >
+                    <Button size="small" danger icon={<DeleteOutlined />}>删除</Button>
+                  </Popconfirm>
+                </Space>
+              ),
+            },
+          ]}
+        />
+
+        <Space style={{ marginBottom: 16 }}>
+          <Button
+            icon={<SyncOutlined />}
+            loading={syncingAll}
+            disabled={!setup?.connections?.length || (setup != null && !setup.appReady)}
+            onClick={() => {
+              setSyncingAll(true);
+              void syncConnections()
+                .catch((err) => {
+                  const apiMessage = (err as { response?: { data?: { message?: string | string[] } } }).response?.data?.message;
+                  message.error(Array.isArray(apiMessage) ? apiMessage.join('；') : apiMessage || '同步失败');
+                })
+                .finally(() => setSyncingAll(false));
+            }}
+          >
+            同步全部 MCC
+          </Button>
+        </Space>
+
+        <Typography.Text strong>添加 / 更新 MCC</Typography.Text>
         <Form
           form={form}
           layout="vertical"
+          style={{ marginTop: 8 }}
           onFinish={async (values: { mccCustomerId: string; loginCustomerId?: string; refreshToken?: string }) => {
             setSaving(true);
             try {
+              const mcc = digitsOnly(values.mccCustomerId);
+              const login = digitsOnly(values.loginCustomerId || '') || mcc;
               const saved = await api.post<ApiResult<unknown>>('/google-ads/connections', {
-                mccCustomerId: values.mccCustomerId,
-                loginCustomerId: values.loginCustomerId,
+                mccCustomerId: mcc,
+                loginCustomerId: login,
                 refreshToken: values.refreshToken,
               });
               if (!saved.data.success) {
                 message.error(saved.data.message || '保存失败');
                 return;
               }
-              const synced = await api.post<ApiResult<unknown>>('/google-ads/sync');
-              if (!synced.data.success) {
-                message.warning(synced.data.message || '已保存连接，同步失败');
-              } else {
-                message.success('已保存并同步子账号');
-              }
-              form.setFieldValue('refreshToken', '');
-              await load();
+              await syncConnections(mcc);
+              form.resetFields();
             } catch (err) {
               const apiMessage = (err as { response?: { data?: { message?: string | string[] } } }).response?.data?.message;
               message.error(Array.isArray(apiMessage) ? apiMessage.join('；') : apiMessage || '保存失败');
@@ -163,76 +311,66 @@ export default function AccountStatusPage() {
         >
           <Row gutter={12}>
             <Col span={8}>
-              <Form.Item name="mccCustomerId" label="MCC" rules={[{ required: true, message: '选择或填写 MCC' }]} extra="选广告数据源，或直接填 10 位经理账号客户号">
-                <AutoComplete
-                  placeholder="选择数据源，或填写 1234567890"
-                  options={[
-                    ...sources.map((item) => ({ value: `s${item.id}`, label: item.name })),
-                    ...(setup?.connections ?? [])
-                      .filter((item) => !sources.some((source) => `s${source.id}` === item.mccCustomerId))
-                      .map((item) => ({ value: item.mccCustomerId, label: item.loginCustomerId || item.mccCustomerId })),
-                  ]}
-                />
+              <Form.Item
+                name="mccCustomerId"
+                label="MCC 客户号"
+                rules={[
+                  { required: true, message: '填写经理账号客户号' },
+                  {
+                    validator: async (_, value) => {
+                      const digits = digitsOnly(String(value || ''));
+                      if (digits.length < 6) throw new Error('请填写 Google 经理账号客户号');
+                    },
+                  },
+                ]}
+                extra="只填 10 位数字，例如 520-616-2115。可添加多个。"
+              >
+                <Input placeholder="5206162115" />
               </Form.Item>
             </Col>
             <Col span={8}>
-              <Form.Item name="loginCustomerId" label="Google 经理账号客户号" extra={setup?.hasEnvLoginCustomerId ? '留空则使用环境变量里的客户号' : '10 位数字，例如 123-456-7890'}>
-                <Input placeholder="1234567890" />
+              <Form.Item
+                name="loginCustomerId"
+                label="登录客户号（可选）"
+                extra="一般与 MCC 相同，可留空。只有从上级 MCC 登录时才需要另填。"
+              >
+                <Input placeholder="默认等于 MCC" />
               </Form.Item>
             </Col>
             <Col span={8}>
-              <Form.Item name="refreshToken" label="刷新令牌" extra={setup?.hasEnvRefreshToken ? '留空则使用环境变量里的刷新令牌' : 'OAuth refresh token，只保存加密后的值'}>
-                <Input.Password placeholder="留空表示不修改" autoComplete="new-password" />
+              <Form.Item
+                name="refreshToken"
+                label="刷新令牌（可选）"
+                extra={setup?.hasEnvRefreshToken ? '留空则用环境变量；该 MCC 需另一邮箱授权时再填' : 'OAuth refresh token'}
+              >
+                <Input.Password placeholder="留空表示用环境变量" autoComplete="new-password" />
               </Form.Item>
             </Col>
           </Row>
-          <Button type="primary" htmlType="submit" loading={saving} disabled={setup != null && !setup.appReady}>保存并同步</Button>
+          <Button type="primary" htmlType="submit" icon={<PlusOutlined />} loading={saving} disabled={setup != null && !setup.appReady}>
+            保存并同步此 MCC
+          </Button>
         </Form>
-        {!!setup?.connections?.length && (
-          <div style={{ marginTop: 16 }}>
-            <Typography.Text type="secondary">已保存的 MCC 连接（测错的可删除，例如 s23）</Typography.Text>
-            <Space wrap style={{ marginTop: 8 }}>
-              {setup.connections.map((item) => (
-                <Tag
-                  key={item.id}
-                  closable
-                  onClose={(event) => {
-                    event.preventDefault();
-                    void (async () => {
-                      try {
-                        const removed = await api.delete<ApiResult<unknown>>(
-                          `/google-ads/connections/${encodeURIComponent(item.mccCustomerId)}`,
-                        );
-                        if (!removed.data.success) {
-                          message.error(removed.data.message || '删除失败');
-                          return;
-                        }
-                        message.success(`已删除 ${item.mccCustomerId}`);
-                        await load();
-                      } catch (err) {
-                        const apiMessage = (err as { response?: { data?: { message?: string | string[] } } }).response?.data?.message;
-                        message.error(Array.isArray(apiMessage) ? apiMessage.join('；') : apiMessage || '删除失败');
-                      }
-                    })();
-                  }}
-                >
-                  {item.mccCustomerId}
-                  {item.loginCustomerId ? ` / ${item.loginCustomerId}` : ''}
-                  {` · ${item.customerCount} 个子账号`}
-                </Tag>
-              ))}
-            </Space>
-          </div>
-        )}
       </Card>
+
       <Row gutter={16} style={{ marginBottom: 16 }}>
-        <Col span={6}><Card><Statistic title="账户点数" value={board.summary.total} /></Card></Col>
-        <Col span={6}><Card><Statistic title="正常" value={board.summary.enabled} valueStyle={{ color: '#3f8600' }} /></Card></Col>
-        <Col span={6}><Card><Statistic title="已暂停" value={board.summary.suspended} valueStyle={{ color: '#cf1322' }} /></Card></Col>
-        <Col span={6}><Card><Statistic title="已取消/关闭" value={board.summary.closed} /></Card></Col>
+        <Col span={6}><Card><Statistic title="账户点数" value={filteredSummary.total} /></Card></Col>
+        <Col span={6}><Card><Statistic title="正常" value={filteredSummary.enabled} valueStyle={{ color: '#3f8600' }} /></Card></Col>
+        <Col span={6}><Card><Statistic title="已暂停" value={filteredSummary.suspended} valueStyle={{ color: '#cf1322' }} /></Card></Col>
+        <Col span={6}><Card><Statistic title="已取消/关闭" value={filteredSummary.closed} /></Card></Col>
       </Row>
+
       <Card>
         <Space style={{ marginBottom: 12 }} wrap>
+          <Select
+            style={{ width: 220 }}
+            value={mccFilter}
+            onChange={setMccFilter}
+            options={[
+              { value: 'all', label: '全部 MCC' },
+              ...mccOptions.map((id) => ({ value: id, label: formatCustomerId(id) })),
+            ]}
+          />
           <Input.Search
             allowClear
             placeholder="CID / MCC / 归属人"
@@ -255,15 +393,15 @@ export default function AccountStatusPage() {
           </Button>
         </Space>
         <Table
-          rowKey="id"
+          rowKey={(row) => `${row.mccCustomerId}-${row.customerId}`}
           size="small"
           pagination={{ pageSize: 20, showSizeChanger: false }}
-          dataSource={visibleRows}
+          dataSource={filteredRows}
           columns={[
             {
               title: 'MCC',
-              dataIndex: 'mccLabel',
-              render: (value: string, row: AccountRow) => value || (row.mccCustomerId ? formatCustomerId(row.mccCustomerId) : '—'),
+              dataIndex: 'mccCustomerId',
+              render: (value: string) => (value ? formatCustomerId(value) : '—'),
             },
             { title: '归属人', render: () => user?.username || '—' },
             { title: '账户 CID', dataIndex: 'customerId', render: (value: string) => formatCustomerId(value) },

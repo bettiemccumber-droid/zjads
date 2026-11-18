@@ -22,6 +22,7 @@ import {
   pickArticleImages,
   sampleArticleHtml,
   isCustomerEligible,
+  stripKeywordDecorations,
   usdToMicros,
   validateDraft,
 } from './ads-automation.util';
@@ -38,6 +39,11 @@ import {
   isVerificationBlocking,
   readCreatedResources,
 } from './google-ads.client';
+import {
+  domainFromUrl,
+  fetchDomainOrganicKeywords,
+  semrushConfigured,
+} from './semrush.client';
 
 interface SitePublishInput {
   publishUrl: string;
@@ -1271,6 +1277,45 @@ export class AdsAutomationService implements OnModuleInit {
       data: { draft: next as unknown as Prisma.InputJsonValue },
     });
     return this.getJob(ownerUserId, id);
+  }
+
+  /**
+   * 用 Semrush domain_organic 拉词并写入草稿关键词（不自动发布）。
+   */
+  async importSemrushKeywords(ownerUserId: number, id: string, limit = 30) {
+    if (!semrushConfigured()) {
+      throw new BadRequestException('未配置 SEMRUSH_API_KEY，请先在环境变量中填写');
+    }
+    const job = await this.mustJob(ownerUserId, id);
+    if (job.status !== 'READY_FOR_REVIEW') {
+      throw new BadRequestException('只有待确认的任务可以导入关键词');
+    }
+    const draft = this.readDraft(job.draft);
+    const input = (job.input ?? {}) as { merchantUrl?: string; countryCode?: string };
+    const domain = domainFromUrl(draft.merchantUrl || input.merchantUrl || '');
+    const rows = await fetchDomainOrganicKeywords({
+      domain,
+      countryCode: job.targetCountry || input.countryCode || 'US',
+      limit,
+    });
+    if (!rows.length) {
+      throw new BadRequestException('Semrush 未返回关键词，请换域名或国家后再试');
+    }
+    const keywords = rows.slice(0, Math.min(40, rows.length)).map((row) => ({
+      text: stripKeywordDecorations(row.keyword).slice(0, 80),
+      matchType: 'PHRASE' as const,
+    })).filter((item) => item.text);
+    const next: AdDraft = { ...draft, keywords: keywords.length ? keywords : draft.keywords };
+    await this.prisma.adJob.update({
+      where: { id },
+      data: { draft: next as unknown as Prisma.InputJsonValue },
+    });
+    return {
+      job: await this.getJob(ownerUserId, id),
+      imported: keywords.length,
+      domain,
+      suggestions: rows.slice(0, 40),
+    };
   }
 
   /**

@@ -1,0 +1,39 @@
+.ad-review {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  padding-bottom: 24px;
+}
+
+.ad-review--center {
+  min-height: 40vh;
+  align-items: center;
+  justify-content: center;
+}
+
+.ad-review__head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 16px;
+  flex-wrap: wrap;
+}
+
+.ad-review__count {
+  color: #98a2b3;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.ad-review__count--over {
+  color: #cf1322;
+}
+
+.ad-review__side {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 4px;
+  padding-left: 8px;
+}

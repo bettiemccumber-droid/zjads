@@ -633,6 +633,16 @@ export class AdsAutomationController {
     return ok(await this.ads.patchDraft(user.id, id, body));
   }
 
+  @Post('ad-jobs/:id/keywords/semrush')
+  async importSemrushKeywords(
+    @CurrentUser() user: AuthUser,
+    @Param('id') id: string,
+    @Body() body: { limit?: number },
+  ) {
+    this.assertWriter(user);
+    return ok(await this.ads.importSemrushKeywords(user.id, id, body.limit ?? 30), '已导入 Semrush 关键词');
+  }
+
   @Post('ad-jobs/:id/publish')
   async publish(
     @CurrentUser() user: AuthUser,

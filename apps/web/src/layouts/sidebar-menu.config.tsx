@@ -190,6 +190,7 @@ export function resolveSidebarSelectedKey(pathname: string, isAdmin: boolean): s
   if (pathname.startsWith('/ads/accounts')) return '/ads/accounts';
   if (pathname.startsWith('/ads/articles/publish')) return '/ads/articles/publish';
   if (pathname.startsWith('/ads/articles')) return '/ads/articles';
+  if (pathname.startsWith('/ads/jobs')) return '/ads/merchants';
   if (pathname.startsWith('/ads/merchants') || pathname.startsWith('/ads-automation')) return '/ads/merchants';
   return pathname;
 }

@@ -24,6 +24,7 @@ import AdminPublishSitesPage from './pages/admin/AdminPublishSitesPage';
 import AdminMerchantListsPage from './pages/admin/AdminMerchantListsPage';
 import MyMerchantsPage from './pages/ads/MyMerchantsPage';
 import AccountStatusPage from './pages/ads/AccountStatusPage';
+import AdJobReviewPage from './pages/ads/AdJobReviewPage';
 import ArticlesPage from './pages/ads/ArticlesPage';
 import ArticlePublishPage from './pages/ads/ArticlePublishPage';
 import { useAuth } from './hooks/useAuth';
@@ -104,6 +105,7 @@ export default function App() {
           />
           <Route path="ads-automation" element={<AdsAutomationRoute />} />
           <Route path="ads/merchants" element={<MyMerchantsPage />} />
+          <Route path="ads/jobs/:id" element={<EmployeeOnlyRoute><AdJobReviewPage /></EmployeeOnlyRoute>} />
           <Route path="ads/accounts" element={<EmployeeOnlyRoute><AccountStatusPage /></EmployeeOnlyRoute>} />
           <Route path="ads/articles/publish" element={<EmployeeOnlyRoute><ArticlePublishPage /></EmployeeOnlyRoute>} />
           <Route path="ads/articles" element={<EmployeeOnlyRoute><ArticlesPage /></EmployeeOnlyRoute>} />

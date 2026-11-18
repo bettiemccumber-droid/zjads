@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { Alert, Button, Card, Checkbox, Form, Input, Modal, Popconfirm, Radio, Select, Space, Spin, Switch, Table, Tabs, Tag, Tooltip, Typography, message } from 'antd';
 import {
   AlertOutlined,
@@ -20,7 +20,14 @@ import { useAuth } from '../../hooks/useAuth';
 import { parseScopedViewUserId } from '../../utils/team-scope.util';
 import { lastNDaysToYesterday } from '../../utils/date-range.util';
 import { OPS_PLATFORM_SHORT, opsPlatformShort } from '../../utils/opsPlatform';
-import { formatCustomerId, loadAdSettings, saveAdSettings, type AdLaunchSettings } from './ad-launch-settings';
+import {
+  AD_COUNTRY_OPTIONS,
+  AD_LANGUAGE_OPTIONS,
+  formatCustomerId,
+  loadAdSettings,
+  saveAdSettings,
+  type AdLaunchSettings,
+} from './ad-launch-settings';
 import ChargebackMerchantsPage from '../merchant-hub/ChargebackMerchantsPage';
 import PersonaLibraryModal, { fetchPersonaSummary } from './PersonaLibraryModal';
 import './MyMerchantsPage.css';
@@ -66,9 +73,12 @@ interface AdvertisedMerchant {
   advertiserCount?: number;
 }
 
-interface AdSource {
+interface AdsConnection {
   id: number;
-  name: string;
+  mccCustomerId: string;
+  loginCustomerId: string;
+  hasRefreshToken: boolean;
+  customerCount: number;
 }
 
 interface DiscoverRow {
@@ -419,6 +429,7 @@ function readHiddenMids(userId: number): string[] {
  */
 export default function MyMerchantsPage() {
   const { user, isAdmin } = useAuth();
+  const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const viewUserId = parseScopedViewUserId(user, isAdmin, searchParams.get('userId'));
   const scopeUserId = viewUserId ?? user?.id;
@@ -429,7 +440,7 @@ export default function MyMerchantsPage() {
   const [minePlatform, setMinePlatform] = useState('');
   const [mineQuery, setMineQuery] = useState('');
   const [pickTag, setPickTag] = useState('');
-  const [sources, setSources] = useState<AdSource[]>([]);
+  const [connections, setConnections] = useState<AdsConnection[]>([]);
   const [violationList, setViolationList] = useState<OpsListItem[]>([]);
   const [recommendList, setRecommendList] = useState<OpsListItem[]>([]);
   const [opsListsLoaded, setOpsListsLoaded] = useState(false);
@@ -440,7 +451,6 @@ export default function MyMerchantsPage() {
   const [engines, setEngines] = useState<EnginePrefs>({ landingProof: false, singleProduct: false, ecpc: false });
   const [settings, setSettings] = useState<AdLaunchSettings | null>(null);
   const [launchMerchant, setLaunchMerchant] = useState<DiscoverRow | null>(null);
-  const [job, setJob] = useState<AdJob | null>(null);
   const [settingsForm] = Form.useForm<AdLaunchSettings>();
   const [claimForm] = Form.useForm();
   const [tab, setTab] = useState('mine');
@@ -510,16 +520,16 @@ export default function MyMerchantsPage() {
         message.error('加载商家失败');
         setMerchantsLoaded(true);
       });
-    const [accountRes, sourceRes] = await Promise.all([
+    const [accountRes, setupRes] = await Promise.all([
       api.get<ApiResult<Array<{ platformCode: string; accounts: ChannelAccount[] }>>>('/channel-accounts/by-platform', { params }).catch(() => null),
-      api.get<ApiResult<AdSource[]>>('/ad-sources', { params }).catch(() => null),
+      api.get<ApiResult<{ connections: AdsConnection[] }>>('/google-ads/setup').catch(() => null),
       advertisedTask,
     ]);
     if (gen !== loadGen.current) return;
     if (accountRes?.data.success) {
       setAccounts(accountRes.data.data.flatMap((group) => group.accounts.map((account) => ({ ...account, platformCode: group.platformCode }))));
     }
-    if (sourceRes?.data.success) setSources(sourceRes.data.data.map((item) => ({ id: item.id, name: item.name })));
+    if (setupRes?.data.success) setConnections(setupRes.data.data.connections ?? []);
   }, [viewUserId]);
 
   const searchDiscover = useCallback(async (page = 1, query = discoverQuery) => {
@@ -549,14 +559,13 @@ export default function MyMerchantsPage() {
       return;
     }
     const regions = row.supportRegion.split(/[,，/\s]+/).map((item) => item.trim().toUpperCase()).filter((item) => /^[A-Z]{2}$/.test(item));
-    setJob(null);
     setLaunchMerchant(row);
     claimForm.setFieldsValue({
-      mccCustomerId: sources[0] ? `s${sources[0].id}` : undefined,
+      mccCustomerId: connections[0]?.mccCustomerId,
       targetCountry: regions[0] || settings?.targetCountry || row.countryCode || 'US',
       languageCode: settings?.languageCode || 'en',
     });
-  }, [claimForm, settings, sources]);
+  }, [claimForm, settings, connections]);
 
   useEffect(() => {
     if (discoverAccountId === undefined && accounts[0]) setDiscoverAccountId(accounts[0].id);
@@ -626,16 +635,6 @@ export default function MyMerchantsPage() {
       loadGen.current += 1;
     };
   }, [user, scopeUserId, viewUserId, load, refreshPersonas, settingsForm]);
-
-  useEffect(() => {
-    if (!job || job.status === 'READY_FOR_REVIEW' || job.status === 'COMPLETED' || job.status === 'FAILED') return;
-    const timer = window.setInterval(() => {
-      void api.get<ApiResult<AdJob>>(`/ad-jobs/${job.id}`).then((res) => {
-        if (res.data.success) setJob(res.data.data);
-      });
-    }, 1500);
-    return () => window.clearInterval(timer);
-  }, [job]);
 
   const hiddenSet = useMemo(() => new Set(hiddenMids), [hiddenMids]);
   const visibleAdvertised = useMemo(() => {
@@ -1483,8 +1482,14 @@ export default function MyMerchantsPage() {
         footer={null}
         destroyOnClose
       >
-        {!launchMerchant ? null : sources.length === 0 ? (
-          <Alert type="warning" showIcon message="还没有广告数据源，请先在广告数据源里添加 MCC。" />
+        {!launchMerchant ? null : connections.length === 0 ? (
+          <Alert
+            type="warning"
+            showIcon
+            message="还没有 Google Ads MCC 连接"
+            description="请先到「账户状态」添加并同步 MCC，再来领取商家。"
+            action={<Button size="small" onClick={() => navigate('/ads/accounts')}>去账户状态</Button>}
+          />
         ) : (
           <Form form={claimForm} layout="vertical" onFinish={async (values) => {
             if (!launchMerchant || !settings) return;
@@ -1515,14 +1520,14 @@ export default function MyMerchantsPage() {
                 message.error(res.data.message || '生成广告失败');
                 return;
               }
-              setJob(res.data.data);
-              message.success('已开始制作广告');
+              message.success('已开始制作广告，请在预览页确认后再发布');
               if (user && scopeUserId != null) {
                 const next = readHiddenMids(scopeUserId).filter((mid) => mid !== launchMerchant.mid);
                 localStorage.setItem(hiddenStorageKey(scopeUserId), JSON.stringify(next));
                 setHiddenMids(next);
               }
-              await load();
+              setLaunchMerchant(null);
+              navigate(`/ads/jobs/${res.data.data.id}`);
             } catch (err) {
               const apiMessage = (err as { response?: { data?: { message?: string | string[] } } }).response?.data?.message;
               message.error(Array.isArray(apiMessage) ? apiMessage.join('；') : apiMessage || '领取失败');
@@ -1531,13 +1536,24 @@ export default function MyMerchantsPage() {
             }
           }}>
             <Form.Item name="mccCustomerId" label="MCC 账户" rules={[{ required: true, message: '选择 MCC 账户' }]}>
-              <Select options={sources.map((item) => ({ value: `s${item.id}`, label: item.name }))} />
+              <Select
+                showSearch
+                optionFilterProp="label"
+                options={connections.map((item) => ({
+                  value: item.mccCustomerId,
+                  label: `${formatCustomerId(item.mccCustomerId)}${item.customerCount ? ` · ${item.customerCount} 个子账号` : ''}`,
+                }))}
+              />
             </Form.Item>
-            <Form.Item name="targetCountry" label="目标国家" rules={[{ required: true, message: '填写目标国家' }]}>
-              <Input placeholder="US" />
+            <Form.Item name="targetCountry" label="目标国家" rules={[{ required: true, message: '选择目标国家' }]}>
+              <Select
+                showSearch
+                optionFilterProp="label"
+                options={AD_COUNTRY_OPTIONS}
+              />
             </Form.Item>
             {launchMerchant.supportRegion ? (
-              <Form.Item label="支持地区">
+              <Form.Item label="支持地区（点击填入）">
                 <Space size={4} wrap>
                   {launchMerchant.supportRegion.split(/[,，/\s]+/).filter(Boolean).map((region) => (
                     <Tag
@@ -1554,43 +1570,14 @@ export default function MyMerchantsPage() {
                 </Space>
               </Form.Item>
             ) : null}
-            <Form.Item name="languageCode" label="广告语言（可选）">
-              <Input placeholder="en" />
+            <Form.Item name="languageCode" label="广告语言">
+              <Select allowClear options={AD_LANGUAGE_OPTIONS} placeholder="默认 en" />
             </Form.Item>
             <Form.Item label="使用账号">
               <Input value={`${launchMerchant.accountName} / ${launchMerchant.platformCode}`} disabled />
             </Form.Item>
-            <Button type="primary" htmlType="submit" loading={claimingKey === `${launchMerchant.channelAccountId}:${launchMerchant.mid}`}>确定</Button>
+            <Button type="primary" htmlType="submit" loading={claimingKey === `${launchMerchant.channelAccountId}:${launchMerchant.mid}`}>开始生成</Button>
           </Form>
-        )}
-        {job && (
-          <Alert
-            style={{ marginTop: 12 }}
-            type={job.status === 'FAILED' ? 'error' : 'success'}
-            message={`${job.progressMessage}（${job.progress}%）`}
-            description={
-              <Space direction="vertical">
-                {job.errorMessage && <span>{job.errorMessage}</span>}
-                {job.draft?.headlines && <span>标题：{job.draft.headlines.join(' / ')}</span>}
-                {job.draft?.merchantUrl && <span>广告最终到达网址：{job.draft.merchantUrl}</span>}
-                {job.draft?.dailyBudgetUsd && <span>日预算 ${job.draft.dailyBudgetUsd} · 最高 CPC ${job.draft.cpcBidCeilingUsd}</span>}
-                {job.status === 'READY_FOR_REVIEW' && (
-                  <Button type="primary" onClick={() => void api.post<ApiResult<AdJob>>(`/ad-jobs/${job.id}/publish`, {}).then(async (res) => {
-                    if (!res.data.success) return message.error(res.data.message || '发布失败');
-                    setJob(res.data.data);
-                    const submitted = res.data.data.campaign?.status === 'ENABLED';
-                    message.success(submitted ? '已提交到 Google Ads，文章到文章管理里查看' : '已写入待提交，文章到文章管理里查看');
-                    await load();
-                  }).catch(async (err: { response?: { data?: { message?: string | string[] } } }) => {
-                    const apiMessage = err.response?.data?.message;
-                    message.error(Array.isArray(apiMessage) ? apiMessage.join('；') : apiMessage || '发布失败');
-                    const again = await api.get<ApiResult<AdJob>>(`/ad-jobs/${job.id}`).catch(() => null);
-                    if (again?.data.success) setJob(again.data.data);
-                  })}>确认发布</Button>
-                )}
-              </Space>
-            }
-          />
         )}
       </Modal>
     </div>

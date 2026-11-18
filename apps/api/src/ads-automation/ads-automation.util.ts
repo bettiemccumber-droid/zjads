@@ -157,24 +157,42 @@ export function merchantSlug(name: string): string {
 }
 
 /**
- * 组装系列名：序号-平台-商家-国家-月日-商家ID。
+ * 组装系列名：序号-联盟序号-商家-国家-月日-商家ID。
+ * 第二段用渠道 affiliateAlias（如 rw5、pm1、bsh1），不是平台全名。
  */
 export function buildCampaignName(input: {
   sequence: number;
+  /** 联盟序号，如 rw5 / pm1；兼容旧调用里的 platformCode 字段名。 */
   platformCode: string;
   merchantName: string;
   countryCode: string;
   mid: string;
   now?: Date;
 }): string {
+  const alias = (input.platformCode || 'ads').trim().toLowerCase() || 'ads';
   return [
     String(input.sequence),
-    input.platformCode,
+    alias,
     merchantSlug(input.merchantName),
     input.countryCode.toUpperCase(),
     shanghaiMonthDay(input.now),
     input.mid,
   ].join('-');
+}
+
+/**
+ * 校验手改系列名：必须含目标国家段，且非空。
+ */
+export function assertCampaignNameCountry(campaignName: string, countryCode: string): string {
+  const name = campaignName.trim();
+  if (!name) throw new Error('广告系列名不能为空');
+  if (name.length > 120) throw new Error('广告系列名不能超过 120 个字符');
+  const country = countryCode.trim().toUpperCase();
+  const parts = name.split('-').map((part) => part.trim()).filter(Boolean);
+  if (!parts.some((part) => part.toUpperCase() === country)) {
+    throw new Error(`广告系列名需包含国家 ${country}`);
+  }
+  return name;
 }
 
 /**

@@ -78,11 +78,15 @@ interface AdJob {
   targetCountry: string;
   languageCode: string;
   draft: AdDraft | null;
+  nextSequence?: number;
+  suggestedCampaignName?: string;
+  affiliateAlias?: string;
   input?: {
     merchantName?: string;
     merchantUrl?: string;
     mid?: string;
     platformCode?: string;
+    affiliateAlias?: string;
   } | null;
   campaign?: { status: string; customerId?: string } | null;
 }
@@ -163,19 +167,6 @@ function charCount(text: string, max: number) {
   );
 }
 
-function merchantSlug(name: string) {
-  return name.replace(/[^a-zA-Z0-9]+/g, '').slice(0, 40) || 'Merchant';
-}
-
-function previewCampaignName(job: AdJob) {
-  const platform = (job.input?.platformCode || 'ADS').toUpperCase();
-  const merchant = merchantSlug(job.input?.merchantName || 'Merchant');
-  const mid = job.input?.mid || '0';
-  const now = new Date();
-  const md = `${String(now.getMonth() + 1).padStart(2, '0')}${String(now.getDate()).padStart(2, '0')}`;
-  return `????-${platform}-${merchant}-${job.targetCountry}-${md}-${mid}`;
-}
-
 function copyText(value: string) {
   void navigator.clipboard.writeText(value).then(
     () => message.success('已复制'),
@@ -200,6 +191,7 @@ export default function AdJobReviewPage() {
   const [syncingCid, setSyncingCid] = useState(false);
   const [suggestions, setSuggestions] = useState<SemrushSuggestion[]>([]);
   const [negInput, setNegInput] = useState('');
+  const [campaignName, setCampaignName] = useState('');
 
   const loadJob = useCallback(async () => {
     if (!id) return;
@@ -211,6 +203,9 @@ export default function AdJobReviewPage() {
     const next = res.data.data;
     setJob(next);
     if (next.draft) setDraft({ ...emptyDraft(), ...next.draft });
+    if (next.suggestedCampaignName) {
+      setCampaignName((prev) => (prev.trim() ? prev : next.suggestedCampaignName || ''));
+    }
   }, [id]);
 
   const loadCustomers = useCallback(async (mccCustomerId: string) => {
@@ -342,7 +337,10 @@ export default function AdJobReviewPage() {
             message.error(saved.data.message || '保存草稿失败');
             throw new Error('save failed');
           }
-          const res = await api.post<ApiResult<AdJob>>(`/ad-jobs/${id}/publish`, { customerId });
+          const res = await api.post<ApiResult<AdJob>>(`/ad-jobs/${id}/publish`, {
+            customerId,
+            campaignName: campaignName.trim() || undefined,
+          });
           if (!res.data.success) {
             message.error(res.data.message || '发布失败');
             throw new Error('publish failed');
@@ -850,9 +848,17 @@ export default function AdJobReviewPage() {
                   ) : (
                     <Alert type="warning" showIcon message="请选择可投放的 CID" style={{ marginTop: 8 }} />
                   )}
-                  <Form.Item label="广告系列名（发布时自动生成）" style={{ marginTop: 12 }}>
-                    <Input value={previewCampaignName(job)} disabled />
-                    <div className="ad-review__hint">格式：序号-平台-商家-国家-日期-MID。???? 为发布时分配的序号。</div>
+                  <Form.Item label="广告系列名（可修改）" style={{ marginTop: 12 }}>
+                    <Input
+                      value={campaignName}
+                      maxLength={120}
+                      onChange={(event) => setCampaignName(event.target.value)}
+                      suffix={<span className="ad-review__count">{campaignName.length}/120</span>}
+                    />
+                    <div className="ad-review__hint">
+                      格式：序号-联盟序号-商家-国家-日期-MID。国家段需与草稿一致（{job.targetCountry}）。
+                      {job.affiliateAlias ? ` 当前联盟序号：${job.affiliateAlias}` : ''}
+                    </div>
                   </Form.Item>
                 </Form>
               </Card>

@@ -13,6 +13,7 @@ import { MerchantsService } from '../merchants/merchants.service';
 import { parseCampaignName } from '../common/campaign-name.util';
 import {
   AdDraft,
+  assertCampaignNameCountry,
   buildCampaignName,
   buildSampleArticle,
   buildSampleDraft,
@@ -1195,6 +1196,13 @@ export class AdsAutomationService implements OnModuleInit {
       update: {},
     });
     const country = input.targetCountry.trim().toUpperCase();
+    const channelAccount = await this.prisma.channelAccount.findFirst({
+      where: { id: merchant.channelAccountId, ownerUserId },
+      select: { affiliateAlias: true },
+    });
+    const affiliateAlias = (channelAccount?.affiliateAlias || '').trim().toLowerCase()
+      || merchant.platformCode.trim().toLowerCase()
+      || 'ads';
     const job = await this.prisma.adJob.create({
       data: {
         ownerUserId,
@@ -1212,6 +1220,7 @@ export class AdsAutomationService implements OnModuleInit {
           merchantUrl: merchant.merchantUrl,
           mid: merchant.mid,
           platformCode: merchant.platformCode,
+          affiliateAlias,
           countryCode: country,
           languageCode: (input.languageCode ?? '').trim(),
           bidding: input.bidding === 'MANUAL_CPC' ? 'MANUAL_CPC' : 'MAXIMIZE_CLICKS',
@@ -1234,9 +1243,13 @@ export class AdsAutomationService implements OnModuleInit {
       include: { article: true, campaign: true },
     });
     if (!job) throw new NotFoundException('任务不存在');
+    const naming = await this.suggestCampaignName(ownerUserId, job);
     return {
       ...job,
       campaign: job.campaign ? this.campaignJson(job.campaign) : null,
+      nextSequence: naming.sequence,
+      suggestedCampaignName: naming.name,
+      affiliateAlias: naming.alias,
     };
   }
 
@@ -1321,7 +1334,7 @@ export class AdsAutomationService implements OnModuleInit {
   /**
    * 确认发布。Google Ads 已配置时直接创建搜索广告；否则仍只写入待提交队列。
    */
-  async publish(ownerUserId: number, id: string, customerId?: string) {
+  async publish(ownerUserId: number, id: string, customerId?: string, campaignNameInput?: string) {
     const job = await this.mustJob(ownerUserId, id);
     const connection = await this.prisma.googleAdsConnection.findUnique({
       where: { ownerUserId_mccCustomerId: { ownerUserId, mccCustomerId: job.mccCustomerId } },
@@ -1357,14 +1370,15 @@ export class AdsAutomationService implements OnModuleInit {
     const merchant = await this.prisma.catalogMerchant.findUniqueOrThrow({
       where: { id: job.catalogMerchantId },
     });
-    const existingCount = await this.prisma.adAutomationCampaign.count({ where: { ownerUserId } });
-    const campaignName = buildCampaignName({
-      sequence: 2001 + existingCount,
-      platformCode: merchant.platformCode,
-      merchantName: merchant.name,
-      countryCode: job.targetCountry,
-      mid: merchant.mid,
-    });
+    const suggested = await this.suggestCampaignName(ownerUserId, job, account.affiliateAlias);
+    let campaignName = suggested.name;
+    if (campaignNameInput?.trim()) {
+      try {
+        campaignName = assertCampaignNameCountry(campaignNameInput, job.targetCountry);
+      } catch (error) {
+        throw new BadRequestException(error instanceof Error ? error.message : '广告系列名无效');
+      }
+    }
     const idempotencyKey = `${customer.customerId}:${campaignName}`;
     const duplicate = await this.prisma.adJob.findFirst({
       where: { ownerUserId, idempotencyKey, status: 'COMPLETED' },
@@ -1712,6 +1726,53 @@ export class AdsAutomationService implements OnModuleInit {
     setImmediate(() => {
       void this.generate(jobId).finally(() => this.runningJobs.delete(jobId));
     });
+  }
+
+  /**
+   * 预览/发布用的下一序号系列名。第二段优先渠道联盟序号。
+   */
+  private async suggestCampaignName(
+    ownerUserId: number,
+    job: {
+      channelAccountId: number;
+      catalogMerchantId: number;
+      targetCountry: string;
+      input?: unknown;
+      campaignName?: string | null;
+    },
+    aliasHint = '',
+  ) {
+    if (job.campaignName?.trim()) {
+      const alias = parseCampaignName(job.campaignName).affiliateAlias;
+      return { sequence: 0, alias, name: job.campaignName.trim() };
+    }
+    const input = (job.input ?? {}) as {
+      merchantName?: string;
+      mid?: string;
+      platformCode?: string;
+      affiliateAlias?: string;
+    };
+    const account = await this.prisma.channelAccount.findFirst({
+      where: { id: job.channelAccountId, ownerUserId },
+      select: { affiliateAlias: true },
+    });
+    const merchant = await this.prisma.catalogMerchant.findFirst({
+      where: { id: job.catalogMerchantId, ownerUserId },
+      select: { name: true, mid: true, platformCode: true },
+    });
+    const alias = (aliasHint || input.affiliateAlias || account?.affiliateAlias || input.platformCode || merchant?.platformCode || 'ads')
+      .trim()
+      .toLowerCase() || 'ads';
+    const existingCount = await this.prisma.adAutomationCampaign.count({ where: { ownerUserId } });
+    const sequence = 2001 + existingCount;
+    const name = buildCampaignName({
+      sequence,
+      platformCode: alias,
+      merchantName: input.merchantName || merchant?.name || 'Merchant',
+      countryCode: job.targetCountry,
+      mid: input.mid || merchant?.mid || '0',
+    });
+    return { sequence, alias, name };
   }
 
   /**

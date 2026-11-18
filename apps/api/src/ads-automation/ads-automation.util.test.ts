@@ -28,7 +28,7 @@ assert.strictEqual(
     mid: '1865558',
     now: new Date('2026-11-12T02:00:00.000Z'),
   }),
-  '2007-BSH1-AGJeansOutlet-US-1112-1865558',
+  '2007-bsh1-AGJeansOutlet-US-1112-1865558',
 );
 assert.strictEqual(
   buildTrackUrl('partnermatic', 'https://bellroy.com/'),

@@ -1001,8 +1001,8 @@ export default function MyMerchantsPage() {
             </div>
             <div className="merchant-setting-row">
               <span className="merchant-setting-row__label">CPC($)</span>
-              <Form.Item name="cpcBidCeilingUsd" noStyle rules={[{ required: true, message: '填写最高 CPC' }]}>
-                <Input size="small" className="merchant-setting-row__input" />
+              <Form.Item name="cpcBidCeilingUsd" noStyle>
+                <Input size="small" className="merchant-setting-row__input" placeholder="可选，一般不填" />
               </Form.Item>
             </div>
             <div className="merchant-setting-row">

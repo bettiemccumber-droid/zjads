@@ -8,6 +8,7 @@ import {
   validateDraft,
 } from './ads-automation.util';
 import { applyAdCopy, audienceLanguage, parseModelJson } from './modelgo-copy';
+import { buildCreateCampaignPayload } from './mutate-payload';
 
 assert.strictEqual(audienceLanguage('MX', 'es'), 'Spanish as used in Mexico');
 assert.strictEqual(audienceLanguage('ES', 'es'), 'Spanish as used in Spain');
@@ -70,9 +71,20 @@ const dirty = {
   callouts: ['Official Site', 'Save $20 Today', 'Free Shipping', 'Shop Online'],
   headlines: ['Buy now 50% off', 'Panini Store', 'Magazines'],
   promotion: 'Use code $X',
+  cpcBidCeilingUsd: '',
 };
 const cleaned = sanitizeDraftForReview(dirty, base);
 assert.ok(!cleaned.callouts.some((text) => /\$|%|free shipping/i.test(text)));
-assert.ok(!cleaned.headlines.some((text) => /%|\$/i.test(text)));
+assert.ok(cleaned.headlines.some((text) => /50%\s*off/i.test(text)));
 assert.strictEqual(cleaned.promotion, '');
 assert.deepStrictEqual(validateDraft(cleaned), []);
+assert.ok(cleaned.sitelinks.length >= 6);
+
+const payload = buildCreateCampaignPayload({
+  customerId: '130-512-5178',
+  campaignName: 'test-campaign',
+  draft: cleaned,
+});
+const campaignOp = (payload.mutateOperations as Array<Record<string, any>>)
+  .find((item) => item.campaignOperation);
+assert.deepStrictEqual(campaignOp?.campaignOperation.create.targetSpend, {});

@@ -169,6 +169,12 @@ class DraftPatchBody implements Partial<AdDraft> {
   promotion?: string;
 
   @IsOptional()
+  promotionAsset?: AdDraft['promotionAsset'];
+
+  @IsOptional()
+  translations?: AdDraft['translations'];
+
+  @IsOptional()
   @IsString()
   merchantUrl?: string;
 

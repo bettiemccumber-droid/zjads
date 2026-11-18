@@ -10,7 +10,7 @@ export interface AdLaunchSettings {
 
 const DEFAULTS: AdLaunchSettings = {
   bidding: 'MAXIMIZE_CLICKS',
-  cpcBidCeilingUsd: '0.50',
+  cpcBidCeilingUsd: '',
   dailyBudgetUsd: '3.00',
   targetCountry: 'US',
   languageCode: 'en',

@@ -68,6 +68,35 @@ export function normalizeStructuredSnippetHeader(raw: string): string {
   return alias ?? '';
 }
 
+/** 人工核对用的中文译文（不提交 Google）。 */
+export interface AdCopyTranslations {
+  headlines?: string[];
+  descriptions?: string[];
+  callouts?: string[];
+  sitelinks?: string[];
+  promotion?: string;
+}
+
+/**
+ * Google Ads 促销附加信息（可选）。对应 promotionAsset。
+ * percentOff 用百分点，如 20 表示 20%；发布时再换成 micros。
+ */
+export interface AdPromotionAsset {
+  enabled: boolean;
+  promotionTarget: string;
+  discountType: 'PERCENT' | 'MONETARY';
+  percentOff?: number;
+  moneyAmountOff?: string;
+  currencyCode?: string;
+  languageCode?: string;
+  occasion?: string;
+  finalUrl?: string;
+  promotionCode?: string;
+  ordersOverAmount?: string;
+  startDate?: string;
+  endDate?: string;
+}
+
 /** 广告草稿。最终到达网址是商家网址，不是文章 URL。 */
 export interface AdDraft {
   headlines: string[];
@@ -77,12 +106,16 @@ export interface AdDraft {
   sitelinks: AdSitelink[];
   callouts: string[];
   structuredSnippets: AdStructuredSnippet[];
-  /** 促销只写这里，不要写进宣传信息。 */
+  /** 旧版纯文本促销备注；有 promotionAsset 时优先用结构化字段。 */
   promotion: string;
+  promotionAsset?: AdPromotionAsset | null;
+  /** 投放语言文案对应的中文翻译，仅预览用。 */
+  translations?: AdCopyTranslations;
   merchantUrl: string;
   finalUrlSuffix: string;
   bidding: 'MAXIMIZE_CLICKS' | 'MANUAL_CPC';
   dailyBudgetUsd: string;
+  /** 最高 CPC；尽可能多点击时可不填。 */
   cpcBidCeilingUsd: string;
   languageCode: string;
   geoTargetId: string;
@@ -253,6 +286,8 @@ export function buildSampleDraft(input: {
   const headlines = [
     `${brand} Official`,
     `Shop ${brand}`,
+    `Free Shipping Options`,
+    `Fast Delivery Available`,
     `${brand} New Arrivals`,
     `Explore ${brand}`,
     `${brand} Collection`,
@@ -262,20 +297,54 @@ export function buildSampleDraft(input: {
     `${brand} Store`,
     `Browse ${brand}`,
     `${brand} Picks`,
-    `Get ${brand}`,
-    `${brand} Today`,
-    `Find ${brand}`,
+    `Get ${brand} Today`,
     `${brand} Home`,
   ].map((text) => text.slice(0, AD_COPY_LIMITS.headline));
   const descriptions = [
     `Browse ${brand} styles and shop what fits you.`.slice(0, AD_COPY_LIMITS.description),
     `See new arrivals from ${brand} and start shopping.`.slice(0, AD_COPY_LIMITS.description),
     `Find everyday essentials and seasonal picks at ${brand}.`.slice(0, AD_COPY_LIMITS.description),
-    `Explore ${brand} online and choose with confidence.`.slice(0, AD_COPY_LIMITS.description),
+    `Explore ${brand} online with clear shipping options.`.slice(0, AD_COPY_LIMITS.description),
   ];
   return {
     headlines,
     descriptions,
+    translations: {
+      headlines: [
+        `${brand} 官方站`,
+        `选购 ${brand}`,
+        '可选免运/包邮方案',
+        '支持快速配送',
+        `${brand} 新品`,
+        `探索 ${brand}`,
+        `${brand} 系列`,
+        `访问 ${brand}`,
+        `${brand} 线上店`,
+        `发现 ${brand}`,
+        `${brand} 店铺`,
+        `浏览 ${brand}`,
+        `${brand} 精选`,
+        `立即选购 ${brand}`,
+        `${brand} 首页`,
+      ].slice(0, headlines.length),
+      descriptions: [
+        `浏览 ${brand} 款式，挑选适合你的商品。`,
+        `查看 ${brand} 新品并开始下单。`,
+        `在 ${brand} 找到日常与季节精选。`,
+        `在线逛 ${brand}，物流信息更清晰。`,
+      ],
+      callouts: [
+        '官方网站',
+        '在线下单',
+        '丰富选择',
+        '可信品牌',
+        '浏览便捷',
+        '结账安全',
+        '上新不断',
+        '在线购买',
+      ],
+      sitelinks: ['立即选购', '新品上市', '热销榜', '系列合集', '品牌介绍', '开始购物'],
+    },
     keywords: [{ text: brand.toLowerCase().slice(0, 80), matchType: 'PHRASE' }],
     negativeKeywords: ['careers', 'jobs', 'login', 'wiki', 'free', 'pdf', 'manual'].map((text) => ({
       text,
@@ -351,11 +420,12 @@ export function buildSampleDraft(input: {
       { header: 'Styles', values: ['Casual', 'Classic', 'Modern', 'Everyday'] },
     ],
     promotion: '',
+    promotionAsset: null,
     merchantUrl: input.merchantUrl,
     finalUrlSuffix: '',
     bidding: input.bidding === 'MANUAL_CPC' ? 'MANUAL_CPC' : 'MAXIMIZE_CLICKS',
     dailyBudgetUsd: input.dailyBudgetUsd?.trim() || '3.00',
-    cpcBidCeilingUsd: input.cpcBidCeilingUsd?.trim() || '0.50',
+    cpcBidCeilingUsd: input.cpcBidCeilingUsd?.trim() || '',
     languageCode: input.languageCode || 'en',
     geoTargetId: geoTargetForCountry(input.countryCode),
   };
@@ -378,7 +448,7 @@ export function validateDraft(draft: AdDraft): string[] {
     const key = text.trim().toLowerCase();
     if (headlineSet.has(key)) errors.push(`标题 ${index + 1} 与其它标题重复`);
     headlineSet.add(key);
-    errors.push(...policyHits(text, `标题 ${index + 1}`));
+    errors.push(...policyHits(text, `标题 ${index + 1}`, { allowPromo: true }));
   });
   if (draft.descriptions.length < limits.descriptionCount.min || draft.descriptions.length > limits.descriptionCount.max) {
     errors.push(`描述需要 ${limits.descriptionCount.min} 到 ${limits.descriptionCount.max} 条`);
@@ -387,7 +457,7 @@ export function validateDraft(draft: AdDraft): string[] {
     if (text.trim().length === 0 || text.length > limits.description) {
       errors.push(`描述 ${index + 1} 需在 1 到 ${limits.description} 个字符`);
     }
-    errors.push(...policyHits(text, `描述 ${index + 1}`));
+    errors.push(...policyHits(text, `描述 ${index + 1}`, { allowPromo: true }));
   });
   if (draft.keywords.length === 0) errors.push('至少需要一个关键词');
   draft.keywords.forEach((keyword) => {
@@ -447,8 +517,9 @@ export function validateDraft(draft: AdDraft): string[] {
     });
   });
   if (draft.promotion?.trim()) {
-    errors.push(...policyHits(draft.promotion, '促销信息'));
+    errors.push(...policyHits(draft.promotion, '促销备注', { allowPromo: true }));
   }
+  errors.push(...validatePromotionAsset(draft.promotionAsset, draft.merchantUrl));
   if (!/^https?:\/\//i.test(draft.merchantUrl)) errors.push('商家网址需要以 http 或 https 开头');
   if (draft.finalUrlSuffix.startsWith('?') || draft.finalUrlSuffix.startsWith('&')) {
     errors.push('网址后缀不要以 ? 或 & 开头');
@@ -456,9 +527,26 @@ export function validateDraft(draft: AdDraft): string[] {
   if (!draft.geoTargetId) errors.push('目标国家还没有对应的地区常量');
   try {
     if (BigInt(usdToMicros(draft.dailyBudgetUsd)) <= 0n) errors.push('日预算必须大于 0');
-    if (BigInt(usdToMicros(draft.cpcBidCeilingUsd)) <= 0n) errors.push('最高 CPC 必须大于 0');
   } catch (error) {
-    errors.push(error instanceof Error ? error.message : '金额格式不正确');
+    errors.push(error instanceof Error ? error.message : '日预算格式不正确');
+  }
+  const ceiling = draft.cpcBidCeilingUsd?.trim() || '';
+  if (draft.bidding === 'MANUAL_CPC') {
+    if (!ceiling) {
+      errors.push('手动 CPC 需要填写出价');
+    } else {
+      try {
+        if (BigInt(usdToMicros(ceiling)) <= 0n) errors.push('最高 CPC 必须大于 0');
+      } catch (error) {
+        errors.push(error instanceof Error ? error.message : '最高 CPC 格式不正确');
+      }
+    }
+  } else if (ceiling) {
+    try {
+      if (BigInt(usdToMicros(ceiling)) <= 0n) errors.push('最高 CPC 必须大于 0');
+    } catch (error) {
+      errors.push(error instanceof Error ? error.message : '最高 CPC 格式不正确');
+    }
   }
   if (draft.bidding !== 'MAXIMIZE_CLICKS' && draft.bidding !== 'MANUAL_CPC') {
     errors.push('出价只支持尽可能争取更多点击次数或手动 CPC');
@@ -468,15 +556,28 @@ export function validateDraft(draft: AdDraft): string[] {
 
 /**
  * Google Ads / 联盟投放常见拒登与禁忌词。命中则返回中文错误。
+ * allowPromo：标题/描述可写折扣与物流；宣传信息仍禁止促销语。
  */
-export function policyHits(text: string, label: string): string[] {
+export function policyHits(
+  text: string,
+  label: string,
+  options: { allowPromo?: boolean } = {},
+): string[] {
   const value = text.toLowerCase();
   const hits: string[] = [];
-  if (/\$\s*\d|\d+\s*%|¥\s*\d|€\s*\d|£\s*\d/.test(text) || /\$x\b|\[\s*链接\s*\]|\[link\]/i.test(text)) {
-    hits.push(`${label} 不要写具体金额、折扣数字或占位符`);
+  const allowPromo = Boolean(options.allowPromo);
+  if (/\$x\b|\[\s*链接\s*\]|\[link\]/i.test(text)) {
+    hits.push(`${label} 不要写占位符`);
   }
-  if (/免费体验|免费获取|free\s+(trial|gift|sample|download|shipping)|免运费|满减|退货|discount|coupon|% off/i.test(text)) {
-    hits.push(`${label} 含促销/免费类表述，请调整`);
+  if (!allowPromo) {
+    if (/\$\s*\d|\d+\s*%|¥\s*\d|€\s*\d|£\s*\d/.test(text)) {
+      hits.push(`${label} 不要写具体金额、折扣数字或占位符`);
+    }
+    if (/免费体验|免费获取|free\s+(trial|gift|sample|download|shipping)|免运费|满减|退货|discount|coupon|% off/i.test(text)) {
+      hits.push(`${label} 含促销/免费类表述，请调整`);
+    }
+  } else if (/免费体验|免费获取|free\s+(trial|gift|sample|download)\b/i.test(text)) {
+    hits.push(`${label} 含免费体验/赠品类表述，请调整`);
   }
   if (
     /\b(shooting|gun|firearm|ballistic|tactical|combat|military|bulletproof|prescription|\brx\b|glaze|optician|wine|vodka|tequila|bourbon)\b/i.test(
@@ -496,13 +597,59 @@ function calloutHasPromoLeak(text: string): boolean {
 }
 
 /**
+ * 可选促销附加信息校验。未启用则跳过。
+ */
+export function validatePromotionAsset(
+  asset: AdPromotionAsset | null | undefined,
+  merchantUrl: string,
+): string[] {
+  if (!asset?.enabled) return [];
+  const errors: string[] = [];
+  const target = asset.promotionTarget?.trim() || '';
+  if (!target || target.length > 20) errors.push('促销商品/对象需在 1 到 20 个字符');
+  if (asset.discountType === 'PERCENT') {
+    const percent = Number(asset.percentOff);
+    if (!Number.isFinite(percent) || percent <= 0 || percent > 100) {
+      errors.push('促销折扣百分比需在 1 到 100');
+    }
+  } else if (asset.discountType === 'MONETARY') {
+    try {
+      if (BigInt(usdToMicros(String(asset.moneyAmountOff || '').trim())) <= 0n) {
+        errors.push('促销减免金额必须大于 0');
+      }
+    } catch (error) {
+      errors.push(error instanceof Error ? error.message : '促销减免金额格式不正确');
+    }
+    if (!(asset.currencyCode || '').trim()) errors.push('货币折扣需要填写币种');
+  } else {
+    errors.push('促销类型只支持百分比或金额');
+  }
+  const finalUrl = (asset.finalUrl || merchantUrl || '').trim();
+  if (!/^https?:\/\//i.test(finalUrl)) errors.push('促销最终到达网址需要以 http 或 https 开头');
+  if (asset.ordersOverAmount?.trim()) {
+    try {
+      if (BigInt(usdToMicros(asset.ordersOverAmount.trim())) <= 0n) {
+        errors.push('满减门槛必须大于 0');
+      }
+    } catch (error) {
+      errors.push(error instanceof Error ? error.message : '满减门槛格式不正确');
+    }
+  }
+  return errors;
+}
+
+/**
  * 文案是否触发政策/宣传信息禁忌。生成阶段用它决定是否替换成安全备选。
  */
-export function isUnsafeAdText(text: string, asCallout = false): boolean {
+export function isUnsafeAdText(
+  text: string,
+  kind: 'headline' | 'description' | 'callout' | 'general' = 'general',
+): boolean {
   const value = text.trim();
   if (!value) return true;
-  if (policyHits(value, 't').length) return true;
-  if (asCallout && calloutHasPromoLeak(value)) return true;
+  const allowPromo = kind === 'headline' || kind === 'description';
+  if (policyHits(value, 't', { allowPromo }).length) return true;
+  if (kind === 'callout' && calloutHasPromoLeak(value)) return true;
   return false;
 }
 
@@ -516,20 +663,21 @@ export function sanitizeDraftForReview(draft: AdDraft, fallback: AdDraft): AdDra
     reserve: string[],
     min: number,
     max: number,
-    asCallout = false,
+    kind: 'headline' | 'description' | 'callout',
   ): string[] => {
     const used = new Set<string>();
     const out: string[] = [];
+    const maxLen = kind === 'callout' ? limits.callout : kind === 'description' ? limits.description : limits.headline;
     for (const line of [...primary, ...reserve]) {
       if (out.length >= max) break;
       const text = line.trim();
-      if (isUnsafeAdText(text, asCallout)) continue;
+      if (isUnsafeAdText(text, kind)) continue;
       const key = text.toLowerCase();
       if (used.has(key)) continue;
       used.add(key);
       out.push(text);
     }
-    const safeFallback = asCallout ? 'Shop Online' : 'Official Site';
+    const safeFallback = kind === 'callout' ? 'Shop Online' : 'Official Site';
     let guard = 0;
     while (out.length < min && guard < min + 8) {
       guard += 1;
@@ -537,12 +685,12 @@ export function sanitizeDraftForReview(draft: AdDraft, fallback: AdDraft): AdDra
       const candidate = used.has(text.toLowerCase()) ? `${text} ${out.length + 1}` : text;
       const key = candidate.toLowerCase();
       if (used.has(key)) {
-        out.push(`${safeFallback} ${out.length + 1}`.slice(0, asCallout ? limits.callout : limits.headline));
+        out.push(`${safeFallback} ${out.length + 1}`.slice(0, maxLen));
         used.add(`${safeFallback} ${out.length}`.toLowerCase());
         continue;
       }
       used.add(key);
-      out.push(candidate.slice(0, asCallout ? limits.callout : limits.headline));
+      out.push(candidate.slice(0, maxLen));
     }
     return out.slice(0, max);
   };
@@ -552,28 +700,30 @@ export function sanitizeDraftForReview(draft: AdDraft, fallback: AdDraft): AdDra
     fallback.headlines,
     limits.headlineCount.min,
     limits.headlineCount.max,
+    'headline',
   ).map((text) => text.slice(0, limits.headline));
   const descriptions = fillLines(
     draft.descriptions,
     fallback.descriptions,
     limits.descriptionCount.min,
     limits.descriptionCount.max,
+    'description',
   ).map((text) => text.slice(0, limits.description));
   const callouts = fillLines(
     draft.callouts,
     fallback.callouts,
     Math.min(limits.calloutCount.prefer, fallback.callouts.length || limits.calloutCount.prefer),
     limits.calloutCount.max,
-    true,
+    'callout',
   ).map((text) => text.slice(0, limits.callout));
 
   const sitelinks = assignUniqueSitelinkUrls(
     (draft.sitelinks.length ? draft.sitelinks : fallback.sitelinks).map((link) => {
-      const linkText = isUnsafeAdText(link.linkText)
+      const linkText = isUnsafeAdText(link.linkText, 'general')
         ? (fallback.sitelinks[0]?.linkText || 'Shop now')
         : link.linkText;
-      const description1 = isUnsafeAdText(link.description1) ? '' : link.description1;
-      const description2 = isUnsafeAdText(link.description2) ? '' : link.description2;
+      const description1 = isUnsafeAdText(link.description1, 'general') ? '' : link.description1;
+      const description2 = isUnsafeAdText(link.description2, 'general') ? '' : link.description2;
       const bothOrNeither = description1 && description2
         ? { description1, description2 }
         : { description1: '', description2: '' };
@@ -596,7 +746,7 @@ export function sanitizeDraftForReview(draft: AdDraft, fallback: AdDraft): AdDra
       header: normalizeStructuredSnippetHeader(row.header) || row.header,
       values: row.values
         .map((value) => value.trim())
-        .filter((value) => value && !isUnsafeAdText(value))
+        .filter((value) => value && !isUnsafeAdText(value, 'general'))
         .slice(0, 10),
     }))
     .filter((row) => normalizeStructuredSnippetHeader(row.header) && row.values.length >= limits.structuredValuesMin)
@@ -605,9 +755,12 @@ export function sanitizeDraftForReview(draft: AdDraft, fallback: AdDraft): AdDra
     ? structuredSnippets
     : fallback.structuredSnippets;
 
-  const promotion = draft.promotion?.trim() && !isUnsafeAdText(draft.promotion)
+  const promotion = draft.promotion?.trim() && !isUnsafeAdText(draft.promotion, 'general')
     ? draft.promotion.trim().slice(0, 120)
     : '';
+  const promotionAsset = draft.promotionAsset?.enabled
+    ? draft.promotionAsset
+    : (fallback.promotionAsset ?? null);
 
   return {
     ...fallback,
@@ -617,15 +770,17 @@ export function sanitizeDraftForReview(draft: AdDraft, fallback: AdDraft): AdDra
     keywords: draft.keywords.length ? draft.keywords : fallback.keywords,
     negativeKeywords: draft.negativeKeywords.length ? draft.negativeKeywords : fallback.negativeKeywords,
     callouts,
-    sitelinks: sitelinks.length ? sitelinks : fallback.sitelinks,
+    sitelinks: (sitelinks.length ? sitelinks : fallback.sitelinks).slice(0, limits.sitelinkCount.max),
     structuredSnippets: snippets,
     promotion,
+    promotionAsset,
+    translations: draft.translations ?? fallback.translations,
     merchantUrl: draft.merchantUrl || fallback.merchantUrl,
     geoTargetId: draft.geoTargetId || fallback.geoTargetId,
     languageCode: draft.languageCode || fallback.languageCode,
     bidding: draft.bidding || fallback.bidding,
     dailyBudgetUsd: draft.dailyBudgetUsd || fallback.dailyBudgetUsd,
-    cpcBidCeilingUsd: draft.cpcBidCeilingUsd || fallback.cpcBidCeilingUsd,
+    cpcBidCeilingUsd: draft.cpcBidCeilingUsd ?? fallback.cpcBidCeilingUsd ?? '',
   };
 }
 

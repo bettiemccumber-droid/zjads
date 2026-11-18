@@ -74,6 +74,13 @@
   min-width: 0;
 }
 
+.ad-review__zh {
+  margin-top: 4px;
+  color: #667085;
+  font-size: 12px;
+  line-height: 1.4;
+}
+
 .ad-review__row-actions {
   display: flex;
   flex-direction: column;

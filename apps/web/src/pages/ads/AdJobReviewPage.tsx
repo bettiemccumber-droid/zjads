@@ -13,6 +13,7 @@ import {
   Space,
   Spin,
   Steps,
+  Switch,
   Tag,
   Typography,
   message,
@@ -49,6 +50,30 @@ interface AdStructuredSnippet {
   values: string[];
 }
 
+interface AdCopyTranslations {
+  headlines?: string[];
+  descriptions?: string[];
+  callouts?: string[];
+  sitelinks?: string[];
+  promotion?: string;
+}
+
+interface AdPromotionAsset {
+  enabled: boolean;
+  promotionTarget: string;
+  discountType: 'PERCENT' | 'MONETARY';
+  percentOff?: number;
+  moneyAmountOff?: string;
+  currencyCode?: string;
+  languageCode?: string;
+  occasion?: string;
+  finalUrl?: string;
+  promotionCode?: string;
+  ordersOverAmount?: string;
+  startDate?: string;
+  endDate?: string;
+}
+
 interface AdDraft {
   headlines: string[];
   descriptions: string[];
@@ -58,6 +83,8 @@ interface AdDraft {
   callouts: string[];
   structuredSnippets: AdStructuredSnippet[];
   promotion: string;
+  promotionAsset?: AdPromotionAsset | null;
+  translations?: AdCopyTranslations;
   merchantUrl: string;
   finalUrlSuffix: string;
   bidding: 'MAXIMIZE_CLICKS' | 'MANUAL_CPC';
@@ -137,14 +164,40 @@ function emptyDraft(): AdDraft {
     callouts: [],
     structuredSnippets: [],
     promotion: '',
+    promotionAsset: null,
+    translations: {},
     merchantUrl: '',
     finalUrlSuffix: '',
     bidding: 'MAXIMIZE_CLICKS',
     dailyBudgetUsd: '3.00',
-    cpcBidCeilingUsd: '0.50',
+    cpcBidCeilingUsd: '',
     languageCode: 'en',
     geoTargetId: '',
   };
+}
+
+function emptyPromotion(): AdPromotionAsset {
+  return {
+    enabled: false,
+    promotionTarget: '',
+    discountType: 'PERCENT',
+    percentOff: 10,
+    moneyAmountOff: '',
+    currencyCode: 'USD',
+    languageCode: 'en',
+    occasion: '',
+    finalUrl: '',
+    promotionCode: '',
+    ordersOverAmount: '',
+    startDate: '',
+    endDate: '',
+  };
+}
+
+function zhHint(translations: AdCopyTranslations | undefined, key: keyof AdCopyTranslations, index: number) {
+  const list = translations?.[key];
+  if (!Array.isArray(list)) return '';
+  return list[index]?.trim() || '';
 }
 
 function isEligible(row: AdsCustomer) {
@@ -477,6 +530,9 @@ export default function AdJobReviewPage() {
                         setDraft({ ...draft, headlines });
                       }}
                     />
+                    {zhHint(draft.translations, 'headlines', index) ? (
+                      <div className="ad-review__zh">{zhHint(draft.translations, 'headlines', index)}</div>
+                    ) : null}
                   </div>
                   <div className="ad-review__row-actions">
                     {charCount(text, HEADLINE_MAX)}
@@ -520,6 +576,9 @@ export default function AdJobReviewPage() {
                         setDraft({ ...draft, descriptions });
                       }}
                     />
+                    {zhHint(draft.translations, 'descriptions', index) ? (
+                      <div className="ad-review__zh">{zhHint(draft.translations, 'descriptions', index)}</div>
+                    ) : null}
                   </div>
                   <div className="ad-review__row-actions">
                     {charCount(text, DESC_MAX)}
@@ -663,12 +722,12 @@ export default function AdJobReviewPage() {
               <div className="ad-review__hint">否定词默认广泛匹配，提交时一并写入系列，过滤非购买意图流量。</div>
             </Card>
 
-            <Card size="small" style={{ marginTop: 16 }} title={`站内链接（${draft.sitelinks.length}/8）`}>
+            <Card size="small" style={{ marginTop: 16 }} title={`站内链接（${draft.sitelinks.length}/6，最多 8）`}>
               <Alert
                 type="info"
                 showIcon
                 style={{ marginBottom: 12 }}
-                message="建议至少 6 条站内链接，每条使用不同落地页。"
+                message="默认生成 6 条站内链接，每条使用不同落地页。"
               />
               {draft.sitelinks.map((link, index) => (
                 <Card
@@ -705,6 +764,9 @@ export default function AdJobReviewPage() {
                         }}
                         suffix={charCount(link.linkText, SITELINK_TEXT_MAX)}
                       />
+                      {zhHint(draft.translations, 'sitelinks', index) ? (
+                        <div className="ad-review__zh">{zhHint(draft.translations, 'sitelinks', index)}</div>
+                      ) : null}
                     </Col>
                     <Col span={8}>
                       <Input
@@ -769,21 +831,154 @@ export default function AdJobReviewPage() {
 
             <Card size="small" style={{ marginTop: 16 }} title="宣传信息 / 促销 / 结构化摘要">
               <Form layout="vertical">
-                <Form.Item label="宣传信息（每行一条，≤25）">
-                  <Input.TextArea
-                    rows={3}
-                    value={draft.callouts.join('\n')}
-                    onChange={(event) => setDraft({
-                      ...draft,
-                      callouts: event.target.value.split(/\r?\n/).map((item) => item.trim()).filter(Boolean).slice(0, 8),
-                    })}
-                  />
-                </Form.Item>
-                <Form.Item label="促销（只写这里，不要写进宣传信息）">
-                  <Input
-                    value={draft.promotion}
-                    onChange={(event) => setDraft({ ...draft, promotion: event.target.value })}
-                  />
+                <div className="ad-review__section-title">
+                  <h4>宣传信息（{draft.callouts.length}/8，每条 ≤25）</h4>
+                </div>
+                {draft.callouts.map((text, index) => (
+                  <div className="ad-review__row" key={`c-${index}`}>
+                    <div className="ad-review__row-index">{index + 1}</div>
+                    <div className="ad-review__row-main">
+                      <Input
+                        value={text}
+                        maxLength={25}
+                        onChange={(event) => {
+                          const callouts = [...draft.callouts];
+                          callouts[index] = event.target.value;
+                          setDraft({ ...draft, callouts });
+                        }}
+                      />
+                      {zhHint(draft.translations, 'callouts', index) ? (
+                        <div className="ad-review__zh">{zhHint(draft.translations, 'callouts', index)}</div>
+                      ) : null}
+                    </div>
+                    <div className="ad-review__row-actions">
+                      {charCount(text, 25)}
+                      <Button
+                        type="text"
+                        size="small"
+                        danger
+                        icon={<DeleteOutlined />}
+                        onClick={() => setDraft({
+                          ...draft,
+                          callouts: draft.callouts.filter((_, i) => i !== index),
+                        })}
+                      />
+                    </div>
+                  </div>
+                ))}
+                {draft.callouts.length < 8 ? (
+                  <Button
+                    type="dashed"
+                    block
+                    style={{ marginBottom: 16 }}
+                    onClick={() => setDraft({ ...draft, callouts: [...draft.callouts, ''] })}
+                  >
+                    添加宣传信息
+                  </Button>
+                ) : null}
+
+                <Form.Item
+                  label={(
+                    <Space>
+                      <span>促销附加信息（可选）</span>
+                      <Switch
+                        checked={Boolean(draft.promotionAsset?.enabled)}
+                        onChange={(enabled) => setDraft({
+                          ...draft,
+                          promotionAsset: {
+                            ...(draft.promotionAsset || emptyPromotion()),
+                            enabled,
+                            languageCode: draft.promotionAsset?.languageCode || draft.languageCode || 'en',
+                            finalUrl: draft.promotionAsset?.finalUrl || draft.merchantUrl,
+                          },
+                        })}
+                      />
+                    </Space>
+                  )}
+                >
+                  {draft.promotionAsset?.enabled ? (
+                    <Space direction="vertical" style={{ width: '100%' }} size={8}>
+                      <Input
+                        placeholder="商品/对象（≤20）"
+                        maxLength={20}
+                        value={draft.promotionAsset.promotionTarget}
+                        onChange={(event) => setDraft({
+                          ...draft,
+                          promotionAsset: { ...draft.promotionAsset!, promotionTarget: event.target.value },
+                        })}
+                        suffix={`${draft.promotionAsset.promotionTarget.length}/20`}
+                      />
+                      <Space wrap>
+                        <Select
+                          style={{ width: 140 }}
+                          value={draft.promotionAsset.discountType}
+                          options={[
+                            { value: 'PERCENT', label: '折扣百分比' },
+                            { value: 'MONETARY', label: '折扣金额' },
+                          ]}
+                          onChange={(discountType) => setDraft({
+                            ...draft,
+                            promotionAsset: { ...draft.promotionAsset!, discountType },
+                          })}
+                        />
+                        {draft.promotionAsset.discountType === 'PERCENT' ? (
+                          <Input
+                            style={{ width: 140 }}
+                            suffix="%"
+                            value={draft.promotionAsset.percentOff ?? ''}
+                            onChange={(event) => setDraft({
+                              ...draft,
+                              promotionAsset: {
+                                ...draft.promotionAsset!,
+                                percentOff: Number(event.target.value) || 0,
+                              },
+                            })}
+                          />
+                        ) : (
+                          <Space>
+                            <Input
+                              style={{ width: 90 }}
+                              value={draft.promotionAsset.currencyCode || 'USD'}
+                              onChange={(event) => setDraft({
+                                ...draft,
+                                promotionAsset: { ...draft.promotionAsset!, currencyCode: event.target.value },
+                              })}
+                            />
+                            <Input
+                              style={{ width: 120 }}
+                              value={draft.promotionAsset.moneyAmountOff || ''}
+                              onChange={(event) => setDraft({
+                                ...draft,
+                                promotionAsset: { ...draft.promotionAsset!, moneyAmountOff: event.target.value },
+                              })}
+                            />
+                          </Space>
+                        )}
+                      </Space>
+                      <Input
+                        placeholder="最终到达网址"
+                        value={draft.promotionAsset.finalUrl || draft.merchantUrl}
+                        onChange={(event) => setDraft({
+                          ...draft,
+                          promotionAsset: { ...draft.promotionAsset!, finalUrl: event.target.value },
+                        })}
+                      />
+                      <Input
+                        placeholder="促销代码（可选）"
+                        value={draft.promotionAsset.promotionCode || ''}
+                        onChange={(event) => setDraft({
+                          ...draft,
+                          promotionAsset: { ...draft.promotionAsset!, promotionCode: event.target.value },
+                        })}
+                      />
+                      {draft.translations?.promotion ? (
+                        <div className="ad-review__zh">{draft.translations.promotion}</div>
+                      ) : null}
+                      <div className="ad-review__hint">对应 Google Ads 促销附加信息；没有明确折扣时可关闭。</div>
+                    </Space>
+                  ) : (
+                    <div className="ad-review__hint">默认关闭。有明确折扣/满减时再打开并填写。</div>
+                  )}
                 </Form.Item>
                 <Form.Item label="结构化摘要">
                   <Space direction="vertical" style={{ width: '100%' }} size={8}>
@@ -922,8 +1117,10 @@ export default function AdJobReviewPage() {
                     <Input
                       prefix="$"
                       value={draft.cpcBidCeilingUsd}
+                      placeholder="可不填"
                       onChange={(event) => setDraft({ ...draft, cpcBidCeilingUsd: event.target.value })}
                     />
+                    <div className="ad-review__hint">尽可能多点击时一般不设；仅手动 CPC 必填。</div>
                   </Form.Item>
                   <Form.Item label="广告语言">
                     <Select

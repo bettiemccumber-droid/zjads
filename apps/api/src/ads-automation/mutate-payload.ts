@@ -1,5 +1,6 @@
 import {
   AdDraft,
+  AdPromotionAsset,
   languageConstant,
   normalizeStructuredSnippetHeader,
   usdToMicros,
@@ -19,7 +20,8 @@ export function buildCreateCampaignPayload(input: {
   const budget = `customers/${customerId}/campaignBudgets/-1`;
   const campaign = `customers/${customerId}/campaigns/-2`;
   const adGroup = `customers/${customerId}/adGroups/-3`;
-  const ceiling = usdToMicros(input.draft.cpcBidCeilingUsd);
+  const ceilingRaw = input.draft.cpcBidCeilingUsd?.trim() || '';
+  const ceiling = ceilingRaw ? usdToMicros(ceilingRaw) : '';
   const operations: Record<string, unknown>[] = [];
 
   operations.push({
@@ -54,8 +56,10 @@ export function buildCreateCampaignPayload(input: {
   if (input.draft.bidding === 'MANUAL_CPC') {
     campaignCreate.manualCpc = {};
   } else {
-    // Maximize Clicks 在 API 里对应 targetSpend，没有 maximizeClicks 字段。
-    campaignCreate.targetSpend = { cpcBidCeilingMicros: ceiling };
+    // Maximize Clicks 在 API 里对应 targetSpend；最高 CPC 可选，平时可不设。
+    const targetSpend: Record<string, unknown> = {};
+    if (ceiling) targetSpend.cpcBidCeilingMicros = ceiling;
+    campaignCreate.targetSpend = targetSpend;
   }
   operations.push({ campaignOperation: { create: campaignCreate } });
 
@@ -100,7 +104,7 @@ export function buildCreateCampaignPayload(input: {
     type: 'SEARCH_STANDARD',
   };
   if (input.draft.bidding === 'MANUAL_CPC') {
-    adGroupCreate.cpcBidMicros = ceiling;
+    adGroupCreate.cpcBidMicros = ceiling || usdToMicros('0.50');
   }
   operations.push({ adGroupOperation: { create: adGroupCreate } });
 
@@ -178,6 +182,13 @@ export function buildCreateCampaignPayload(input: {
     });
   });
 
+  const promotionOps = buildPromotionAssetOperations({
+    customerId,
+    campaign,
+    draft: input.draft,
+  });
+  operations.push(...promotionOps);
+
   operations.push({
     adGroupAdOperation: {
       create: {
@@ -199,4 +210,73 @@ export function buildCreateCampaignPayload(input: {
     validateOnly: false,
     mutateOperations: operations,
   };
+}
+
+/**
+ * 可选促销附加信息 → Google Ads PROMOTION asset。
+ */
+function buildPromotionAssetOperations(input: {
+  customerId: string;
+  campaign: string;
+  draft: AdDraft;
+}): Record<string, unknown>[] {
+  const assetData = input.draft.promotionAsset;
+  if (!assetData?.enabled) return [];
+  const promotionAsset = toGooglePromotionAsset(assetData, input.draft);
+  if (!promotionAsset) return [];
+  const resourceName = `customers/${input.customerId}/assets/-80`;
+  const finalUrl = (assetData.finalUrl || input.draft.merchantUrl || '').trim();
+  return [
+    {
+      assetOperation: {
+        create: {
+          resourceName,
+          finalUrls: [finalUrl],
+          promotionAsset,
+        },
+      },
+    },
+    {
+      campaignAssetOperation: {
+        create: { asset: resourceName, campaign: input.campaign, fieldType: 'PROMOTION' },
+      },
+    },
+  ];
+}
+
+function toGooglePromotionAsset(
+  asset: AdPromotionAsset,
+  draft: AdDraft,
+): Record<string, unknown> | null {
+  const promotionTarget = asset.promotionTarget?.trim();
+  if (!promotionTarget) return null;
+  const body: Record<string, unknown> = {
+    promotionTarget,
+    languageCode: (asset.languageCode || draft.languageCode || 'en').replace(/_/g, '-'),
+  };
+  if (asset.discountType === 'PERCENT') {
+    const percent = Number(asset.percentOff);
+    if (!Number.isFinite(percent) || percent <= 0 || percent > 100) return null;
+    body.percentOff = Math.round(percent * 10_000);
+  } else {
+    const amount = asset.moneyAmountOff?.trim();
+    if (!amount) return null;
+    body.moneyAmountOff = {
+      currencyCode: (asset.currencyCode || 'USD').trim().toUpperCase(),
+      amountMicros: usdToMicros(amount),
+    };
+  }
+  if (asset.promotionCode?.trim()) body.promotionCode = asset.promotionCode.trim();
+  if (asset.ordersOverAmount?.trim()) {
+    body.ordersOverAmount = {
+      currencyCode: (asset.currencyCode || 'USD').trim().toUpperCase(),
+      amountMicros: usdToMicros(asset.ordersOverAmount.trim()),
+    };
+  }
+  if (asset.occasion?.trim() && asset.occasion.trim().toUpperCase() !== 'NONE') {
+    body.occasion = asset.occasion.trim().toUpperCase().replace(/\s+/g, '_');
+  }
+  if (asset.startDate?.trim()) body.startDate = asset.startDate.trim();
+  if (asset.endDate?.trim()) body.endDate = asset.endDate.trim();
+  return body;
 }

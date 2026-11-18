@@ -1,6 +1,7 @@
 import {
   AD_COPY_LIMITS,
   AdDraft,
+  AdPromotionAsset,
   AdStructuredSnippet,
   STRUCTURED_SNIPPET_HEADERS,
   assignUniqueSitelinkUrls,
@@ -80,7 +81,7 @@ function adCopyJsonShape(merchantUrl: string, pageLinks: Array<{ url: string; la
     .map((item) => `- ${item.url}${item.label ? ` (${item.label})` : ''}`)
     .join('\n');
   return `Return JSON only:
-{"headlines": string[${AD_COPY_LIMITS.headlineCount.prefer}], "descriptions": string[${AD_COPY_LIMITS.descriptionCount.prefer}], "keywords": string[1 to 8], "negativeKeywords": string[4 to 12], "sitelinks": [{"linkText": string, "description1": string, "description2": string, "finalUrl": string}], "callouts": string[${AD_COPY_LIMITS.calloutCount.prefer}], "structuredSnippets": [{"header": string, "values": string[${AD_COPY_LIMITS.structuredValuesMin}+]}], "promotion": string}
+{"headlines": string[${AD_COPY_LIMITS.headlineCount.prefer}], "descriptions": string[${AD_COPY_LIMITS.descriptionCount.prefer}], "keywords": string[1 to 8], "negativeKeywords": string[4 to 12], "sitelinks": [{"linkText": string, "description1": string, "description2": string, "finalUrl": string}], "callouts": string[${AD_COPY_LIMITS.calloutCount.prefer}], "structuredSnippets": [{"header": string, "values": string[${AD_COPY_LIMITS.structuredValuesMin}+]}], "promotionAsset": {"enabled": boolean, "promotionTarget": string, "discountType": "PERCENT"|"MONETARY", "percentOff": number, "moneyAmountOff": string, "currencyCode": string, "languageCode": string, "finalUrl": string, "promotionCode": string, "ordersOverAmount": string, "occasion": string, "startDate": string, "endDate": string} | null, "translations": {"headlines": string[${AD_COPY_LIMITS.headlineCount.prefer}], "descriptions": string[${AD_COPY_LIMITS.descriptionCount.prefer}], "callouts": string[${AD_COPY_LIMITS.calloutCount.prefer}], "sitelinks": string[${AD_COPY_LIMITS.sitelinkCount.prefer}], "promotion": string}}
 
 Hard character limits (spaces/punctuation count):
 - headline <= ${AD_COPY_LIMITS.headline}
@@ -89,12 +90,16 @@ Hard character limits (spaces/punctuation count):
 - sitelink linkText <= ${AD_COPY_LIMITS.sitelinkText}
 - each sitelink description <= ${AD_COPY_LIMITS.sitelinkDescription}, both filled
 - each structured snippet value <= ${AD_COPY_LIMITS.structuredValue}
+- promotionTarget <= 20
 
 Content rules:
-- Exactly ${AD_COPY_LIMITS.headlineCount.prefer} unique headlines, ${AD_COPY_LIMITS.descriptionCount.prefer} descriptions, ${AD_COPY_LIMITS.calloutCount.prefer} callouts, at least ${AD_COPY_LIMITS.sitelinkCount.prefer} sitelinks.
+- Exactly ${AD_COPY_LIMITS.headlineCount.prefer} unique headlines, ${AD_COPY_LIMITS.descriptionCount.prefer} descriptions, ${AD_COPY_LIMITS.calloutCount.prefer} callouts, exactly ${AD_COPY_LIMITS.sitelinkCount.prefer} sitelinks.
 - Strong purchase verbs; low repetition; language must match the audience.
-- Forbidden: free trial/gift wording, specific prices or %, placeholders like $X or [link], Google risk words (gun/firearm/tactical/combat/military/prescription/Rx/wine/vodka/etc), medical cure claims.
-- Callouts must NOT mention free shipping, discounts, coupons, returns, or sale numbers. Put real promos only in "promotion".
+- Include several headlines about discounts and logistics when plausible (e.g. "20% Off Today", "Free Shipping", "Fast Delivery", "Easy Returns"). Prefer real merchant offers; if unknown, use soft logistics lines without inventing fake coupon codes.
+- Forbidden: free trial/gift wording, placeholders like $X or [link], Google risk words (gun/firearm/tactical/combat/military/prescription/Rx/wine/vodka/etc), medical cure claims.
+- Callouts must NOT mention free shipping, discounts, coupons, returns, or sale numbers. Put real promos in promotionAsset (optional) instead.
+- promotionAsset: optional. Set enabled=true only when a concrete discount is known or strongly typical for this merchant; otherwise enabled=false or null. Use percentOff as whole percent (20 means 20%). moneyAmountOff is a decimal string. languageCode should match the ad language. finalUrl defaults to merchant URL if omitted. occasion may be empty.
+- translations: required Simplified Chinese glosses aligned by index with headlines/descriptions/callouts/sitelinks (and promotion if any). These are for human review only, not for Google Ads.
 - structuredSnippets: pick exactly 2 headers from [${headers}] that best fit this merchant (e.g. travel: Types + Destinations; multi-brand: Types + Brands; own-brand: Types + Styles, avoid Brands). Use these exact English strings. Each needs at least ${AD_COPY_LIMITS.structuredValuesMin} short values.
 - Always include useful negativeKeywords (careers, login, free pdf, etc.).
 - Ad final URL (RSA) stays ${merchantUrl}. No URLs inside headline/description/callout text.
@@ -187,12 +192,20 @@ export function applyAdCopy(
     [
       ...sitelinkList(raw.sitelinks),
       ...base.sitelinks,
-    ].slice(0, limits.sitelinkCount.max),
+    ].slice(0, limits.sitelinkCount.prefer),
     base.merchantUrl,
     pageLinks,
   );
   const structuredSnippets = structuredSnippetList(raw.structuredSnippets, base.structuredSnippets);
   const promotion = typeof raw.promotion === 'string' ? raw.promotion.trim().slice(0, 120) : base.promotion;
+  const promotionAsset = parsePromotionAsset(raw.promotionAsset, base);
+  const translations = parseTranslations(raw.translations, {
+    headlines,
+    descriptions,
+    callouts: callouts.length ? callouts : base.callouts,
+    sitelinks,
+    promotion,
+  });
 
   if (headlines.length < limits.headlineCount.min) throw new Error('模型标题不足，补齐后仍不够');
   if (descriptions.length < limits.descriptionCount.min) throw new Error('模型描述不足，补齐后仍不够');
@@ -207,12 +220,67 @@ export function applyAdCopy(
     sitelinks: sitelinks.length
       ? sitelinks
       : assignUniqueSitelinkUrls(
-        [{ ...base.sitelinks[0], linkText: fitAdText(headlines[0], limits.sitelinkText), description1: '', description2: '', finalUrl: '' }],
+        base.sitelinks.slice(0, limits.sitelinkCount.prefer),
         base.merchantUrl,
         pageLinks,
       ),
     structuredSnippets: structuredSnippets.length ? structuredSnippets : base.structuredSnippets,
     promotion,
+    promotionAsset,
+    translations,
+  };
+}
+
+function parseTranslations(
+  value: unknown,
+  sizes: {
+    headlines: string[];
+    descriptions: string[];
+    callouts: string[];
+    sitelinks: AdDraft['sitelinks'];
+    promotion: string;
+  },
+): AdDraft['translations'] {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
+  const row = value as Record<string, unknown>;
+  const list = (key: string, max: number) => textList(row[key]).map((text) => text.slice(0, 80)).slice(0, max);
+  return {
+    headlines: list('headlines', sizes.headlines.length),
+    descriptions: list('descriptions', sizes.descriptions.length),
+    callouts: list('callouts', sizes.callouts.length),
+    sitelinks: list('sitelinks', sizes.sitelinks.length),
+    promotion: typeof row.promotion === 'string' ? row.promotion.trim().slice(0, 120) : undefined,
+  };
+}
+
+function parsePromotionAsset(value: unknown, base: AdDraft): AdPromotionAsset | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return base.promotionAsset ?? null;
+  const row = value as Record<string, unknown>;
+  const enabled = row.enabled === true;
+  if (!enabled) return null;
+  const discountType = row.discountType === 'MONETARY' ? 'MONETARY' : 'PERCENT';
+  const percentOff = Number(row.percentOff);
+  const moneyAmountOff = typeof row.moneyAmountOff === 'string' ? row.moneyAmountOff.trim() : '';
+  const promotionTarget = typeof row.promotionTarget === 'string' ? row.promotionTarget.trim().slice(0, 20) : '';
+  if (!promotionTarget) return null;
+  if (discountType === 'PERCENT' && !(Number.isFinite(percentOff) && percentOff > 0 && percentOff <= 100)) {
+    return null;
+  }
+  if (discountType === 'MONETARY' && !moneyAmountOff) return null;
+  return {
+    enabled: true,
+    promotionTarget,
+    discountType,
+    percentOff: discountType === 'PERCENT' ? percentOff : undefined,
+    moneyAmountOff: discountType === 'MONETARY' ? moneyAmountOff : undefined,
+    currencyCode: typeof row.currencyCode === 'string' ? row.currencyCode.trim().toUpperCase().slice(0, 3) : 'USD',
+    languageCode: typeof row.languageCode === 'string' ? row.languageCode.trim() : base.languageCode,
+    occasion: typeof row.occasion === 'string' ? row.occasion.trim() : '',
+    finalUrl: typeof row.finalUrl === 'string' && row.finalUrl.trim() ? row.finalUrl.trim() : base.merchantUrl,
+    promotionCode: typeof row.promotionCode === 'string' ? row.promotionCode.trim().slice(0, 20) : '',
+    ordersOverAmount: typeof row.ordersOverAmount === 'string' ? row.ordersOverAmount.trim() : '',
+    startDate: typeof row.startDate === 'string' ? row.startDate.trim() : '',
+    endDate: typeof row.endDate === 'string' ? row.endDate.trim() : '',
   };
 }
 
@@ -282,7 +350,7 @@ async function askJson(
 ): Promise<Record<string, unknown>> {
   const system = [
     'You write affiliate Google Ads RSA copy and personal product-review blog posts. Reply with JSON only.',
-    'Follow Google Ads policies. Never invent prices, medical cures, weapons, alcohol SKUs, or placeholder tokens.',
+    'Follow Google Ads policies. Prefer real discount and logistics headlines when plausible. Never invent fake coupon codes, medical cures, weapons, alcohol SKUs, or placeholder tokens like $X.',
     personaPrompt.trim(),
   ]
     .filter(Boolean)

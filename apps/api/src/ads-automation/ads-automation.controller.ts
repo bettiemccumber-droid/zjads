@@ -664,6 +664,29 @@ export class AdsAutomationController {
     return ok(await this.ads.listCampaigns(user.id));
   }
 
+  /**
+   * 数据采集页改状态/预算：只打 Google Ads，不改日报表数据。
+   * 管理员可带 userId 代操作员工 MCC。
+   */
+  @Patch('ad-campaigns/live')
+  async manageLiveCampaign(
+    @CurrentUser() user: AuthUser,
+    @Query('userId') userId: string | undefined,
+    @Body() body: {
+      customerId: string;
+      campaignId: string;
+      status?: 'ENABLED' | 'PAUSED';
+      dailyBudgetUsd?: string;
+    },
+  ) {
+    this.assertWriter(user);
+    const ownerUserId = resolveOwnerUserId(user, userId ? Number(userId) : undefined, 'write');
+    return ok(
+      await this.ads.manageLiveCampaign(ownerUserId, body),
+      body.status ? '系列状态已更新' : '日预算已更新',
+    );
+  }
+
   @Patch('ad-campaigns/:id/status')
   async updateStatus(
     @CurrentUser() user: AuthUser,

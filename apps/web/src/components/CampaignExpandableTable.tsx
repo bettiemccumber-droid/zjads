@@ -1,7 +1,8 @@
 import { useMemo, useState } from 'react';
-import { EditOutlined, EyeOutlined, SettingOutlined } from '@ant-design/icons';
-import { Button, Checkbox, Input, Modal, Popover, Space, Table, Typography } from 'antd';
+import { EditOutlined, EyeOutlined, PauseCircleOutlined, PlayCircleOutlined, SettingOutlined } from '@ant-design/icons';
+import { Button, Checkbox, Input, Modal, Popconfirm, Popover, Space, Table, Typography, message } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
+import { api, type ApiResult } from '../api/client';
 import { isEnabledCampaignStatus } from '../utils/campaign-status';
 import './CampaignExpandableTable.css';
 
@@ -73,6 +74,8 @@ export interface CampaignSummaryRow {
   rank: number;
   campaignGroupKey?: string;
   campaignId: string;
+  /** Google 子账号客户号；远程改状态/预算需要它 */
+  customerId?: string;
   campaignName: string;
   campaignStatus?: string;
   affiliateAlias: string;
@@ -289,7 +292,7 @@ function OperationSuggestionCell({
         {savedNote ? <li>备注：{savedNote}</li> : null}
       </ul>
       <Typography.Paragraph type="secondary" style={{ marginBottom: 0, fontSize: 12 }}>
-        复核后可调整预算与 CPC；执行调整需在 Google Ads 或 Sheet 流程中操作。
+        可在表格里直接启用/暂停或改日预算（只改 Google Ads，不改历史花费与佣金数据）。
       </Typography.Paragraph>
     </div>
   );
@@ -489,6 +492,9 @@ interface CampaignExpandableTableProps {
   loading?: boolean;
   /** 查询区间自然日数，用于提示 MCC 日数据是否不完整 */
   queryDayCount?: number;
+  /** 管理员代管员工时传入；只读账号请关闭 manageEnabled */
+  ownerUserId?: number;
+  manageEnabled?: boolean;
   scroll?: { x?: number; y?: number };
   pagination?: false | {
     pageSize: number;
@@ -500,6 +506,8 @@ interface CampaignExpandableTableProps {
   rowClassName?: (row: CampaignSummaryRow) => string;
 }
 
+type CampaignOverride = { dailyBudget?: number; campaignStatus?: string };
+
 /**
  * 广告系列表：主行区间汇总，展开后显示按天详细数据
  */
@@ -507,12 +515,76 @@ export default function CampaignExpandableTable({
   rows,
   loading,
   queryDayCount,
+  ownerUserId,
+  manageEnabled = false,
   scroll,
   pagination,
   rowClassName,
 }: CampaignExpandableTableProps) {
   const [expandedKeys, setExpandedKeys] = useState<string[]>([]);
   const [optionalColumns, setOptionalColumns] = useState(loadOptionalColumns);
+  const [overrides, setOverrides] = useState<Record<string, CampaignOverride>>({});
+  const [busyKey, setBusyKey] = useState('');
+  const [budgetDraft, setBudgetDraft] = useState<Record<string, string>>({});
+
+  const displayRows = useMemo(
+    () => rows.map((row) => {
+      const patch = overrides[campaignKey(row)];
+      return patch ? { ...row, ...patch } : row;
+    }),
+    [rows, overrides],
+  );
+
+  const canManageRow = (row: CampaignSummaryRow) => {
+    if (!manageEnabled) return false;
+    const customerId = (row.customerId || row.linkedCustomerIds?.[0] || '').replace(/\D/g, '');
+    const campaignId = (row.campaignId || '').replace(/\D/g, '');
+    return customerId.length >= 6 && Boolean(campaignId) && !row.campaignId.includes('__');
+  };
+
+  const patchLive = async (
+    row: CampaignSummaryRow,
+    body: { status?: 'ENABLED' | 'PAUSED'; dailyBudgetUsd?: string },
+  ) => {
+    const key = campaignKey(row);
+    const customerId = (row.customerId || row.linkedCustomerIds?.[0] || '').replace(/\D/g, '');
+    const campaignId = (row.campaignId || '').replace(/\D/g, '');
+    setBusyKey(key);
+    try {
+      const res = await api.patch<ApiResult<{
+        status: string | null;
+        dailyBudgetUsd: string | null;
+        touchedDailyReport: boolean;
+      }>>(
+        '/ad-campaigns/live',
+        { customerId, campaignId, ...body },
+        { params: ownerUserId ? { userId: ownerUserId } : undefined },
+      );
+      if (!res.data.success) {
+        message.error(res.data.message || '操作失败');
+        return;
+      }
+      if (res.data.data.touchedDailyReport) {
+        message.warning('意外写入了日报，请联系开发核对');
+      }
+      setOverrides((prev) => ({
+        ...prev,
+        [key]: {
+          ...prev[key],
+          ...(body.status ? { campaignStatus: body.status } : {}),
+          ...(body.dailyBudgetUsd
+            ? { dailyBudget: Number(body.dailyBudgetUsd) }
+            : {}),
+        },
+      }));
+      message.success(res.data.message || '已更新 Google Ads');
+    } catch (error) {
+      const raw = (error as { response?: { data?: { message?: string | string[] } } }).response?.data?.message;
+      message.error(Array.isArray(raw) ? raw.join('；') : raw || '操作失败');
+    } finally {
+      setBusyKey('');
+    }
+  };
 
   const persistOptionalColumns = (next: Record<OptionalColumnKey, boolean>) => {
     setOptionalColumns(next);
@@ -696,12 +768,133 @@ export default function CampaignExpandableTable({
       {
         title: '预算',
         dataIndex: 'dailyBudget',
-        width: 64,
+        width: manageEnabled ? 118 : 64,
         align: 'center',
         sorter: sortByNum((r) => r.dailyBudget),
         sortDirections: SORT_DIRS,
-        render: (v: number) => <MoneyCell value={v} />,
+        render: (v: number, r) => {
+          if (!canManageRow(r)) return <MoneyCell value={v} />;
+          const key = campaignKey(r);
+          const editing = budgetDraft[key] != null;
+          if (!editing) {
+            return (
+              <Button
+                type="link"
+                size="small"
+                className="campaign-budget-edit"
+                disabled={busyKey === key}
+                onClick={() => setBudgetDraft((prev) => ({ ...prev, [key]: Number(v || 0).toFixed(2) }))}
+              >
+                ${Number(v || 0).toFixed(2)}
+              </Button>
+            );
+          }
+          return (
+            <Space size={2} onClick={(event) => event.stopPropagation()}>
+              <Input
+                size="small"
+                prefix="$"
+                style={{ width: 72 }}
+                value={budgetDraft[key]}
+                onChange={(event) => setBudgetDraft((prev) => ({ ...prev, [key]: event.target.value }))}
+                onPressEnter={() => {
+                  const next = (budgetDraft[key] || '').trim();
+                  if (!next || Number(next) <= 0) {
+                    message.warning('请填写大于 0 的日预算');
+                    return;
+                  }
+                  void patchLive(r, { dailyBudgetUsd: next }).then(() => {
+                    setBudgetDraft((prev) => {
+                      const copy = { ...prev };
+                      delete copy[key];
+                      return copy;
+                    });
+                  });
+                }}
+              />
+              <Button
+                type="link"
+                size="small"
+                loading={busyKey === key}
+                onClick={() => {
+                  const next = (budgetDraft[key] || '').trim();
+                  if (!next || Number(next) <= 0) {
+                    message.warning('请填写大于 0 的日预算');
+                    return;
+                  }
+                  void patchLive(r, { dailyBudgetUsd: next }).then(() => {
+                    setBudgetDraft((prev) => {
+                      const copy = { ...prev };
+                      delete copy[key];
+                      return copy;
+                    });
+                  });
+                }}
+              >
+                存
+              </Button>
+              <Button
+                type="link"
+                size="small"
+                onClick={() => setBudgetDraft((prev) => {
+                  const copy = { ...prev };
+                  delete copy[key];
+                  return copy;
+                })}
+              >
+                取消
+              </Button>
+            </Space>
+          );
+        },
       },
+      ...(manageEnabled
+        ? [{
+            title: '管理',
+            key: 'manage',
+            width: 88,
+            align: 'center' as const,
+            render: (_: unknown, r: CampaignSummaryRow) => {
+              if (!canManageRow(r)) return <span className="merchant-blank">—</span>;
+              const key = campaignKey(r);
+              const enabled = isEnabledCampaignStatus(r.campaignStatus ?? '');
+              return (
+                <Space size={0} onClick={(event) => event.stopPropagation()}>
+                  {enabled ? (
+                    <Popconfirm
+                      title="暂停该系列？只改 Google Ads，不影响历史报表数据。"
+                      onConfirm={() => void patchLive(r, { status: 'PAUSED' })}
+                    >
+                      <Button
+                        type="link"
+                        size="small"
+                        danger
+                        icon={<PauseCircleOutlined />}
+                        loading={busyKey === key}
+                      >
+                        暂停
+                      </Button>
+                    </Popconfirm>
+                  ) : (
+                    <Popconfirm
+                      title="启用该系列？只改 Google Ads，不影响历史报表数据。"
+                      onConfirm={() => void patchLive(r, { status: 'ENABLED' })}
+                    >
+                      <Button
+                        type="link"
+                        size="small"
+                        icon={<PlayCircleOutlined />}
+                        loading={busyKey === key}
+                      >
+                        启用
+                      </Button>
+                    </Popconfirm>
+                  )}
+                </Space>
+              );
+            },
+          }]
+        : []),
     ];
 
     if (optionalColumns.impressions) {
@@ -860,7 +1053,7 @@ export default function CampaignExpandableTable({
     const totalWidth =
       cols.reduce((sum, c) => sum + (typeof c.width === 'number' ? c.width : 72), 0) + 48;
     return { columns: cols, scrollX: Math.max(totalWidth, 960) };
-  }, [optionalColumns]);
+  }, [optionalColumns, manageEnabled, busyKey, budgetDraft]);
 
   const columnSettings = (
     <Popover
@@ -906,7 +1099,7 @@ export default function CampaignExpandableTable({
         loading={loading}
         size="small"
         columns={columns}
-        dataSource={rows}
+        dataSource={displayRows}
         scroll={mergedScroll}
         pagination={pagination}
         tableLayout="fixed"

@@ -1476,6 +1476,123 @@ export class AdsAutomationService implements OnModuleInit {
   }
 
   /**
+   * 数据采集页直接管系列：只改 Google Ads 状态/预算。
+   * 绝不写入 ad_campaign_daily（花费、点击、佣金等报表数据保持不动）。
+   * 若本系统有对应自动化系列记录，仅同步 status / dailyBudgetMicros。
+   */
+  async manageLiveCampaign(
+    ownerUserId: number,
+    input: {
+      customerId: string;
+      campaignId: string;
+      status?: 'ENABLED' | 'PAUSED';
+      dailyBudgetUsd?: string;
+    },
+  ) {
+    const customerId = digits(input.customerId);
+    const campaignId = digits(input.campaignId);
+    if (customerId.length < 6 || !campaignId) {
+      throw new BadRequestException('缺少有效的 Google 客户号或系列 ID');
+    }
+    if (campaignId === '0' || input.campaignId.includes('__')) {
+      throw new BadRequestException('这条是报表补齐行，不能远程操作');
+    }
+    if (!input.status && !(input.dailyBudgetUsd ?? '').trim()) {
+      throw new BadRequestException('请指定启用/暂停或新的日预算');
+    }
+
+    const child = await this.prisma.googleAdsCustomer.findFirst({
+      where: {
+        customerId,
+        connection: { ownerUserId },
+      },
+      include: { connection: true },
+    });
+    if (!child) {
+      throw new BadRequestException('找不到该客户号对应的 MCC 连接，请先同步广告账户');
+    }
+    const creds = this.credentialsFor(child.connection);
+    if (!creds) {
+      throw new BadRequestException('Google Ads API 未配置或 MCC 刷新令牌无效');
+    }
+
+    const campaignResource = `customers/${customerId}/campaigns/${campaignId}`;
+    let nextStatus = input.status;
+    let nextBudgetUsd = (input.dailyBudgetUsd ?? '').trim();
+    let nextBudgetMicros = '';
+
+    if (nextStatus) {
+      await this.googleAds.mutate(
+        customerId,
+        {
+          partialFailure: false,
+          validateOnly: false,
+          mutateOperations: [
+            {
+              campaignOperation: {
+                update: { resourceName: campaignResource, status: nextStatus },
+                updateMask: 'status',
+              },
+            },
+          ],
+        },
+        creds,
+      );
+    }
+
+    if (nextBudgetUsd) {
+      nextBudgetMicros = usdToMicros(nextBudgetUsd);
+      if (BigInt(nextBudgetMicros) <= 0n) throw new BadRequestException('日预算必须大于 0');
+      const budgetResource = await this.googleAds.lookupCampaignBudgetResource(customerId, campaignId, creds);
+      if (!budgetResource) {
+        throw new BadRequestException('在 Google Ads 中找不到该系列的预算资源');
+      }
+      await this.googleAds.mutate(
+        customerId,
+        {
+          partialFailure: false,
+          validateOnly: false,
+          mutateOperations: [
+            {
+              campaignBudgetOperation: {
+                update: { resourceName: budgetResource, amountMicros: nextBudgetMicros },
+                updateMask: 'amountMicros',
+              },
+            },
+          ],
+        },
+        creds,
+      );
+    }
+
+    // 可选：只同步本系统自动化系列元数据，绝不碰日报表。
+    const local = await this.prisma.adAutomationCampaign.findFirst({
+      where: {
+        ownerUserId,
+        customerId,
+        googleCampaignResource: campaignResource,
+      },
+    });
+    if (local) {
+      await this.prisma.adAutomationCampaign.update({
+        where: { id: local.id },
+        data: {
+          ...(nextStatus ? { status: nextStatus } : {}),
+          ...(nextBudgetMicros ? { dailyBudgetMicros: BigInt(nextBudgetMicros) } : {}),
+        },
+      });
+    }
+
+    return {
+      customerId,
+      campaignId,
+      status: nextStatus ?? null,
+      dailyBudgetUsd: nextBudgetUsd || null,
+      touchedDailyReport: false,
+    };
+  }
+
+  /**
    * 启用或暂停。已接通 Google Ads 时立刻改远程系列，否则记成待提交。
    */
   async updateStatus(ownerUserId: number, id: number, status: 'ENABLED' | 'PAUSED') {

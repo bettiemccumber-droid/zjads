@@ -113,6 +113,8 @@ interface CampaignRow {
 
   campaignId: string;
 
+  customerId?: string;
+
   campaignName: string;
 
   campaignStatus?: string;
@@ -1387,6 +1389,8 @@ export default function DashboardPage() {
                       rows={campaignRowsWithDaily}
                       loading={loading}
                       queryDayCount={queryDayCount}
+                      ownerUserId={viewUserId ?? undefined}
+                      manageEnabled={user?.role !== 'VIEWER'}
                       scroll={tableScroll}
                       pagination={tablePagination(campaignPageSize, setCampaignPageSize)}
                       rowClassName={(r) => {

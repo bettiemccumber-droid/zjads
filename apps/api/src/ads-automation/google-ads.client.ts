@@ -221,6 +221,28 @@ export class GoogleAdsClient {
     return this.post(`customers/${digitsOnly(customerId)}/googleAds:mutate`, body, credentials);
   }
 
+  /**
+   * 查出系列绑定的预算资源名。只读 GAQL，不改任何本地报表数据。
+   */
+  async lookupCampaignBudgetResource(
+    customerId: string,
+    campaignId: string,
+    credentials: GoogleAdsCredentials,
+  ): Promise<string> {
+    const cid = digitsOnly(customerId);
+    const id = digitsOnly(campaignId);
+    if (!cid || !id) return '';
+    const results = await this.searchAll(
+      cid,
+      `SELECT campaign.campaign_budget FROM campaign WHERE campaign.id = ${id}`,
+      credentials,
+    );
+    if (!results.length) return '';
+    const campaign = asRecord(asRecord(results[0]).campaign);
+    const budget = typeof campaign.campaignBudget === 'string' ? campaign.campaignBudget : '';
+    return isRealResource(budget) ? budget : '';
+  }
+
   private async get(path: string, credentials: GoogleAdsCredentials): Promise<unknown> {
     const accessToken = await this.accessToken(credentials);
     const url = `${ADS_ROOT}/${credentials.apiVersion}/${path}`;

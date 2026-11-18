@@ -16,6 +16,12 @@
   background: #fafbfc;
 }
 
+.campaign-budget-edit {
+  padding: 0 2px !important;
+  height: auto !important;
+  font-variant-numeric: tabular-nums;
+}
+
 .campaign-report-table--compact .ant-table-thead > tr > th {
   padding: 6px 4px !important;
   font-size: 11px !important;

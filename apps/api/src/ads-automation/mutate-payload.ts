@@ -49,7 +49,8 @@ export function buildCreateCampaignPayload(input: {
   if (input.draft.bidding === 'MANUAL_CPC') {
     campaignCreate.manualCpc = {};
   } else {
-    campaignCreate.maximizeClicks = { cpcBidCeilingMicros: ceiling };
+    // Maximize Clicks 在 API 里对应 targetSpend，没有 maximizeClicks 字段。
+    campaignCreate.targetSpend = { cpcBidCeilingMicros: ceiling };
   }
   operations.push({ campaignOperation: { create: campaignCreate } });
 

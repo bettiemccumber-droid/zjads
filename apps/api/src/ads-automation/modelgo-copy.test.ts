@@ -23,6 +23,17 @@ const draft = applyAdCopy(
 \`\`\``),
 );
 assert.deepStrictEqual(validateDraft(draft), []);
-assert.strictEqual(draft.headlines.length, 3);
+assert.ok(draft.headlines.length >= 3);
 assert.strictEqual(draft.merchantUrl, 'https://example.com/');
 assert.strictEqual(draft.dailyBudgetUsd, '3.00');
+
+const longDesc = `Discover travel deals and experiences with Klook across Australia including tours activities and attractions you can book today with flexible options.`;
+assert.ok(longDesc.length > 90);
+const repaired = applyAdCopy(base, {
+  headlines: ['Klook AU', 'Book Klook', 'Klook Trips', 'x'.repeat(40)],
+  descriptions: [longDesc],
+  keywords: ['klook'],
+});
+assert.deepStrictEqual(validateDraft(repaired), []);
+assert.ok(repaired.descriptions.every((text) => text.length <= 90));
+assert.ok(repaired.descriptions.length >= 2);

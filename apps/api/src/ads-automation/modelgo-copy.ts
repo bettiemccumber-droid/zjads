@@ -37,13 +37,26 @@ export async function writeAdCopy(input: {
   const raw = await askJson(
     `Write Google search ads for ${input.merchantName}. Audience language: ${language}. Country: ${input.countryCode}.`,
     `Return JSON only: {"headlines": string[3 to 8], "descriptions": string[2 to 4], "keywords": string[1 to 8], "negativeKeywords": string[0 to 8], "sitelinks": [{"linkText": string, "description1": string, "description2": string}]}.
-Limits: headline <= 30 characters, description <= 90, sitelink text <= 25, each sitelink description <= 35 and both descriptions filled or both empty.
-Do not invent prices, discounts, awards, or shipping promises. Final URL stays ${input.merchantUrl}. No URLs inside the copy.`,
+Hard limits (count every character including spaces): each headline max 30, each description max 90, sitelink text max 25, each sitelink description max 35 and both filled or both empty.
+Prefer short lines. If unsure, write shorter. Do not invent prices, discounts, awards, or shipping promises. Final URL stays ${input.merchantUrl}. No URLs inside the copy.`,
     1400,
     input.personaPrompt,
   );
-  const draft = applyAdCopy(base, raw);
-  const errors = validateDraft(draft);
+  let draft = applyAdCopy(base, raw);
+  let errors = validateDraft(draft);
+  if (!errors.length) return draft;
+
+  // 模型偶发超长或条数不够时再要一次，并强调截断限制。
+  const retryRaw = await askJson(
+    `Write Google search ads for ${input.merchantName}. Audience language: ${language}. Country: ${input.countryCode}.`,
+    `Previous draft failed validation: ${errors[0]}.
+Return JSON only with safe lengths: headlines 3-8 items each <= 30 chars, descriptions exactly 2-4 items each <= 90 chars.
+No prices, discounts, awards, or shipping promises. Final URL stays ${input.merchantUrl}.`,
+    1400,
+    input.personaPrompt,
+  );
+  draft = applyAdCopy(base, retryRaw);
+  errors = validateDraft(draft);
   if (errors.length) throw new Error(errors[0]);
   return draft;
 }
@@ -98,11 +111,17 @@ export function parseModelJson(text: string): Record<string, unknown> {
 }
 
 /**
- * 把模型文案套进草稿。超长的句子丢掉，避免截断后意思不对。
+ * 把模型文案套进草稿。超长的标题/描述截断到上限，条数不够时用示例草稿补齐。
  */
 export function applyAdCopy(base: AdDraft, raw: Record<string, unknown>): AdDraft {
-  const headlines = textList(raw.headlines).filter((text) => text.length <= 30).slice(0, 15);
-  const descriptions = textList(raw.descriptions).filter((text) => text.length <= 90).slice(0, 4);
+  const headlines = uniqueNonEmpty([
+    ...textList(raw.headlines).map((text) => fitAdText(text, 30)),
+    ...base.headlines,
+  ]).slice(0, 15);
+  const descriptions = uniqueNonEmpty([
+    ...textList(raw.descriptions).map((text) => fitAdText(text, 90)),
+    ...base.descriptions,
+  ]).slice(0, 4);
   const keywords = textList(raw.keywords)
     .map((text) => stripKeywordDecorations(text).slice(0, 80))
     .filter(Boolean)
@@ -114,8 +133,8 @@ export function applyAdCopy(base: AdDraft, raw: Record<string, unknown>): AdDraf
     .slice(0, 8)
     .map((text) => ({ text, matchType: 'BROAD' as const }));
   const sitelinks = sitelinkList(raw.sitelinks, base.merchantUrl);
-  if (headlines.length < 3) throw new Error('模型标题不足 3 条，或有标题超过 30 个字符');
-  if (descriptions.length < 2) throw new Error('模型描述不足 2 条，或有描述超过 90 个字符');
+  if (headlines.length < 3) throw new Error('模型标题不足 3 条，补齐后仍不够');
+  if (descriptions.length < 2) throw new Error('模型描述不足 2 条，补齐后仍不够');
   return {
     ...base,
     headlines,
@@ -124,6 +143,30 @@ export function applyAdCopy(base: AdDraft, raw: Record<string, unknown>): AdDraf
     negativeKeywords: negativeKeywords.length ? negativeKeywords : base.negativeKeywords,
     sitelinks: sitelinks.length ? sitelinks : [{ ...base.sitelinks[0], linkText: headlines[0].slice(0, 25), description1: '', description2: '' }],
   };
+}
+
+/**
+ * 截到 Google Ads 字数上限；尽量在空格处截断，避免半截单词。
+ */
+export function fitAdText(value: string, max: number): string {
+  const text = value.trim().replace(/\s+/g, ' ');
+  if (text.length <= max) return text;
+  const sliced = text.slice(0, max);
+  const space = sliced.lastIndexOf(' ');
+  if (space >= Math.floor(max * 0.6)) return sliced.slice(0, space).trim();
+  return sliced.trim();
+}
+
+function uniqueNonEmpty(values: string[]): string[] {
+  const seen = new Set<string>();
+  const rows: string[] = [];
+  for (const value of values) {
+    const text = value.trim();
+    if (!text || seen.has(text)) continue;
+    seen.add(text);
+    rows.push(text);
+  }
+  return rows;
 }
 
 /**

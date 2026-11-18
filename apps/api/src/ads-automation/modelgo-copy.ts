@@ -7,6 +7,7 @@ import {
   buildSampleDraft,
   normalizeStructuredSnippetHeader,
   SampleArticle,
+  sanitizeDraftForReview,
   stripKeywordDecorations,
   validateDraft,
 } from './ads-automation.util';
@@ -55,7 +56,7 @@ export async function writeAdCopy(input: {
     2200,
     input.personaPrompt,
   );
-  let draft = applyAdCopy(base, raw, pageLinks);
+  let draft = sanitizeDraftForReview(applyAdCopy(base, raw, pageLinks), base);
   let errors = validateDraft(draft);
   if (!errors.length) return draft;
 
@@ -63,13 +64,12 @@ export async function writeAdCopy(input: {
     `Write Google search ads for ${input.merchantName}. Audience language: ${language}. Country: ${input.countryCode}.`,
     `Previous draft failed validation: ${errors.slice(0, 3).join('; ')}.
 ${shape}
-Fix every limit and policy issue. Prefer shorter lines.`,
+Fix every limit and policy issue. Prefer shorter lines. Never put prices, %, discounts, or placeholders in callouts.`,
     2200,
     input.personaPrompt,
   );
-  draft = applyAdCopy(base, retryRaw, pageLinks);
-  errors = validateDraft(draft);
-  if (errors.length) throw new Error(errors[0]);
+  draft = sanitizeDraftForReview(applyAdCopy(base, retryRaw, pageLinks), base);
+  // 仍有问题也不抛错：进入人工预览，不合规字段已尽量换成安全备选。
   return draft;
 }
 

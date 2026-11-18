@@ -23,6 +23,7 @@ import {
   pickArticleImages,
   sampleArticleHtml,
   isCustomerEligible,
+  sanitizeDraftForReview,
   stripKeywordDecorations,
   usdToMicros,
   validateDraft,
@@ -1238,11 +1239,14 @@ export class AdsAutomationService implements OnModuleInit {
    * 查询任务进度。
    */
   async getJob(ownerUserId: number, id: string) {
-    const job = await this.prisma.adJob.findFirst({
+    let job = await this.prisma.adJob.findFirst({
       where: { id, ownerUserId },
       include: { article: true, campaign: true },
     });
     if (!job) throw new NotFoundException('任务不存在');
+    if (job.status === 'FAILED') {
+      job = await this.openEditableDraft(job);
+    }
     const naming = await this.suggestCampaignName(ownerUserId, job);
     return {
       ...job,
@@ -1703,18 +1707,88 @@ export class AdsAutomationService implements OnModuleInit {
           progress: 80,
           progressMessage: useModel ? '已按投放国家生成文案' : '最终预览',
           languageCode: language,
+          errorMessage: null,
           draft: draft as unknown as Prisma.InputJsonValue,
         },
       });
       await this.addEvent(jobId, 'READY_FOR_REVIEW', 'READY_FOR_REVIEW', '最终预览');
     } catch (error) {
       const message = error instanceof Error ? error.message : '生成失败';
-      await this.prisma.adJob.update({
-        where: { id: jobId },
-        data: { status: 'FAILED', errorMessage: message },
-      });
-      await this.addEvent(jobId, 'FAILED', 'GENERATING', message);
+      try {
+        const job = await this.prisma.adJob.findUnique({ where: { id: jobId } });
+        if (!job) throw error;
+        await this.openEditableDraft(job, message);
+      } catch {
+        await this.prisma.adJob.update({
+          where: { id: jobId },
+          data: { status: 'FAILED', errorMessage: message },
+        });
+        await this.addEvent(jobId, 'FAILED', 'GENERATING', message);
+      }
     }
+  }
+
+  /**
+   * 生成失败或政策校验不过时，仍打开可编辑草稿，避免卡在「生成失败」。
+   */
+  private async openEditableDraft(
+    job: {
+      id: string;
+      input: Prisma.JsonValue;
+      draft: Prisma.JsonValue;
+      languageCode: string;
+      targetCountry: string;
+      errorMessage: string | null;
+    },
+    hint?: string,
+  ) {
+    const input = (job.input ?? {}) as {
+      merchantName?: string;
+      merchantUrl?: string;
+      countryCode?: string;
+      languageCode?: string;
+      bidding?: 'MAXIMIZE_CLICKS' | 'MANUAL_CPC';
+      dailyBudgetUsd?: string;
+      cpcBidCeilingUsd?: string;
+    };
+    const language = input.languageCode || job.languageCode || 'en';
+    const countryCode = input.countryCode || job.targetCountry || 'US';
+    const fallback = buildSampleDraft({
+      merchantName: input.merchantName || 'Merchant',
+      merchantUrl: input.merchantUrl || 'https://example.com/',
+      countryCode,
+      languageCode: language,
+      bidding: input.bidding,
+      dailyBudgetUsd: input.dailyBudgetUsd,
+      cpcBidCeilingUsd: input.cpcBidCeilingUsd,
+    });
+    const existing = job.draft && typeof job.draft === 'object' && !Array.isArray(job.draft)
+      ? (job.draft as unknown as AdDraft)
+      : null;
+    const draft = existing ? sanitizeDraftForReview(existing, fallback) : fallback;
+    const warning = (hint || job.errorMessage || '').trim();
+    const updated = await this.prisma.adJob.update({
+      where: { id: job.id },
+      data: {
+        status: 'READY_FOR_REVIEW',
+        step: 'READY_FOR_REVIEW',
+        progress: 80,
+        progressMessage: warning
+          ? '已打开可编辑草稿，部分文案已自动替换，请核对后发布'
+          : '已打开可编辑草稿',
+        errorMessage: warning || null,
+        languageCode: language,
+        draft: draft as unknown as Prisma.InputJsonValue,
+      },
+      include: { article: true, campaign: true },
+    });
+    await this.addEvent(
+      job.id,
+      'READY_FOR_REVIEW',
+      'READY_FOR_REVIEW',
+      warning ? `自动进入预览：${warning}` : '自动进入预览',
+    );
+    return updated;
   }
 
   /**

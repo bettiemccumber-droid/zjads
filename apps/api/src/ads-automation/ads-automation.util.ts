@@ -495,6 +495,140 @@ function calloutHasPromoLeak(text: string): boolean {
   return /免运费|满减|折扣|退货|free\s+shipping|discount|coupon|% off|sale\b/i.test(text);
 }
 
+/**
+ * 文案是否触发政策/宣传信息禁忌。生成阶段用它决定是否替换成安全备选。
+ */
+export function isUnsafeAdText(text: string, asCallout = false): boolean {
+  const value = text.trim();
+  if (!value) return true;
+  if (policyHits(value, 't').length) return true;
+  if (asCallout && calloutHasPromoLeak(value)) return true;
+  return false;
+}
+
+/**
+ * 生成后把不合规字段替换成示例草稿里的安全文案，保证能进入人工预览，而不是整单失败。
+ */
+export function sanitizeDraftForReview(draft: AdDraft, fallback: AdDraft): AdDraft {
+  const limits = AD_COPY_LIMITS;
+  const fillLines = (
+    primary: string[],
+    reserve: string[],
+    min: number,
+    max: number,
+    asCallout = false,
+  ): string[] => {
+    const used = new Set<string>();
+    const out: string[] = [];
+    for (const line of [...primary, ...reserve]) {
+      if (out.length >= max) break;
+      const text = line.trim();
+      if (isUnsafeAdText(text, asCallout)) continue;
+      const key = text.toLowerCase();
+      if (used.has(key)) continue;
+      used.add(key);
+      out.push(text);
+    }
+    const safeFallback = asCallout ? 'Shop Online' : 'Official Site';
+    let guard = 0;
+    while (out.length < min && guard < min + 8) {
+      guard += 1;
+      const text = (reserve[out.length % Math.max(reserve.length, 1)] || safeFallback).trim() || safeFallback;
+      const candidate = used.has(text.toLowerCase()) ? `${text} ${out.length + 1}` : text;
+      const key = candidate.toLowerCase();
+      if (used.has(key)) {
+        out.push(`${safeFallback} ${out.length + 1}`.slice(0, asCallout ? limits.callout : limits.headline));
+        used.add(`${safeFallback} ${out.length}`.toLowerCase());
+        continue;
+      }
+      used.add(key);
+      out.push(candidate.slice(0, asCallout ? limits.callout : limits.headline));
+    }
+    return out.slice(0, max);
+  };
+
+  const headlines = fillLines(
+    draft.headlines,
+    fallback.headlines,
+    limits.headlineCount.min,
+    limits.headlineCount.max,
+  ).map((text) => text.slice(0, limits.headline));
+  const descriptions = fillLines(
+    draft.descriptions,
+    fallback.descriptions,
+    limits.descriptionCount.min,
+    limits.descriptionCount.max,
+  ).map((text) => text.slice(0, limits.description));
+  const callouts = fillLines(
+    draft.callouts,
+    fallback.callouts,
+    Math.min(limits.calloutCount.prefer, fallback.callouts.length || limits.calloutCount.prefer),
+    limits.calloutCount.max,
+    true,
+  ).map((text) => text.slice(0, limits.callout));
+
+  const sitelinks = assignUniqueSitelinkUrls(
+    (draft.sitelinks.length ? draft.sitelinks : fallback.sitelinks).map((link) => {
+      const linkText = isUnsafeAdText(link.linkText)
+        ? (fallback.sitelinks[0]?.linkText || 'Shop now')
+        : link.linkText;
+      const description1 = isUnsafeAdText(link.description1) ? '' : link.description1;
+      const description2 = isUnsafeAdText(link.description2) ? '' : link.description2;
+      const bothOrNeither = description1 && description2
+        ? { description1, description2 }
+        : { description1: '', description2: '' };
+      return {
+        ...link,
+        linkText: linkText.slice(0, limits.sitelinkText),
+        ...bothOrNeither,
+        description1: bothOrNeither.description1.slice(0, limits.sitelinkDescription),
+        description2: bothOrNeither.description2.slice(0, limits.sitelinkDescription),
+      };
+    }),
+    draft.merchantUrl || fallback.merchantUrl,
+  );
+
+  const structuredSnippets = (draft.structuredSnippets?.length
+    ? draft.structuredSnippets
+    : fallback.structuredSnippets
+  )
+    .map((row) => ({
+      header: normalizeStructuredSnippetHeader(row.header) || row.header,
+      values: row.values
+        .map((value) => value.trim())
+        .filter((value) => value && !isUnsafeAdText(value))
+        .slice(0, 10),
+    }))
+    .filter((row) => normalizeStructuredSnippetHeader(row.header) && row.values.length >= limits.structuredValuesMin)
+    .slice(0, limits.structuredCategories);
+  const snippets = structuredSnippets.length === limits.structuredCategories
+    ? structuredSnippets
+    : fallback.structuredSnippets;
+
+  const promotion = draft.promotion?.trim() && !isUnsafeAdText(draft.promotion)
+    ? draft.promotion.trim().slice(0, 120)
+    : '';
+
+  return {
+    ...fallback,
+    ...draft,
+    headlines,
+    descriptions,
+    keywords: draft.keywords.length ? draft.keywords : fallback.keywords,
+    negativeKeywords: draft.negativeKeywords.length ? draft.negativeKeywords : fallback.negativeKeywords,
+    callouts,
+    sitelinks: sitelinks.length ? sitelinks : fallback.sitelinks,
+    structuredSnippets: snippets,
+    promotion,
+    merchantUrl: draft.merchantUrl || fallback.merchantUrl,
+    geoTargetId: draft.geoTargetId || fallback.geoTargetId,
+    languageCode: draft.languageCode || fallback.languageCode,
+    bidding: draft.bidding || fallback.bidding,
+    dailyBudgetUsd: draft.dailyBudgetUsd || fallback.dailyBudgetUsd,
+    cpcBidCeilingUsd: draft.cpcBidCeilingUsd || fallback.cpcBidCeilingUsd,
+  };
+}
+
 export interface SampleArticle {
   title: string;
   /** 开篇段落，放在第一张图和第一个小标题之前。 */

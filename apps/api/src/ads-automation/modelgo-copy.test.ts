@@ -4,6 +4,7 @@ import {
   geoTargetForCountry,
   languageConstant,
   normalizePageKey,
+  sanitizeDraftForReview,
   validateDraft,
 } from './ads-automation.util';
 import { applyAdCopy, audienceLanguage, parseModelJson } from './modelgo-copy';
@@ -63,3 +64,15 @@ assert.ok(repaired.headlines.length >= 3);
 assert.ok(repaired.callouts.length >= 1);
 assert.strictEqual(repaired.structuredSnippets.length, 2);
 assert.strictEqual(repaired.structuredSnippets[0].header, 'Types');
+
+const dirty = {
+  ...base,
+  callouts: ['Official Site', 'Save $20 Today', 'Free Shipping', 'Shop Online'],
+  headlines: ['Buy now 50% off', 'Panini Store', 'Magazines'],
+  promotion: 'Use code $X',
+};
+const cleaned = sanitizeDraftForReview(dirty, base);
+assert.ok(!cleaned.callouts.some((text) => /\$|%|free shipping/i.test(text)));
+assert.ok(!cleaned.headlines.some((text) => /%|\$/i.test(text)));
+assert.strictEqual(cleaned.promotion, '');
+assert.deepStrictEqual(validateDraft(cleaned), []);

@@ -432,6 +432,17 @@ export default function AdJobReviewPage() {
         <Alert type="error" showIcon message="生成失败" description={job.errorMessage || '请返回商家页重新领取'} />
       ) : null}
 
+      {editable && job.errorMessage ? (
+        <Alert
+          type="warning"
+          showIcon
+          closable
+          message="部分文案已自动替换，请核对"
+          description={job.errorMessage}
+          onClose={() => setJob({ ...job, errorMessage: null })}
+        />
+      ) : null}
+
       {job.status === 'COMPLETED' ? (
         <Alert
           type="success"

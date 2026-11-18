@@ -107,16 +107,48 @@ export interface AdSitelink {
   verified: boolean;
 }
 
+/** ISO 国家码 → Google Ads geoTargetConstants 数字 ID。 */
 const GEO_BY_COUNTRY: Record<string, string> = {
   US: '2840',
   GB: '2826',
+  UK: '2826',
+  CA: '2124',
+  AU: '2036',
+  NZ: '2554',
   DE: '2276',
   FR: '2250',
   ES: '2724',
+  IT: '2380',
+  NL: '2528',
+  IE: '2372',
+  BE: '2056',
+  AT: '2040',
+  CH: '2756',
+  PT: '2620',
+  PL: '2616',
+  SE: '2752',
   MX: '2484',
+  BR: '2076',
+  AR: '2032',
+  CL: '2152',
+  CO: '2170',
+  PE: '2604',
+  JP: '2392',
+  KR: '2410',
+  SG: '2702',
+  HK: '2344',
+  TW: '2158',
+  CN: '2156',
+  IN: '2356',
+  ID: '2360',
+  MY: '2458',
+  TH: '2764',
+  PH: '2608',
   VN: '2704',
-  AU: '2036',
-  CA: '2124',
+  AE: '2784',
+  SA: '2682',
+  TR: '2792',
+  ZA: '2710',
 };
 
 const LANGUAGE_BY_CODE: Record<string, string> = {
@@ -124,8 +156,13 @@ const LANGUAGE_BY_CODE: Record<string, string> = {
   de: '1001',
   fr: '1002',
   es: '1003',
-  vi: '1040',
+  it: '1004',
+  ja: '1005',
+  pt: '1014',
   zh: '1017',
+  ko: '1012',
+  nl: '1010',
+  vi: '1040',
 };
 
 /**

@@ -14,7 +14,10 @@ assert.strictEqual(audienceLanguage('VN', 'vi'), 'Vietnamese');
 assert.strictEqual(geoTargetForCountry('VN'), '2704');
 assert.strictEqual(geoTargetForCountry('MX'), '2484');
 assert.strictEqual(geoTargetForCountry('ES'), '2724');
+assert.strictEqual(geoTargetForCountry('BR'), '2076');
+assert.strictEqual(geoTargetForCountry('IT'), '2380');
 assert.strictEqual(languageConstant('vi'), '1040');
+assert.strictEqual(languageConstant('pt'), '1014');
 
 const base = buildSampleDraft({
   merchantName: 'Acegolfs',

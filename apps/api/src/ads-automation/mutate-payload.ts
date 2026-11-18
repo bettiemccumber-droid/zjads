@@ -1,4 +1,9 @@
-import { AdDraft, languageConstant, usdToMicros } from './ads-automation.util';
+import {
+  AdDraft,
+  languageConstant,
+  normalizeStructuredSnippetHeader,
+  usdToMicros,
+} from './ads-automation.util';
 
 /**
  * 组装将来要发给 Google Ads API v26 的原子创建请求。
@@ -151,14 +156,17 @@ export function buildCreateCampaignPayload(input: {
   });
 
   (input.draft.structuredSnippets ?? []).forEach((snippet, index) => {
+    const header = normalizeStructuredSnippetHeader(snippet.header);
+    const values = (snippet.values ?? []).map((item) => item.trim()).filter(Boolean).slice(0, 10);
+    if (!header || values.length < 3) return;
     const asset = `customers/${customerId}/assets/-${60 + index}`;
     operations.push({
       assetOperation: {
         create: {
           resourceName: asset,
           structuredSnippetAsset: {
-            header: snippet.header,
-            values: snippet.values,
+            header,
+            values,
           },
         },
       },

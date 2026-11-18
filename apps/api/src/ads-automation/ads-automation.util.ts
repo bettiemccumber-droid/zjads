@@ -14,22 +14,57 @@ export const AD_COPY_LIMITS = {
   structuredValuesMin: 4,
 } as const;
 
-/** Google 结构化摘要可选类别（API header 枚举名）。 */
+/**
+ * Google 结构化摘要 header。mutate 必须用英文原文，不能用 TYPES 这类枚举名。
+ * @see https://developers.google.com/google-ads/api/reference/data/structured-snippet-headers
+ */
 export const STRUCTURED_SNIPPET_HEADERS = [
-  'AMENITIES',
-  'BRANDS',
-  'COURSES',
-  'DEGREE_PROGRAMS',
-  'DESTINATIONS',
-  'FEATURED_HOTELS',
-  'INSURANCE_COVERAGE',
-  'MODELS',
-  'NEIGHBORHOODS',
-  'SERVICES',
-  'SHOWS',
-  'STYLES',
-  'TYPES',
+  'Amenities',
+  'Brands',
+  'Courses',
+  'Degree programs',
+  'Destinations',
+  'Featured hotels',
+  'Insurance coverage',
+  'Models',
+  'Neighborhoods',
+  'Service catalog',
+  'Shows',
+  'Styles',
+  'Types',
 ] as const;
+
+/** 旧草稿 / 模型偶发返回的枚举名 → 官方英文 header。 */
+const STRUCTURED_SNIPPET_HEADER_ALIASES: Record<string, (typeof STRUCTURED_SNIPPET_HEADERS)[number]> = {
+  AMENITIES: 'Amenities',
+  BRANDS: 'Brands',
+  COURSES: 'Courses',
+  DEGREE_PROGRAMS: 'Degree programs',
+  DESTINATIONS: 'Destinations',
+  FEATURED_HOTELS: 'Featured hotels',
+  INSURANCE_COVERAGE: 'Insurance coverage',
+  MODELS: 'Models',
+  NEIGHBORHOODS: 'Neighborhoods',
+  SERVICES: 'Service catalog',
+  SERVICE_CATALOG: 'Service catalog',
+  SHOWS: 'Shows',
+  STYLES: 'Styles',
+  TYPES: 'Types',
+};
+
+/**
+ * 把结构化摘要 header 归一成 Google 接受的英文原文；无法识别则返回空。
+ */
+export function normalizeStructuredSnippetHeader(raw: string): string {
+  const text = raw.trim();
+  if (!text) return '';
+  const exact = STRUCTURED_SNIPPET_HEADERS.find((item) => item === text);
+  if (exact) return exact;
+  const caseFold = STRUCTURED_SNIPPET_HEADERS.find((item) => item.toLowerCase() === text.toLowerCase());
+  if (caseFold) return caseFold;
+  const alias = STRUCTURED_SNIPPET_HEADER_ALIASES[text.toUpperCase().replace(/\s+/g, '_')];
+  return alias ?? '';
+}
 
 /** 广告草稿。最终到达网址是商家网址，不是文章 URL。 */
 export interface AdDraft {
@@ -319,8 +354,8 @@ export function buildSampleDraft(input: {
       'Order Online',
     ].map((text) => text.slice(0, AD_COPY_LIMITS.callout)),
     structuredSnippets: [
-      { header: 'TYPES', values: ['Apparel', 'Accessories', 'Footwear', 'Essentials'] },
-      { header: 'STYLES', values: ['Casual', 'Classic', 'Modern', 'Everyday'] },
+      { header: 'Types', values: ['Apparel', 'Accessories', 'Footwear', 'Essentials'] },
+      { header: 'Styles', values: ['Casual', 'Classic', 'Modern', 'Everyday'] },
     ],
     promotion: '',
     merchantUrl: input.merchantUrl,
@@ -406,7 +441,7 @@ export function validateDraft(draft: AdDraft): string[] {
     errors.push(`结构化摘要需要正好 ${limits.structuredCategories} 类`);
   }
   snippets.forEach((snippet, index) => {
-    if (!STRUCTURED_SNIPPET_HEADERS.includes(snippet.header as (typeof STRUCTURED_SNIPPET_HEADERS)[number])) {
+    if (!normalizeStructuredSnippetHeader(snippet.header)) {
       errors.push(`结构化摘要 ${index + 1} 类别不在允许列表中`);
     }
     if (snippet.values.length < limits.structuredValuesMin) {

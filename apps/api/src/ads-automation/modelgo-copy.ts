@@ -5,6 +5,7 @@ import {
   STRUCTURED_SNIPPET_HEADERS,
   assignUniqueSitelinkUrls,
   buildSampleDraft,
+  normalizeStructuredSnippetHeader,
   SampleArticle,
   stripKeywordDecorations,
   validateDraft,
@@ -94,7 +95,7 @@ Content rules:
 - Strong purchase verbs; low repetition; language must match the audience.
 - Forbidden: free trial/gift wording, specific prices or %, placeholders like $X or [link], Google risk words (gun/firearm/tactical/combat/military/prescription/Rx/wine/vodka/etc), medical cure claims.
 - Callouts must NOT mention free shipping, discounts, coupons, returns, or sale numbers. Put real promos only in "promotion".
-- structuredSnippets: pick exactly 2 headers from [${headers}] that best fit this merchant (e.g. travel platform: TYPES + DESTINATIONS; multi-brand: TYPES + BRANDS; own-brand: TYPES + STYLES, avoid BRANDS). Each needs at least ${AD_COPY_LIMITS.structuredValuesMin} short values.
+- structuredSnippets: pick exactly 2 headers from [${headers}] that best fit this merchant (e.g. travel: Types + Destinations; multi-brand: Types + Brands; own-brand: Types + Styles, avoid Brands). Use these exact English strings. Each needs at least ${AD_COPY_LIMITS.structuredValuesMin} short values.
 - Always include useful negativeKeywords (careers, login, free pdf, etc.).
 - Ad final URL (RSA) stays ${merchantUrl}. No URLs inside headline/description/callout text.
 - Each sitelink MUST include its own finalUrl. finalUrl values must be distinct https pages on the same merchant host, not all ${merchantUrl}. Prefer real subpages (quote, locations, services, how-it-works). Absolute paths or full URLs are both ok.
@@ -344,15 +345,14 @@ function sitelinkList(value: unknown): AdDraft['sitelinks'] {
 }
 
 function structuredSnippetList(value: unknown, fallback: AdStructuredSnippet[]): AdStructuredSnippet[] {
-  const allowed = new Set<string>(STRUCTURED_SNIPPET_HEADERS);
   const fromModel = Array.isArray(value)
     ? value
         .map((item) => {
           if (!item || typeof item !== 'object') return null;
           const headerRaw = typeof (item as { header?: unknown }).header === 'string'
-            ? (item as { header: string }).header.trim().toUpperCase().replace(/\s+/g, '_')
+            ? (item as { header: string }).header
             : '';
-          const header = allowed.has(headerRaw) ? headerRaw : '';
+          const header = normalizeStructuredSnippetHeader(headerRaw);
           const values = uniqueNonEmpty(
             textList((item as { values?: unknown }).values).map((text) => fitAdText(text, AD_COPY_LIMITS.structuredValue)),
           );
@@ -361,13 +361,17 @@ function structuredSnippetList(value: unknown, fallback: AdStructuredSnippet[]):
         })
         .filter((item): item is AdStructuredSnippet => item != null)
     : [];
-  const merged = [...fromModel, ...fallback];
+  const merged = [...fromModel, ...fallback.map((row) => ({
+    ...row,
+    header: normalizeStructuredSnippetHeader(row.header) || row.header,
+  }))];
   const seen = new Set<string>();
   const rows: AdStructuredSnippet[] = [];
   for (const row of merged) {
-    if (seen.has(row.header)) continue;
-    seen.add(row.header);
-    rows.push(row);
+    const header = normalizeStructuredSnippetHeader(row.header);
+    if (!header || seen.has(header)) continue;
+    seen.add(header);
+    rows.push({ ...row, header });
     if (rows.length >= AD_COPY_LIMITS.structuredCategories) break;
   }
   return rows;

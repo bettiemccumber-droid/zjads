@@ -66,7 +66,7 @@ export function googleAdsAppReady(config = googleAdsAppConfig()): boolean {
 }
 
 /**
- * 从 Google Ads 错误体里取出可展示的原因。
+ * 从 Google Ads 错误体里取出可展示的原因（尽量带上字段路径）。
  */
 export function googleAdsErrorMessage(data: unknown, fallback: string): string {
   const error = asRecord(data).error;
@@ -77,12 +77,31 @@ export function googleAdsErrorMessage(data: unknown, fallback: string): string {
       const errors = asRecord(detail).errors;
       if (!Array.isArray(errors)) continue;
       for (const item of errors) {
-        const message = asRecord(item).message;
-        if (typeof message === 'string' && message.trim()) messages.push(message.trim());
+        const row = asRecord(item);
+        const message = typeof row.message === 'string' ? row.message.trim() : '';
+        const location = asRecord(row.location);
+        const paths = Array.isArray(location.fieldPathElements)
+          ? location.fieldPathElements
+              .map((part) => {
+                const field = asRecord(part);
+                const name = typeof field.fieldName === 'string' ? field.fieldName : '';
+                const index = field.index;
+                return typeof index === 'number' ? `${name}[${index}]` : name;
+              })
+              .filter(Boolean)
+              .join('.')
+          : '';
+        const code = asRecord(row.errorCode);
+        const codeText = Object.entries(code)
+          .filter(([, value]) => value != null && value !== '')
+          .map(([key, value]) => `${key}:${String(value)}`)
+          .join(',');
+        const parts = [message, paths ? `@${paths}` : '', codeText ? `(${codeText})` : ''].filter(Boolean);
+        if (parts.length) messages.push(parts.join(' '));
       }
     }
   }
-  if (messages.length) return messages.join('；');
+  if (messages.length) return [...new Set(messages)].join('；');
   const top = asRecord(error).message;
   if (typeof top === 'string' && top.trim()) return top.trim();
   return fallback;

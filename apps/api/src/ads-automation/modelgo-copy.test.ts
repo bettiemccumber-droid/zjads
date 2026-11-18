@@ -51,3 +51,4 @@ assert.ok(repaired.descriptions.length >= 2);
 assert.ok(repaired.headlines.length >= 3);
 assert.ok(repaired.callouts.length >= 1);
 assert.strictEqual(repaired.structuredSnippets.length, 2);
+assert.strictEqual(repaired.structuredSnippets[0].header, 'Types');

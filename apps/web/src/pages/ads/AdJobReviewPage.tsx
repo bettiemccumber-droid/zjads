@@ -117,9 +117,9 @@ const MATCH_OPTIONS = [
 ];
 
 const SNIPPET_HEADERS = [
-  'AMENITIES', 'BRANDS', 'COURSES', 'DEGREE_PROGRAMS', 'DESTINATIONS',
-  'FEATURED_HOTELS', 'INSURANCE_COVERAGE', 'MODELS', 'NEIGHBORHOODS',
-  'SERVICES', 'SHOWS', 'STYLES', 'TYPES',
+  'Amenities', 'Brands', 'Courses', 'Degree programs', 'Destinations',
+  'Featured hotels', 'Insurance coverage', 'Models', 'Neighborhoods',
+  'Service catalog', 'Shows', 'Styles', 'Types',
 ];
 
 const HEADLINE_MAX = 30;
@@ -776,14 +776,14 @@ export default function AdJobReviewPage() {
                 </Form.Item>
                 <Form.Item label="结构化摘要">
                   <Space direction="vertical" style={{ width: '100%' }} size={8}>
-                    {(draft.structuredSnippets.length ? draft.structuredSnippets : [{ header: 'TYPES', values: [] }]).map((snippet, index) => (
+                    {(draft.structuredSnippets.length ? draft.structuredSnippets : [{ header: 'Types', values: [] }]).map((snippet, index) => (
                       <Card key={`s-${index}`} size="small" type="inner">
                         <Select
                           style={{ width: '100%', marginBottom: 8 }}
                           value={snippet.header}
                           options={SNIPPET_HEADERS.map((header) => ({ value: header, label: header }))}
                           onChange={(header) => {
-                            const structuredSnippets = [...(draft.structuredSnippets.length ? draft.structuredSnippets : [{ header: 'TYPES', values: [] }])];
+                            const structuredSnippets = [...(draft.structuredSnippets.length ? draft.structuredSnippets : [{ header: 'Types', values: [] }])];
                             structuredSnippets[index] = { ...structuredSnippets[index], header };
                             setDraft({ ...draft, structuredSnippets });
                           }}
@@ -798,7 +798,7 @@ export default function AdJobReviewPage() {
                               .map((item) => item.trim())
                               .filter(Boolean)
                               .slice(0, 10);
-                            const structuredSnippets = [...(draft.structuredSnippets.length ? draft.structuredSnippets : [{ header: 'TYPES', values: [] }])];
+                            const structuredSnippets = [...(draft.structuredSnippets.length ? draft.structuredSnippets : [{ header: 'Types', values: [] }])];
                             structuredSnippets[index] = { ...structuredSnippets[index], values };
                             setDraft({ ...draft, structuredSnippets });
                           }}

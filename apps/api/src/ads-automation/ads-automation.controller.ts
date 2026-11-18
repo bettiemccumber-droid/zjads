@@ -470,6 +470,15 @@ export class AdsAutomationController {
     return ok(await this.ads.createConnection(user.id, body));
   }
 
+  @Delete('google-ads/connections/:mccCustomerId')
+  async deleteConnection(
+    @CurrentUser() user: AuthUser,
+    @Param('mccCustomerId') mccCustomerId: string,
+  ) {
+    this.assertWriter(user);
+    return ok(await this.ads.deleteConnection(user.id, mccCustomerId), '已删除 MCC 连接');
+  }
+
   @Post('google-ads/sync')
   async syncGoogleAds(@CurrentUser() user: AuthUser) {
     this.assertWriter(user);

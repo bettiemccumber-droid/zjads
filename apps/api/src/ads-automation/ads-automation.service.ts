@@ -977,6 +977,19 @@ export class AdsAutomationService implements OnModuleInit {
   }
 
   /**
+   * 删除一条 MCC 连接及其同步下来的子账号（例如测错的 s23）。
+   */
+  async deleteConnection(ownerUserId: number, mccCustomerId: string) {
+    const mcc = normalizeMccKey(mccCustomerId);
+    const existing = await this.prisma.googleAdsConnection.findUnique({
+      where: { ownerUserId_mccCustomerId: { ownerUserId, mccCustomerId: mcc } },
+    });
+    if (!existing) throw new NotFoundException('MCC 连接不存在');
+    await this.prisma.googleAdsConnection.delete({ where: { id: existing.id } });
+    return { mccCustomerId: mcc };
+  }
+
+  /**
    * 告诉页面 Google Ads 应用配置缺哪几项，不返回令牌原文。
    */
   async googleAdsSetup(ownerUserId: number) {

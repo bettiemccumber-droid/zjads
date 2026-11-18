@@ -188,6 +188,42 @@ export default function AccountStatusPage() {
           </Row>
           <Button type="primary" htmlType="submit" loading={saving} disabled={setup != null && !setup.appReady}>保存并同步</Button>
         </Form>
+        {!!setup?.connections?.length && (
+          <div style={{ marginTop: 16 }}>
+            <Typography.Text type="secondary">已保存的 MCC 连接（测错的可删除，例如 s23）</Typography.Text>
+            <Space wrap style={{ marginTop: 8 }}>
+              {setup.connections.map((item) => (
+                <Tag
+                  key={item.id}
+                  closable
+                  onClose={(event) => {
+                    event.preventDefault();
+                    void (async () => {
+                      try {
+                        const removed = await api.delete<ApiResult<unknown>>(
+                          `/google-ads/connections/${encodeURIComponent(item.mccCustomerId)}`,
+                        );
+                        if (!removed.data.success) {
+                          message.error(removed.data.message || '删除失败');
+                          return;
+                        }
+                        message.success(`已删除 ${item.mccCustomerId}`);
+                        await load();
+                      } catch (err) {
+                        const apiMessage = (err as { response?: { data?: { message?: string | string[] } } }).response?.data?.message;
+                        message.error(Array.isArray(apiMessage) ? apiMessage.join('；') : apiMessage || '删除失败');
+                      }
+                    })();
+                  }}
+                >
+                  {item.mccCustomerId}
+                  {item.loginCustomerId ? ` / ${item.loginCustomerId}` : ''}
+                  {` · ${item.customerCount} 个子账号`}
+                </Tag>
+              ))}
+            </Space>
+          </div>
+        )}
       </Card>
       <Row gutter={16} style={{ marginBottom: 16 }}>
         <Col span={6}><Card><Statistic title="账户点数" value={board.summary.total} /></Card></Col>

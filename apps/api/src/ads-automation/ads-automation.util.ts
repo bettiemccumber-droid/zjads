@@ -1,3 +1,36 @@
+/** RSA / 附加信息字数上限（空格标点均计 1）。描述按内部规范 70，严于 Google 90。 */
+export const AD_COPY_LIMITS = {
+  headline: 30,
+  description: 70,
+  callout: 25,
+  sitelinkText: 20,
+  sitelinkDescription: 25,
+  structuredValue: 20,
+  headlineCount: { min: 3, max: 15, prefer: 15 },
+  descriptionCount: { min: 2, max: 4, prefer: 4 },
+  calloutCount: { min: 0, max: 8, prefer: 8 },
+  sitelinkCount: { min: 0, max: 8, prefer: 6 },
+  structuredCategories: 2,
+  structuredValuesMin: 4,
+} as const;
+
+/** Google 结构化摘要可选类别（API header 枚举名）。 */
+export const STRUCTURED_SNIPPET_HEADERS = [
+  'AMENITIES',
+  'BRANDS',
+  'COURSES',
+  'DEGREE_PROGRAMS',
+  'DESTINATIONS',
+  'FEATURED_HOTELS',
+  'INSURANCE_COVERAGE',
+  'MODELS',
+  'NEIGHBORHOODS',
+  'SERVICES',
+  'SHOWS',
+  'STYLES',
+  'TYPES',
+] as const;
+
 /** 广告草稿。最终到达网址是商家网址，不是文章 URL。 */
 export interface AdDraft {
   headlines: string[];
@@ -6,6 +39,9 @@ export interface AdDraft {
   negativeKeywords: AdKeyword[];
   sitelinks: AdSitelink[];
   callouts: string[];
+  structuredSnippets: AdStructuredSnippet[];
+  /** 促销只写这里，不要写进宣传信息。 */
+  promotion: string;
   merchantUrl: string;
   finalUrlSuffix: string;
   bidding: 'MAXIMIZE_CLICKS' | 'MANUAL_CPC';
@@ -13,6 +49,12 @@ export interface AdDraft {
   cpcBidCeilingUsd: string;
   languageCode: string;
   geoTargetId: string;
+}
+
+/** 结构化摘要：从 13 类里按商家特点选 2 类。 */
+export interface AdStructuredSnippet {
+  header: string;
+  values: string[];
 }
 
 /** 关键词。匹配类型单独存放，文本里不带引号或方括号。 */
@@ -163,32 +205,95 @@ export function buildSampleDraft(input: {
 }): AdDraft {
   const brand = stripKeywordDecorations(input.merchantName).slice(0, 30) || 'Brand';
   const headlines = [
-    `${brand} Official`.slice(0, 30),
-    `Shop ${brand}`.slice(0, 30),
-    `${brand} New Arrivals`.slice(0, 30),
-  ];
+    `${brand} Official`,
+    `Shop ${brand}`,
+    `${brand} New Arrivals`,
+    `Explore ${brand}`,
+    `${brand} Collection`,
+    `Visit ${brand}`,
+    `${brand} Online`,
+    `Discover ${brand}`,
+    `${brand} Store`,
+    `Browse ${brand}`,
+    `${brand} Picks`,
+    `Get ${brand}`,
+    `${brand} Today`,
+    `Find ${brand}`,
+    `${brand} Home`,
+  ].map((text) => text.slice(0, AD_COPY_LIMITS.headline));
   const descriptions = [
-    `Browse ${brand} styles and current offers.`.slice(0, 90),
-    `See what is new at ${brand} today.`.slice(0, 90),
+    `Browse ${brand} styles and shop what fits you.`.slice(0, AD_COPY_LIMITS.description),
+    `See new arrivals from ${brand} and start shopping.`.slice(0, AD_COPY_LIMITS.description),
+    `Find everyday essentials and seasonal picks at ${brand}.`.slice(0, AD_COPY_LIMITS.description),
+    `Explore ${brand} online and choose with confidence.`.slice(0, AD_COPY_LIMITS.description),
   ];
   return {
     headlines,
     descriptions,
     keywords: [{ text: brand.toLowerCase().slice(0, 80), matchType: 'PHRASE' }],
-    negativeKeywords: ['careers', 'jobs', 'login', 'wiki'].map((text) => ({
+    negativeKeywords: ['careers', 'jobs', 'login', 'wiki', 'free', 'pdf', 'manual'].map((text) => ({
       text,
       matchType: 'BROAD' as const,
     })),
     sitelinks: [
       {
-        linkText: 'Shop now'.slice(0, 25),
-        description1: 'Current styles'.slice(0, 35),
-        description2: 'View the latest'.slice(0, 35),
+        linkText: 'Shop now'.slice(0, AD_COPY_LIMITS.sitelinkText),
+        description1: 'Current styles'.slice(0, AD_COPY_LIMITS.sitelinkDescription),
+        description2: 'View the latest'.slice(0, AD_COPY_LIMITS.sitelinkDescription),
+        finalUrl: input.merchantUrl,
+        verified: true,
+      },
+      {
+        linkText: 'New arrivals'.slice(0, AD_COPY_LIMITS.sitelinkText),
+        description1: 'Fresh picks'.slice(0, AD_COPY_LIMITS.sitelinkDescription),
+        description2: 'See what is new'.slice(0, AD_COPY_LIMITS.sitelinkDescription),
+        finalUrl: input.merchantUrl,
+        verified: true,
+      },
+      {
+        linkText: 'Best sellers'.slice(0, AD_COPY_LIMITS.sitelinkText),
+        description1: 'Popular items'.slice(0, AD_COPY_LIMITS.sitelinkDescription),
+        description2: 'Shop top choices'.slice(0, AD_COPY_LIMITS.sitelinkDescription),
+        finalUrl: input.merchantUrl,
+        verified: true,
+      },
+      {
+        linkText: 'Collections'.slice(0, AD_COPY_LIMITS.sitelinkText),
+        description1: 'Browse categories'.slice(0, AD_COPY_LIMITS.sitelinkDescription),
+        description2: 'Find your style'.slice(0, AD_COPY_LIMITS.sitelinkDescription),
+        finalUrl: input.merchantUrl,
+        verified: true,
+      },
+      {
+        linkText: 'About brand'.slice(0, AD_COPY_LIMITS.sitelinkText),
+        description1: 'Learn more'.slice(0, AD_COPY_LIMITS.sitelinkDescription),
+        description2: 'Brand story'.slice(0, AD_COPY_LIMITS.sitelinkDescription),
+        finalUrl: input.merchantUrl,
+        verified: true,
+      },
+      {
+        linkText: 'Start shopping'.slice(0, AD_COPY_LIMITS.sitelinkText),
+        description1: 'Ready to buy'.slice(0, AD_COPY_LIMITS.sitelinkDescription),
+        description2: 'Checkout online'.slice(0, AD_COPY_LIMITS.sitelinkDescription),
         finalUrl: input.merchantUrl,
         verified: true,
       },
     ],
-    callouts: [],
+    callouts: [
+      'Official Site',
+      'Shop Online',
+      'Wide Selection',
+      'Trusted Brand',
+      'Easy Browsing',
+      'Secure Checkout',
+      'New Arrivals',
+      'Order Online',
+    ].map((text) => text.slice(0, AD_COPY_LIMITS.callout)),
+    structuredSnippets: [
+      { header: 'TYPES', values: ['Apparel', 'Accessories', 'Footwear', 'Essentials'] },
+      { header: 'STYLES', values: ['Casual', 'Classic', 'Modern', 'Everyday'] },
+    ],
+    promotion: '',
     merchantUrl: input.merchantUrl,
     finalUrlSuffix: '',
     bidding: input.bidding === 'MANUAL_CPC' ? 'MANUAL_CPC' : 'MAXIMIZE_CLICKS',
@@ -200,40 +305,82 @@ export function buildSampleDraft(input: {
 }
 
 /**
- * 确认发布前的字数和结构校验。返回中文错误列表，空数组表示可以通过。
+ * 确认发布前的字数、结构和政策词校验。返回中文错误列表，空数组表示可以通过。
  */
 export function validateDraft(draft: AdDraft): string[] {
   const errors: string[] = [];
-  if (draft.headlines.length < 3 || draft.headlines.length > 15) {
-    errors.push('标题需要 3 到 15 条');
+  const limits = AD_COPY_LIMITS;
+  if (draft.headlines.length < limits.headlineCount.min || draft.headlines.length > limits.headlineCount.max) {
+    errors.push(`标题需要 ${limits.headlineCount.min} 到 ${limits.headlineCount.max} 条`);
   }
+  const headlineSet = new Set<string>();
   draft.headlines.forEach((text, index) => {
-    if (text.trim().length === 0 || text.length > 30) errors.push(`标题 ${index + 1} 需在 1 到 30 个字符`);
+    if (text.trim().length === 0 || text.length > limits.headline) {
+      errors.push(`标题 ${index + 1} 需在 1 到 ${limits.headline} 个字符`);
+    }
+    const key = text.trim().toLowerCase();
+    if (headlineSet.has(key)) errors.push(`标题 ${index + 1} 与其它标题重复`);
+    headlineSet.add(key);
+    errors.push(...policyHits(text, `标题 ${index + 1}`));
   });
-  if (draft.descriptions.length < 2 || draft.descriptions.length > 4) {
-    errors.push('描述需要 2 到 4 条');
+  if (draft.descriptions.length < limits.descriptionCount.min || draft.descriptions.length > limits.descriptionCount.max) {
+    errors.push(`描述需要 ${limits.descriptionCount.min} 到 ${limits.descriptionCount.max} 条`);
   }
   draft.descriptions.forEach((text, index) => {
-    if (text.trim().length === 0 || text.length > 90) errors.push(`描述 ${index + 1} 需在 1 到 90 个字符`);
+    if (text.trim().length === 0 || text.length > limits.description) {
+      errors.push(`描述 ${index + 1} 需在 1 到 ${limits.description} 个字符`);
+    }
+    errors.push(...policyHits(text, `描述 ${index + 1}`));
   });
   if (draft.keywords.length === 0) errors.push('至少需要一个关键词');
   draft.keywords.forEach((keyword) => {
     if (!keyword.text.trim()) errors.push('关键词不能为空');
   });
+  if (!draft.negativeKeywords.length) errors.push('至少需要一条否定关键词');
   draft.sitelinks.forEach((link, index) => {
     if (!link.verified) errors.push(`站内链接 ${index + 1} 尚未验证`);
-    if (link.linkText.length > 25) errors.push(`站内链接 ${index + 1} 文案超过 25 个字符`);
+    if (link.linkText.length > limits.sitelinkText) {
+      errors.push(`站内链接 ${index + 1} 文案超过 ${limits.sitelinkText} 个字符`);
+    }
     const hasDescription = Boolean(link.description1 || link.description2);
     if (hasDescription && (!link.description1 || !link.description2)) {
       errors.push(`站内链接 ${index + 1} 的两条描述需要同时填写`);
     }
-    if (link.description1.length > 35 || link.description2.length > 35) {
-      errors.push(`站内链接 ${index + 1} 描述超过 35 个字符`);
+    if (link.description1.length > limits.sitelinkDescription || link.description2.length > limits.sitelinkDescription) {
+      errors.push(`站内链接 ${index + 1} 说明行超过 ${limits.sitelinkDescription} 个字符`);
+    }
+    errors.push(...policyHits(`${link.linkText} ${link.description1} ${link.description2}`, `站内链接 ${index + 1}`));
+  });
+  if (draft.callouts.length > limits.calloutCount.max) {
+    errors.push(`宣传信息最多 ${limits.calloutCount.max} 条`);
+  }
+  draft.callouts.forEach((text, index) => {
+    if (text.length > limits.callout) errors.push(`宣传信息 ${index + 1} 超过 ${limits.callout} 个字符`);
+    errors.push(...policyHits(text, `宣传信息 ${index + 1}`));
+    if (calloutHasPromoLeak(text)) {
+      errors.push(`宣传信息 ${index + 1} 不要写免运费、满减、折扣等促销语，促销请放促销栏`);
     }
   });
-  draft.callouts.forEach((text, index) => {
-    if (text.length > 25) errors.push(`宣传信息 ${index + 1} 超过 25 个字符`);
+  const snippets = draft.structuredSnippets ?? [];
+  if (snippets.length && snippets.length !== limits.structuredCategories) {
+    errors.push(`结构化摘要需要正好 ${limits.structuredCategories} 类`);
+  }
+  snippets.forEach((snippet, index) => {
+    if (!STRUCTURED_SNIPPET_HEADERS.includes(snippet.header as (typeof STRUCTURED_SNIPPET_HEADERS)[number])) {
+      errors.push(`结构化摘要 ${index + 1} 类别不在允许列表中`);
+    }
+    if (snippet.values.length < limits.structuredValuesMin) {
+      errors.push(`结构化摘要 ${index + 1} 至少 ${limits.structuredValuesMin} 个值`);
+    }
+    snippet.values.forEach((value, valueIndex) => {
+      if (!value.trim() || value.length > limits.structuredValue) {
+        errors.push(`结构化摘要 ${index + 1} 第 ${valueIndex + 1} 个值需在 1 到 ${limits.structuredValue} 个字符`);
+      }
+    });
   });
+  if (draft.promotion?.trim()) {
+    errors.push(...policyHits(draft.promotion, '促销信息'));
+  }
   if (!/^https?:\/\//i.test(draft.merchantUrl)) errors.push('商家网址需要以 http 或 https 开头');
   if (draft.finalUrlSuffix.startsWith('?') || draft.finalUrlSuffix.startsWith('&')) {
     errors.push('网址后缀不要以 ? 或 & 开头');
@@ -249,6 +396,35 @@ export function validateDraft(draft: AdDraft): string[] {
     errors.push('出价只支持尽可能争取更多点击次数或手动 CPC');
   }
   return errors;
+}
+
+/**
+ * Google Ads / 联盟投放常见拒登与禁忌词。命中则返回中文错误。
+ */
+export function policyHits(text: string, label: string): string[] {
+  const value = text.toLowerCase();
+  const hits: string[] = [];
+  if (/\$\s*\d|\d+\s*%|¥\s*\d|€\s*\d|£\s*\d/.test(text) || /\$x\b|\[\s*链接\s*\]|\[link\]/i.test(text)) {
+    hits.push(`${label} 不要写具体金额、折扣数字或占位符`);
+  }
+  if (/免费体验|免费获取|free\s+(trial|gift|sample|download|shipping)|免运费|满减|退货|discount|coupon|% off/i.test(text)) {
+    hits.push(`${label} 含促销/免费类表述，请调整`);
+  }
+  if (
+    /\b(shooting|gun|firearm|ballistic|tactical|combat|military|bulletproof|prescription|\brx\b|glaze|optician|wine|vodka|tequila|bourbon)\b/i.test(
+      value,
+    )
+  ) {
+    hits.push(`${label} 含 Google Ads 风险词`);
+  }
+  if (/免疫提升|治愈|治疗|减肥|降血糖|\bcure\b|\btreatment\b|\btreat\b|weight\s*loss|blood\s*sugar/i.test(text)) {
+    hits.push(`${label} 含医疗功效承诺`);
+  }
+  return hits;
+}
+
+function calloutHasPromoLeak(text: string): boolean {
+  return /免运费|满减|折扣|退货|free\s+shipping|discount|coupon|% off|sale\b/i.test(text);
 }
 
 export interface SampleArticle {

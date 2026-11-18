@@ -1,4 +1,13 @@
-import { AdDraft, buildSampleDraft, SampleArticle, stripKeywordDecorations, validateDraft } from './ads-automation.util';
+import {
+  AD_COPY_LIMITS,
+  AdDraft,
+  AdStructuredSnippet,
+  STRUCTURED_SNIPPET_HEADERS,
+  buildSampleDraft,
+  SampleArticle,
+  stripKeywordDecorations,
+  validateDraft,
+} from './ads-automation.util';
 import { completeModelGoChat } from './modelgo.client';
 
 /**
@@ -16,6 +25,7 @@ export function audienceLanguage(countryCode: string, languageCode: string): str
   if (language.startsWith('de')) return 'German';
   if (country === 'US') return 'American English';
   if (country === 'GB') return 'British English';
+  if (country === 'AU') return 'Australian English';
   return `the language coded ${language || 'en'} for readers in ${country || 'the target country'}`;
 }
 
@@ -34,31 +44,52 @@ export async function writeAdCopy(input: {
 }): Promise<AdDraft> {
   const base = buildSampleDraft(input);
   const language = audienceLanguage(input.countryCode, input.languageCode);
+  const shape = adCopyJsonShape(input.merchantUrl);
   const raw = await askJson(
-    `Write Google search ads for ${input.merchantName}. Audience language: ${language}. Country: ${input.countryCode}.`,
-    `Return JSON only: {"headlines": string[3 to 8], "descriptions": string[2 to 4], "keywords": string[1 to 8], "negativeKeywords": string[0 to 8], "sitelinks": [{"linkText": string, "description1": string, "description2": string}]}.
-Hard limits (count every character including spaces): each headline max 30, each description max 90, sitelink text max 25, each sitelink description max 35 and both filled or both empty.
-Prefer short lines. If unsure, write shorter. Do not invent prices, discounts, awards, or shipping promises. Final URL stays ${input.merchantUrl}. No URLs inside the copy.`,
-    1400,
+    `Write Google search ads for ${input.merchantName}. Audience language: ${language}. Country: ${input.countryCode}. Use real brand tone; strong click and purchase intent.`,
+    shape,
+    2200,
     input.personaPrompt,
   );
   let draft = applyAdCopy(base, raw);
   let errors = validateDraft(draft);
   if (!errors.length) return draft;
 
-  // 模型偶发超长或条数不够时再要一次，并强调截断限制。
   const retryRaw = await askJson(
     `Write Google search ads for ${input.merchantName}. Audience language: ${language}. Country: ${input.countryCode}.`,
-    `Previous draft failed validation: ${errors[0]}.
-Return JSON only with safe lengths: headlines 3-8 items each <= 30 chars, descriptions exactly 2-4 items each <= 90 chars.
-No prices, discounts, awards, or shipping promises. Final URL stays ${input.merchantUrl}.`,
-    1400,
+    `Previous draft failed validation: ${errors.slice(0, 3).join('; ')}.
+${shape}
+Fix every limit and policy issue. Prefer shorter lines.`,
+    2200,
     input.personaPrompt,
   );
   draft = applyAdCopy(base, retryRaw);
   errors = validateDraft(draft);
   if (errors.length) throw new Error(errors[0]);
   return draft;
+}
+
+function adCopyJsonShape(merchantUrl: string): string {
+  const headers = STRUCTURED_SNIPPET_HEADERS.join(', ');
+  return `Return JSON only:
+{"headlines": string[${AD_COPY_LIMITS.headlineCount.prefer}], "descriptions": string[${AD_COPY_LIMITS.descriptionCount.prefer}], "keywords": string[1 to 8], "negativeKeywords": string[4 to 12], "sitelinks": [{"linkText": string, "description1": string, "description2": string}], "callouts": string[${AD_COPY_LIMITS.calloutCount.prefer}], "structuredSnippets": [{"header": string, "values": string[${AD_COPY_LIMITS.structuredValuesMin}+]}], "promotion": string}
+
+Hard character limits (spaces/punctuation count):
+- headline <= ${AD_COPY_LIMITS.headline}
+- description <= ${AD_COPY_LIMITS.description}
+- callout <= ${AD_COPY_LIMITS.callout}
+- sitelink linkText <= ${AD_COPY_LIMITS.sitelinkText}
+- each sitelink description <= ${AD_COPY_LIMITS.sitelinkDescription}, both filled
+- each structured snippet value <= ${AD_COPY_LIMITS.structuredValue}
+
+Content rules:
+- Exactly ${AD_COPY_LIMITS.headlineCount.prefer} unique headlines, ${AD_COPY_LIMITS.descriptionCount.prefer} descriptions, ${AD_COPY_LIMITS.calloutCount.prefer} callouts, at least ${AD_COPY_LIMITS.sitelinkCount.prefer} sitelinks.
+- Strong purchase verbs; low repetition; language must match the audience.
+- Forbidden: free trial/gift wording, specific prices or %, placeholders like $X or [link], Google risk words (gun/firearm/tactical/combat/military/prescription/Rx/wine/vodka/etc), medical cure claims.
+- Callouts must NOT mention free shipping, discounts, coupons, returns, or sale numbers. Put real promos only in "promotion".
+- structuredSnippets: pick exactly 2 headers from [${headers}] that best fit this merchant (e.g. travel platform: TYPES + DESTINATIONS; multi-brand: TYPES + BRANDS; own-brand: TYPES + STYLES, avoid BRANDS). Each needs at least ${AD_COPY_LIMITS.structuredValuesMin} short values.
+- Always include useful negativeKeywords (careers, login, free pdf, etc.).
+- Final URL stays ${merchantUrl}. No URLs inside copy text.`;
 }
 
 /**
@@ -111,17 +142,18 @@ export function parseModelJson(text: string): Record<string, unknown> {
 }
 
 /**
- * 把模型文案套进草稿。超长的标题/描述截断到上限，条数不够时用示例草稿补齐。
+ * 把模型文案套进草稿。超长截断到规范上限，条数不够时用示例草稿补齐。
  */
 export function applyAdCopy(base: AdDraft, raw: Record<string, unknown>): AdDraft {
+  const limits = AD_COPY_LIMITS;
   const headlines = uniqueNonEmpty([
-    ...textList(raw.headlines).map((text) => fitAdText(text, 30)),
+    ...textList(raw.headlines).map((text) => fitAdText(text, limits.headline)),
     ...base.headlines,
-  ]).slice(0, 15);
+  ]).slice(0, limits.headlineCount.max);
   const descriptions = uniqueNonEmpty([
-    ...textList(raw.descriptions).map((text) => fitAdText(text, 90)),
+    ...textList(raw.descriptions).map((text) => fitAdText(text, limits.description)),
     ...base.descriptions,
-  ]).slice(0, 4);
+  ]).slice(0, limits.descriptionCount.max);
   const keywords = textList(raw.keywords)
     .map((text) => stripKeywordDecorations(text).slice(0, 80))
     .filter(Boolean)
@@ -130,18 +162,34 @@ export function applyAdCopy(base: AdDraft, raw: Record<string, unknown>): AdDraf
   const negativeKeywords = textList(raw.negativeKeywords)
     .map((text) => stripKeywordDecorations(text).slice(0, 80))
     .filter(Boolean)
-    .slice(0, 8)
+    .slice(0, 12)
     .map((text) => ({ text, matchType: 'BROAD' as const }));
-  const sitelinks = sitelinkList(raw.sitelinks, base.merchantUrl);
-  if (headlines.length < 3) throw new Error('模型标题不足 3 条，补齐后仍不够');
-  if (descriptions.length < 2) throw new Error('模型描述不足 2 条，补齐后仍不够');
+  const callouts = uniqueNonEmpty([
+    ...textList(raw.callouts).map((text) => fitAdText(text, limits.callout)),
+    ...base.callouts,
+  ]).slice(0, limits.calloutCount.max);
+  const sitelinks = [
+    ...sitelinkList(raw.sitelinks, base.merchantUrl),
+    ...base.sitelinks,
+  ].slice(0, limits.sitelinkCount.max);
+  const structuredSnippets = structuredSnippetList(raw.structuredSnippets, base.structuredSnippets);
+  const promotion = typeof raw.promotion === 'string' ? raw.promotion.trim().slice(0, 120) : base.promotion;
+
+  if (headlines.length < limits.headlineCount.min) throw new Error('模型标题不足，补齐后仍不够');
+  if (descriptions.length < limits.descriptionCount.min) throw new Error('模型描述不足，补齐后仍不够');
+
   return {
     ...base,
     headlines,
     descriptions,
     keywords: keywords.length ? keywords : base.keywords,
     negativeKeywords: negativeKeywords.length ? negativeKeywords : base.negativeKeywords,
-    sitelinks: sitelinks.length ? sitelinks : [{ ...base.sitelinks[0], linkText: headlines[0].slice(0, 25), description1: '', description2: '' }],
+    callouts: callouts.length ? callouts : base.callouts,
+    sitelinks: sitelinks.length
+      ? sitelinks
+      : [{ ...base.sitelinks[0], linkText: fitAdText(headlines[0], limits.sitelinkText), description1: '', description2: '' }],
+    structuredSnippets: structuredSnippets.length ? structuredSnippets : base.structuredSnippets,
+    promotion,
   };
 }
 
@@ -162,8 +210,8 @@ function uniqueNonEmpty(values: string[]): string[] {
   const rows: string[] = [];
   for (const value of values) {
     const text = value.trim();
-    if (!text || seen.has(text)) continue;
-    seen.add(text);
+    if (!text || seen.has(text.toLowerCase())) continue;
+    seen.add(text.toLowerCase());
     rows.push(text);
   }
   return rows;
@@ -210,7 +258,8 @@ async function askJson(
   personaPrompt = '',
 ): Promise<Record<string, unknown>> {
   const system = [
-    'You write affiliate ads and personal product-review blog posts. Reply with JSON only.',
+    'You write affiliate Google Ads RSA copy and personal product-review blog posts. Reply with JSON only.',
+    'Follow Google Ads policies. Never invent prices, medical cures, weapons, alcohol SKUs, or placeholder tokens.',
     personaPrompt.trim(),
   ]
     .filter(Boolean)
@@ -252,14 +301,49 @@ function sitelinkList(value: unknown, finalUrl: string): AdDraft['sitelinks'] {
   return value
     .map((item) => {
       if (!item || typeof item !== 'object') return null;
-      const linkText = typeof (item as { linkText?: unknown }).linkText === 'string' ? (item as { linkText: string }).linkText.trim() : '';
-      const description1 = typeof (item as { description1?: unknown }).description1 === 'string' ? (item as { description1: string }).description1.trim() : '';
-      const description2 = typeof (item as { description2?: unknown }).description2 === 'string' ? (item as { description2: string }).description2.trim() : '';
-      if (!linkText || linkText.length > 25) return null;
+      const linkText = typeof (item as { linkText?: unknown }).linkText === 'string'
+        ? fitAdText((item as { linkText: string }).linkText, AD_COPY_LIMITS.sitelinkText)
+        : '';
+      const description1 = typeof (item as { description1?: unknown }).description1 === 'string'
+        ? fitAdText((item as { description1: string }).description1, AD_COPY_LIMITS.sitelinkDescription)
+        : '';
+      const description2 = typeof (item as { description2?: unknown }).description2 === 'string'
+        ? fitAdText((item as { description2: string }).description2, AD_COPY_LIMITS.sitelinkDescription)
+        : '';
+      if (!linkText) return null;
       if ((description1 && !description2) || (!description1 && description2)) return null;
-      if (description1.length > 35 || description2.length > 35) return null;
       return { linkText, description1, description2, finalUrl, verified: true };
     })
     .filter((item): item is AdDraft['sitelinks'][number] => item != null)
-    .slice(0, 4);
+    .slice(0, AD_COPY_LIMITS.sitelinkCount.max);
+}
+
+function structuredSnippetList(value: unknown, fallback: AdStructuredSnippet[]): AdStructuredSnippet[] {
+  const allowed = new Set<string>(STRUCTURED_SNIPPET_HEADERS);
+  const fromModel = Array.isArray(value)
+    ? value
+        .map((item) => {
+          if (!item || typeof item !== 'object') return null;
+          const headerRaw = typeof (item as { header?: unknown }).header === 'string'
+            ? (item as { header: string }).header.trim().toUpperCase().replace(/\s+/g, '_')
+            : '';
+          const header = allowed.has(headerRaw) ? headerRaw : '';
+          const values = uniqueNonEmpty(
+            textList((item as { values?: unknown }).values).map((text) => fitAdText(text, AD_COPY_LIMITS.structuredValue)),
+          );
+          if (!header || values.length < AD_COPY_LIMITS.structuredValuesMin) return null;
+          return { header, values: values.slice(0, 10) };
+        })
+        .filter((item): item is AdStructuredSnippet => item != null)
+    : [];
+  const merged = [...fromModel, ...fallback];
+  const seen = new Set<string>();
+  const rows: AdStructuredSnippet[] = [];
+  for (const row of merged) {
+    if (seen.has(row.header)) continue;
+    seen.add(row.header);
+    rows.push(row);
+    if (rows.length >= AD_COPY_LIMITS.structuredCategories) break;
+  }
+  return rows;
 }

@@ -161,6 +161,14 @@ class DraftPatchBody implements Partial<AdDraft> {
   callouts?: string[];
 
   @IsOptional()
+  @IsArray()
+  structuredSnippets?: AdDraft['structuredSnippets'];
+
+  @IsOptional()
+  @IsString()
+  promotion?: string;
+
+  @IsOptional()
   @IsString()
   merchantUrl?: string;
 

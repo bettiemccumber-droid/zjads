@@ -149,6 +149,26 @@ export function buildCreateCampaignPayload(input: {
     });
   });
 
+  (input.draft.structuredSnippets ?? []).forEach((snippet, index) => {
+    const asset = `customers/${customerId}/assets/-${60 + index}`;
+    operations.push({
+      assetOperation: {
+        create: {
+          resourceName: asset,
+          structuredSnippetAsset: {
+            header: snippet.header,
+            values: snippet.values,
+          },
+        },
+      },
+    });
+    operations.push({
+      campaignAssetOperation: {
+        create: { asset, campaign, fieldType: 'STRUCTURED_SNIPPET' },
+      },
+    });
+  });
+
   operations.push({
     adGroupAdOperation: {
       create: {

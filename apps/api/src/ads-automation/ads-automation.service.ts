@@ -2118,7 +2118,14 @@ export class AdsAutomationService implements OnModuleInit {
     if (!value || typeof value !== 'object' || Array.isArray(value)) {
       throw new BadRequestException('草稿不存在');
     }
-    return value as unknown as AdDraft;
+    const draft = value as unknown as AdDraft;
+    return {
+      ...draft,
+      callouts: draft.callouts ?? [],
+      structuredSnippets: draft.structuredSnippets ?? [],
+      promotion: draft.promotion ?? '',
+      negativeKeywords: draft.negativeKeywords ?? [],
+    };
   }
 
   private campaignJson(row: {

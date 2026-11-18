@@ -2145,9 +2145,33 @@ export class AdsAutomationService implements OnModuleInit {
       orderBy: { id: 'desc' },
     });
     if (!outbox) throw new BadRequestException('没有可提交的创建请求');
-    const payload = outbox.payload;
+    // 失败重试时按当前草稿重建报文，避免沿用旧字段（如 maximizeClicks）。
+    const job = await this.prisma.adJob.findFirst({
+      where: { id: campaign.jobId, ownerUserId },
+      select: { draft: true },
+    });
+    const draft = job ? this.readDraft(job.draft) : null;
+    const rebuilt = draft
+      ? buildCreateCampaignPayload({
+          customerId: campaign.customerId,
+          campaignName: campaign.campaignName,
+          draft: {
+            ...draft,
+            bidding: campaign.bidding === 'MANUAL_CPC' ? 'MANUAL_CPC' : draft.bidding,
+            merchantUrl: campaign.merchantUrl || draft.merchantUrl,
+            finalUrlSuffix: campaign.finalUrlSuffix || draft.finalUrlSuffix,
+          },
+        })
+      : null;
+    const payload = rebuilt ?? outbox.payload;
     if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
       throw new BadRequestException('创建请求无效');
+    }
+    if (rebuilt) {
+      await this.prisma.adsOutbox.update({
+        where: { id: outbox.id },
+        data: { payload: rebuilt as Prisma.InputJsonValue },
+      });
     }
     try {
       const data = await this.googleAds.mutate(campaign.customerId, payload as Record<string, unknown>, creds);

@@ -1479,8 +1479,21 @@ export default function MyMerchantsPage() {
         title={launchMerchant ? `领取商家: ${launchMerchant.name}` : '领取商家'}
         open={launchMerchant != null}
         onCancel={() => setLaunchMerchant(null)}
-        footer={null}
         destroyOnClose
+        footer={connections.length === 0 || !launchMerchant ? (
+          <Button onClick={() => setLaunchMerchant(null)}>关闭</Button>
+        ) : (
+          <Space>
+            <Button onClick={() => setLaunchMerchant(null)}>取消</Button>
+            <Button
+              type="primary"
+              loading={claimingKey === `${launchMerchant.channelAccountId}:${launchMerchant.mid}`}
+              onClick={() => claimForm.submit()}
+            >
+              确定
+            </Button>
+          </Space>
+        )}
       >
         {!launchMerchant ? null : connections.length === 0 ? (
           <Alert
@@ -1520,7 +1533,7 @@ export default function MyMerchantsPage() {
                 message.error(res.data.message || '生成广告失败');
                 return;
               }
-              message.success('已开始制作广告，请在预览页确认后再发布');
+              message.success('领取成功！正在跳转到广告预览…');
               if (user && scopeUserId != null) {
                 const next = readHiddenMids(scopeUserId).filter((mid) => mid !== launchMerchant.mid);
                 localStorage.setItem(hiddenStorageKey(scopeUserId), JSON.stringify(next));
@@ -1553,30 +1566,36 @@ export default function MyMerchantsPage() {
               />
             </Form.Item>
             {launchMerchant.supportRegion ? (
-              <Form.Item label="支持地区（点击填入）">
+              <Form.Item label="支持地区">
                 <Space size={4} wrap>
-                  {launchMerchant.supportRegion.split(/[,，/\s]+/).filter(Boolean).map((region) => (
-                    <Tag
-                      key={region}
-                      style={{ cursor: 'pointer' }}
-                      onClick={() => {
-                        const code = region.trim().toUpperCase();
-                        if (/^[A-Z]{2}$/.test(code)) claimForm.setFieldValue('targetCountry', code);
-                      }}
-                    >
-                      {region}
-                    </Tag>
-                  ))}
+                  {launchMerchant.supportRegion.split(/[,，/\s]+/).filter(Boolean).map((region) => {
+                    const code = region.trim().toUpperCase();
+                    return (
+                      <Tag
+                        key={region}
+                        color="blue"
+                        style={{ cursor: 'pointer' }}
+                        onClick={() => {
+                          if (/^[A-Z]{2}$/.test(code)) claimForm.setFieldValue('targetCountry', code);
+                        }}
+                      >
+                        {code || region}
+                      </Tag>
+                    );
+                  })}
                 </Space>
               </Form.Item>
             ) : null}
-            <Form.Item name="languageCode" label="广告语言">
-              <Select allowClear options={AD_LANGUAGE_OPTIONS} placeholder="默认 en" />
+            <Form.Item
+              name="languageCode"
+              label="广告语言（可选）"
+              extra="不选则默认使用投放设置中的语言；爬取失败时回退目标国家市场语言。"
+            >
+              <Select allowClear options={AD_LANGUAGE_OPTIONS} placeholder="默认跟随设置" />
             </Form.Item>
-            <Form.Item label="使用账号">
+            <Form.Item label="联盟账号">
               <Input value={`${launchMerchant.accountName} / ${launchMerchant.platformCode}`} disabled />
             </Form.Item>
-            <Button type="primary" htmlType="submit" loading={claimingKey === `${launchMerchant.channelAccountId}:${launchMerchant.mid}`}>开始生成</Button>
           </Form>
         )}
       </Modal>

@@ -1,8 +1,8 @@
 .ad-review {
   display: flex;
   flex-direction: column;
-  gap: 0;
-  padding-bottom: 24px;
+  gap: 16px;
+  padding-bottom: 32px;
 }
 
 .ad-review--center {
@@ -16,8 +16,71 @@
   align-items: flex-start;
   justify-content: space-between;
   gap: 16px;
-  margin-bottom: 16px;
   flex-wrap: wrap;
+}
+
+.ad-review__title {
+  margin: 0 !important;
+}
+
+.ad-review__meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 6px;
+}
+
+.ad-review__layout {
+  align-items: flex-start;
+}
+
+.ad-review__aside {
+  position: sticky;
+  top: 16px;
+}
+
+.ad-review__section-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.ad-review__section-title h4 {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.ad-review__row {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  margin-bottom: 8px;
+}
+
+.ad-review__row-index {
+  width: 22px;
+  flex: none;
+  padding-top: 8px;
+  color: #98a2b3;
+  font-size: 12px;
+  text-align: right;
+}
+
+.ad-review__row-main {
+  flex: 1;
+  min-width: 0;
+}
+
+.ad-review__row-actions {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 4px;
+  flex: none;
+  min-width: 52px;
 }
 
 .ad-review__count {
@@ -30,10 +93,48 @@
   color: #cf1322;
 }
 
-.ad-review__side {
+.ad-review__cid-banner {
+  margin-top: 12px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: #f6ffed;
+  border: 1px solid #b7eb8f;
+  color: #389e0d;
+  font-weight: 600;
+}
+
+.ad-review__hint {
+  margin-top: 4px;
+  color: #98a2b3;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.ad-review__negatives {
   display: flex;
-  flex-direction: column;
-  align-items: flex-end;
-  gap: 4px;
-  padding-left: 8px;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.ad-review__negative-tag {
+  margin: 0 !important;
+}
+
+.ad-review__sitelink {
+  margin-bottom: 10px;
+}
+
+.ad-review__sitelink .ant-card-head {
+  min-height: 40px;
+}
+
+.ad-review__publish {
+  width: 100%;
+  margin-top: 8px;
+}
+
+@media (max-width: 992px) {
+  .ad-review__aside {
+    position: static;
+  }
 }

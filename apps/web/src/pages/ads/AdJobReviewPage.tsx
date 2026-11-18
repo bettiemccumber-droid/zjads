@@ -12,14 +12,23 @@ import {
   Select,
   Space,
   Spin,
-  Table,
+  Steps,
   Tag,
   Typography,
   message,
 } from 'antd';
-import { ArrowLeftOutlined, CloudDownloadOutlined, SaveOutlined, SendOutlined } from '@ant-design/icons';
+import {
+  ArrowLeftOutlined,
+  CloudDownloadOutlined,
+  CopyOutlined,
+  DeleteOutlined,
+  ReloadOutlined,
+  RocketOutlined,
+  SaveOutlined,
+  SendOutlined,
+} from '@ant-design/icons';
 import { api, type ApiResult } from '../../api/client';
-import { formatCustomerId } from './ad-launch-settings';
+import { AD_LANGUAGE_OPTIONS, formatCustomerId } from './ad-launch-settings';
 import './AdJobReviewPage.css';
 
 interface AdKeyword {
@@ -104,20 +113,15 @@ const MATCH_OPTIONS = [
 ];
 
 const SNIPPET_HEADERS = [
-  'AMENITIES',
-  'BRANDS',
-  'COURSES',
-  'DEGREE_PROGRAMS',
-  'DESTINATIONS',
-  'FEATURED_HOTELS',
-  'INSURANCE_COVERAGE',
-  'MODELS',
-  'NEIGHBORHOODS',
-  'SERVICES',
-  'SHOWS',
-  'STYLES',
-  'TYPES',
+  'AMENITIES', 'BRANDS', 'COURSES', 'DEGREE_PROGRAMS', 'DESTINATIONS',
+  'FEATURED_HOTELS', 'INSURANCE_COVERAGE', 'MODELS', 'NEIGHBORHOODS',
+  'SERVICES', 'SHOWS', 'STYLES', 'TYPES',
 ];
+
+const HEADLINE_MAX = 30;
+const DESC_MAX = 70;
+const SITELINK_TEXT_MAX = 20;
+const SITELINK_DESC_MAX = 25;
 
 function emptyDraft(): AdDraft {
   return {
@@ -159,8 +163,28 @@ function charCount(text: string, max: number) {
   );
 }
 
+function merchantSlug(name: string) {
+  return name.replace(/[^a-zA-Z0-9]+/g, '').slice(0, 40) || 'Merchant';
+}
+
+function previewCampaignName(job: AdJob) {
+  const platform = (job.input?.platformCode || 'ADS').toUpperCase();
+  const merchant = merchantSlug(job.input?.merchantName || 'Merchant');
+  const mid = job.input?.mid || '0';
+  const now = new Date();
+  const md = `${String(now.getMonth() + 1).padStart(2, '0')}${String(now.getDate()).padStart(2, '0')}`;
+  return `????-${platform}-${merchant}-${job.targetCountry}-${md}-${mid}`;
+}
+
+function copyText(value: string) {
+  void navigator.clipboard.writeText(value).then(
+    () => message.success('已复制'),
+    () => message.error('复制失败'),
+  );
+}
+
 /**
- * 广告任务预览编辑页：生成中轮询；待确认时可改草稿、拉 Semrush 词、选 CID 后确认发布。
+ * 广告任务预览编辑页。左栏文案扩展，右栏发布账户与设置，对齐参考发布流程。
  */
 export default function AdJobReviewPage() {
   const { id = '' } = useParams();
@@ -173,7 +197,9 @@ export default function AdJobReviewPage() {
   const [saving, setSaving] = useState(false);
   const [publishing, setPublishing] = useState(false);
   const [pullingKeywords, setPullingKeywords] = useState(false);
+  const [syncingCid, setSyncingCid] = useState(false);
   const [suggestions, setSuggestions] = useState<SemrushSuggestion[]>([]);
+  const [negInput, setNegInput] = useState('');
 
   const loadJob = useCallback(async () => {
     if (!id) return;
@@ -233,6 +259,7 @@ export default function AdJobReviewPage() {
   const eligibleCustomers = useMemo(() => customers.filter(isEligible), [customers]);
   const merchantName = job?.input?.merchantName || draft.merchantUrl || '广告任务';
   const editable = job?.status === 'READY_FOR_REVIEW';
+  const generating = Boolean(job && !['READY_FOR_REVIEW', 'COMPLETED', 'FAILED'].includes(job.status));
 
   const saveDraft = async () => {
     if (!id || !editable) return;
@@ -251,6 +278,21 @@ export default function AdJobReviewPage() {
       message.error(Array.isArray(apiMessage) ? apiMessage.join('；') : apiMessage || '保存失败');
     } finally {
       setSaving(false);
+    }
+  };
+
+  const syncCidList = async () => {
+    if (!job?.mccCustomerId) return;
+    setSyncingCid(true);
+    try {
+      await api.post('/google-ads/sync', { mccCustomerId: job.mccCustomerId });
+      await loadCustomers(job.mccCustomerId);
+      message.success('已同步 CID 列表');
+    } catch (err) {
+      const apiMessage = (err as { response?: { data?: { message?: string | string[] } } }).response?.data?.message;
+      message.error(Array.isArray(apiMessage) ? apiMessage.join('；') : apiMessage || '同步失败');
+    } finally {
+      setSyncingCid(false);
     }
   };
 
@@ -288,9 +330,9 @@ export default function AdJobReviewPage() {
       return;
     }
     Modal.confirm({
-      title: '确认发布到 Google Ads？',
-      content: `将使用 CID ${formatCustomerId(customerId)} 创建搜索广告。发布后不可在此页撤回。`,
-      okText: '确认发布',
+      title: '确认提交到 Google Ads？',
+      content: `将发布到 CID ${formatCustomerId(customerId)}。发布后不可在此页撤回。`,
+      okText: '提交到 Google Ads',
       cancelText: '再看看',
       onOk: async () => {
         setPublishing(true);
@@ -341,413 +383,317 @@ export default function AdJobReviewPage() {
     );
   }
 
+  const stepCurrent = job.status === 'COMPLETED' ? 2 : editable || job.status === 'FAILED' ? 1 : 0;
+
   return (
     <div className="ad-review">
       <div className="ad-review__head">
-        <Space align="start">
-          <Button icon={<ArrowLeftOutlined />} onClick={() => navigate('/ads/merchants')}>返回</Button>
+        <Space align="start" size={12}>
+          <Button icon={<ArrowLeftOutlined />} onClick={() => navigate('/ads/merchants')}>返回商家管理</Button>
           <div>
-            <Typography.Title level={4} style={{ margin: 0 }}>{merchantName}</Typography.Title>
-            <Typography.Text type="secondary">
-              {job.input?.platformCode ? `${job.input.platformCode} · ` : ''}
-              {job.input?.mid ? `MID ${job.input.mid} · ` : ''}
-              MCC {formatCustomerId(job.mccCustomerId)} · {job.targetCountry}
-            </Typography.Text>
+            <Typography.Title level={4} className="ad-review__title">广告预览 — {merchantName}</Typography.Title>
+            <div className="ad-review__meta">
+              {job.input?.platformCode ? <Tag>{job.input.platformCode}</Tag> : null}
+              <Tag color="blue">{job.targetCountry}</Tag>
+              <Tag color="orange">{draft.languageCode || job.languageCode || 'en'}</Tag>
+              <Tag>MCC {formatCustomerId(job.mccCustomerId)}</Tag>
+            </div>
           </div>
         </Space>
-        <Space>
-          {editable ? (
-            <>
-              <Button icon={<SaveOutlined />} loading={saving} onClick={() => void saveDraft()}>保存草稿</Button>
-              <Button type="primary" icon={<SendOutlined />} loading={publishing} onClick={confirmPublish}>
-                确认发布
-              </Button>
-            </>
-          ) : null}
-        </Space>
+        {editable ? (
+          <Space>
+            <Button icon={<SaveOutlined />} loading={saving} onClick={() => void saveDraft()}>保存草稿</Button>
+            <Button type="primary" icon={<SendOutlined />} loading={publishing} disabled={!customerId} onClick={confirmPublish}>
+              提交到 Google Ads
+            </Button>
+          </Space>
+        ) : null}
       </div>
 
-      {job.status !== 'READY_FOR_REVIEW' && job.status !== 'COMPLETED' ? (
+      <Steps
+        size="small"
+        current={stepCurrent}
+        items={[
+          { title: '领取与生成', description: generating ? job.progressMessage : '已完成' },
+          { title: '文案与扩展', description: '编辑标题、描述、扩展' },
+          { title: '确认发布', description: '选择 CID 后提交' },
+        ]}
+      />
+
+      {generating ? (
         <Alert
-          style={{ marginBottom: 16 }}
-          type={job.status === 'FAILED' ? 'error' : 'info'}
+          type="info"
           showIcon
           message={`${job.progressMessage}（${job.progress}%）`}
-          description={job.errorMessage || (job.status === 'FAILED' ? null : '生成完成后可在此编辑并确认发布。')}
+          description="正在分析商家网站并生成文案。生成完成后可在此编辑并确认发布。"
         />
+      ) : null}
+
+      {job.status === 'FAILED' ? (
+        <Alert type="error" showIcon message="生成失败" description={job.errorMessage || '请返回商家页重新领取'} />
       ) : null}
 
       {job.status === 'COMPLETED' ? (
         <Alert
-          style={{ marginBottom: 16 }}
           type="success"
           showIcon
           message="已处理完成"
-          description={
+          description={(
             <Space>
               <span>系列状态：{job.campaign?.status || '—'}</span>
               <Link to="/ads/articles">去文章管理</Link>
             </Space>
-          }
+          )}
         />
       ) : null}
 
       {!editable ? null : (
-        <>
-          <Row gutter={[16, 16]}>
-            <Col xs={24} lg={14}>
-              <Card title="标题（最多 15 条，每条 ≤30）" size="small">
-                <Space direction="vertical" style={{ width: '100%' }} size={8}>
-                  {draft.headlines.map((text, index) => (
-                    <Space.Compact key={`h-${index}`} style={{ width: '100%' }}>
-                      <Input
-                        value={text}
-                        maxLength={40}
-                        onChange={(event) => {
-                          const headlines = [...draft.headlines];
-                          headlines[index] = event.target.value;
-                          setDraft({ ...draft, headlines });
-                        }}
-                        addonAfter={charCount(text, 30)}
-                      />
+        <Row gutter={[16, 16]} className="ad-review__layout">
+          <Col xs={24} lg={14} xl={15}>
+            <Card size="small">
+              <div className="ad-review__section-title">
+                <h4>广告标题（{draft.headlines.length}/15）</h4>
+              </div>
+              {draft.headlines.map((text, index) => (
+                <div className="ad-review__row" key={`h-${index}`}>
+                  <div className="ad-review__row-index">{index + 1}</div>
+                  <div className="ad-review__row-main">
+                    <Input
+                      value={text}
+                      maxLength={40}
+                      onChange={(event) => {
+                        const headlines = [...draft.headlines];
+                        headlines[index] = event.target.value;
+                        setDraft({ ...draft, headlines });
+                      }}
+                    />
+                  </div>
+                  <div className="ad-review__row-actions">
+                    {charCount(text, HEADLINE_MAX)}
+                    <Space size={4}>
+                      <Button type="text" size="small" icon={<CopyOutlined />} onClick={() => copyText(text)} />
                       <Button
+                        type="text"
+                        size="small"
+                        danger
+                        icon={<DeleteOutlined />}
                         onClick={() => setDraft({
                           ...draft,
                           headlines: draft.headlines.filter((_, i) => i !== index),
                         })}
-                      >
-                        删
-                      </Button>
-                    </Space.Compact>
-                  ))}
-                  {draft.headlines.length < 15 ? (
-                    <Button
-                      type="dashed"
-                      block
-                      onClick={() => setDraft({ ...draft, headlines: [...draft.headlines, ''] })}
-                    >
-                      添加标题
-                    </Button>
-                  ) : null}
-                </Space>
-              </Card>
-
-              <Card title="描述（2–4 条，每条 ≤70）" size="small" style={{ marginTop: 16 }}>
-                <Space direction="vertical" style={{ width: '100%' }} size={8}>
-                  {draft.descriptions.map((text, index) => (
-                    <Space.Compact key={`d-${index}`} style={{ width: '100%' }}>
-                      <Input.TextArea
-                        value={text}
-                        autoSize={{ minRows: 1, maxRows: 3 }}
-                        onChange={(event) => {
-                          const descriptions = [...draft.descriptions];
-                          descriptions[index] = event.target.value;
-                          setDraft({ ...draft, descriptions });
-                        }}
                       />
-                      <div className="ad-review__side">
-                        {charCount(text, 70)}
-                        <Button
-                          size="small"
-                          onClick={() => setDraft({
-                            ...draft,
-                            descriptions: draft.descriptions.filter((_, i) => i !== index),
-                          })}
-                        >
-                          删
-                        </Button>
-                      </div>
-                    </Space.Compact>
-                  ))}
-                  {draft.descriptions.length < 4 ? (
-                    <Button
-                      type="dashed"
-                      block
-                      onClick={() => setDraft({ ...draft, descriptions: [...draft.descriptions, ''] })}
-                    >
-                      添加描述
-                    </Button>
-                  ) : null}
-                </Space>
-              </Card>
-            </Col>
+                    </Space>
+                  </div>
+                </div>
+              ))}
+              {draft.headlines.length < 15 ? (
+                <Button type="dashed" block onClick={() => setDraft({ ...draft, headlines: [...draft.headlines, ''] })}>
+                  添加标题
+                </Button>
+              ) : null}
+            </Card>
 
-            <Col xs={24} lg={10}>
-              <Card
-                title="关键词"
-                size="small"
-                extra={(
-                  <Button
-                    size="small"
-                    icon={<CloudDownloadOutlined />}
-                    loading={pullingKeywords}
-                    onClick={() => void importSemrush()}
-                  >
-                    Semrush 拉词
-                  </Button>
-                )}
-              >
-                <Space direction="vertical" style={{ width: '100%' }} size={8}>
-                  {draft.keywords.map((keyword, index) => (
-                    <Space.Compact key={`k-${index}`} style={{ width: '100%' }}>
-                      <Input
-                        value={keyword.text}
-                        onChange={(event) => {
-                          const keywords = [...draft.keywords];
-                          keywords[index] = { ...keyword, text: event.target.value };
-                          setDraft({ ...draft, keywords });
-                        }}
-                      />
-                      <Select
-                        style={{ width: 112 }}
-                        value={keyword.matchType}
-                        options={MATCH_OPTIONS}
-                        onChange={(matchType) => {
-                          const keywords = [...draft.keywords];
-                          keywords[index] = { ...keyword, matchType };
-                          setDraft({ ...draft, keywords });
-                        }}
-                      />
-                      <Button
-                        onClick={() => setDraft({
-                          ...draft,
-                          keywords: draft.keywords.filter((_, i) => i !== index),
-                        })}
-                      >
-                        删
-                      </Button>
-                    </Space.Compact>
-                  ))}
-                  <Button
-                    type="dashed"
-                    block
-                    onClick={() => setDraft({
-                      ...draft,
-                      keywords: [...draft.keywords, { text: '', matchType: 'PHRASE' }],
-                    })}
-                  >
-                    添加关键词
-                  </Button>
-                </Space>
-                {suggestions.length ? (
-                  <Table
-                    style={{ marginTop: 12 }}
-                    size="small"
-                    pagination={false}
-                    rowKey={(row) => row.keyword}
-                    dataSource={suggestions.slice(0, 12)}
-                    columns={[
-                      { title: '建议词', dataIndex: 'keyword', ellipsis: true },
-                      { title: '量', dataIndex: 'searchVolume', width: 72 },
-                      { title: '流量', dataIndex: 'traffic', width: 64 },
-                    ]}
-                  />
-                ) : null}
-              </Card>
-
-              <Card title="否定关键词" size="small" style={{ marginTop: 16 }}>
-                <Space direction="vertical" style={{ width: '100%' }} size={8}>
-                  {draft.negativeKeywords.map((keyword, index) => (
-                    <Space.Compact key={`n-${index}`} style={{ width: '100%' }}>
-                      <Input
-                        value={keyword.text}
-                        onChange={(event) => {
-                          const negativeKeywords = [...draft.negativeKeywords];
-                          negativeKeywords[index] = { ...keyword, text: event.target.value };
-                          setDraft({ ...draft, negativeKeywords });
-                        }}
-                      />
-                      <Select
-                        style={{ width: 112 }}
-                        value={keyword.matchType}
-                        options={MATCH_OPTIONS}
-                        onChange={(matchType) => {
-                          const negativeKeywords = [...draft.negativeKeywords];
-                          negativeKeywords[index] = { ...keyword, matchType };
-                          setDraft({ ...draft, negativeKeywords });
-                        }}
-                      />
-                      <Button
-                        onClick={() => setDraft({
-                          ...draft,
-                          negativeKeywords: draft.negativeKeywords.filter((_, i) => i !== index),
-                        })}
-                      >
-                        删
-                      </Button>
-                    </Space.Compact>
-                  ))}
-                  <Button
-                    type="dashed"
-                    block
-                    onClick={() => setDraft({
-                      ...draft,
-                      negativeKeywords: [...draft.negativeKeywords, { text: '', matchType: 'PHRASE' }],
-                    })}
-                  >
-                    添加否定词
-                  </Button>
-                </Space>
-              </Card>
-
-              <Card title="预算与落地页" size="small" style={{ marginTop: 16 }}>
-                <Form layout="vertical">
-                  <Form.Item label="日预算 (USD)">
-                    <Input
-                      value={draft.dailyBudgetUsd}
-                      onChange={(event) => setDraft({ ...draft, dailyBudgetUsd: event.target.value })}
-                    />
-                  </Form.Item>
-                  <Form.Item label="最高 CPC (USD)">
-                    <Input
-                      value={draft.cpcBidCeilingUsd}
-                      onChange={(event) => setDraft({ ...draft, cpcBidCeilingUsd: event.target.value })}
-                    />
-                  </Form.Item>
-                  <Form.Item label="最终到达网址">
-                    <Input
-                      value={draft.merchantUrl}
-                      onChange={(event) => setDraft({ ...draft, merchantUrl: event.target.value })}
-                    />
-                  </Form.Item>
-                  <Form.Item label="URL 后缀">
-                    <Input
-                      value={draft.finalUrlSuffix}
-                      onChange={(event) => setDraft({ ...draft, finalUrlSuffix: event.target.value })}
-                    />
-                  </Form.Item>
-                  <Form.Item label="发布 CID" required>
-                    <Select
-                      showSearch
-                      optionFilterProp="label"
-                      value={customerId}
-                      placeholder={eligibleCustomers.length ? '选择空闲子账号' : '没有可用 CID，请先同步账户'}
-                      options={eligibleCustomers.map((row) => ({
-                        value: row.customerId,
-                        label: `${formatCustomerId(row.customerId)} · 在投 ${row.activeCampaignCount}`,
-                      }))}
-                      onChange={setCustomerId}
-                    />
-                  </Form.Item>
-                  {!eligibleCustomers.length ? (
-                    <Alert
-                      type="warning"
-                      showIcon
-                      message="当前 MCC 下没有可投放的美元空闲 CID（已排除待验证/禁用）。"
-                      action={<Link to="/ads/accounts">去账户状态</Link>}
-                    />
-                  ) : null}
-                </Form>
-              </Card>
-            </Col>
-          </Row>
-
-          <Card title="扩展：宣传信息 / 促销 / 站内链接 / 结构化摘要" size="small" style={{ marginTop: 16 }}>
-            <Row gutter={16}>
-              <Col xs={24} md={12}>
-                <Form layout="vertical">
-                  <Form.Item label="宣传信息（每行一条，≤25）">
+            <Card size="small" style={{ marginTop: 16 }}>
+              <div className="ad-review__section-title">
+                <h4>广告描述（{draft.descriptions.length}/4）</h4>
+              </div>
+              {draft.descriptions.map((text, index) => (
+                <div className="ad-review__row" key={`d-${index}`}>
+                  <div className="ad-review__row-index">{index + 1}</div>
+                  <div className="ad-review__row-main">
                     <Input.TextArea
-                      rows={4}
-                      value={draft.callouts.join('\n')}
-                      onChange={(event) => setDraft({
-                        ...draft,
-                        callouts: event.target.value.split(/\r?\n/).map((item) => item.trim()).filter(Boolean).slice(0, 8),
-                      })}
+                      value={text}
+                      autoSize={{ minRows: 1, maxRows: 3 }}
+                      onChange={(event) => {
+                        const descriptions = [...draft.descriptions];
+                        descriptions[index] = event.target.value;
+                        setDraft({ ...draft, descriptions });
+                      }}
                     />
-                  </Form.Item>
-                  <Form.Item label="促销（只写这里，不要写进宣传信息）">
+                  </div>
+                  <div className="ad-review__row-actions">
+                    {charCount(text, DESC_MAX)}
+                    <Space size={4}>
+                      <Button type="text" size="small" icon={<CopyOutlined />} onClick={() => copyText(text)} />
+                      <Button
+                        type="text"
+                        size="small"
+                        danger
+                        icon={<DeleteOutlined />}
+                        onClick={() => setDraft({
+                          ...draft,
+                          descriptions: draft.descriptions.filter((_, i) => i !== index),
+                        })}
+                      />
+                    </Space>
+                  </div>
+                </div>
+              ))}
+              {draft.descriptions.length < 4 ? (
+                <Button type="dashed" block onClick={() => setDraft({ ...draft, descriptions: [...draft.descriptions, ''] })}>
+                  添加描述
+                </Button>
+              ) : null}
+              <div className="ad-review__hint">内部规范描述 ≤70 字（严于 Google 90）。</div>
+            </Card>
+
+            <Card
+              size="small"
+              style={{ marginTop: 16 }}
+              title="关键词"
+              extra={(
+                <Button
+                  size="small"
+                  icon={<CloudDownloadOutlined />}
+                  loading={pullingKeywords}
+                  onClick={() => void importSemrush()}
+                >
+                  Semrush 拉词
+                </Button>
+              )}
+            >
+              <Space direction="vertical" style={{ width: '100%' }} size={8}>
+                {draft.keywords.map((keyword, index) => (
+                  <Space.Compact key={`k-${index}`} style={{ width: '100%' }}>
                     <Input
-                      value={draft.promotion}
-                      onChange={(event) => setDraft({ ...draft, promotion: event.target.value })}
+                      value={keyword.text}
+                      onChange={(event) => {
+                        const keywords = [...draft.keywords];
+                        keywords[index] = { ...keyword, text: event.target.value };
+                        setDraft({ ...draft, keywords });
+                      }}
                     />
-                  </Form.Item>
-                </Form>
-              </Col>
-              <Col xs={24} md={12}>
-                <Typography.Text type="secondary">结构化摘要（最多 2 类，每类至少 4 个值）</Typography.Text>
-                <Space direction="vertical" style={{ width: '100%', marginTop: 8 }} size={8}>
-                  {(draft.structuredSnippets.length ? draft.structuredSnippets : [{ header: 'BRANDS', values: [] }]).map((snippet, index) => (
-                    <Card key={`s-${index}`} size="small" type="inner">
-                      <Select
-                        style={{ width: '100%', marginBottom: 8 }}
-                        value={snippet.header}
-                        options={SNIPPET_HEADERS.map((header) => ({ value: header, label: header }))}
-                        onChange={(header) => {
-                          const structuredSnippets = [...(draft.structuredSnippets.length ? draft.structuredSnippets : [{ header: 'BRANDS', values: [] }])];
-                          structuredSnippets[index] = { ...structuredSnippets[index], header };
-                          setDraft({ ...draft, structuredSnippets });
-                        }}
-                      />
-                      <Input.TextArea
-                        rows={2}
-                        placeholder="逗号或换行分隔"
-                        value={snippet.values.join(', ')}
-                        onChange={(event) => {
-                          const values = event.target.value
-                            .split(/[,\n]/)
-                            .map((item) => item.trim())
-                            .filter(Boolean)
-                            .slice(0, 10);
-                          const structuredSnippets = [...(draft.structuredSnippets.length ? draft.structuredSnippets : [{ header: 'BRANDS', values: [] }])];
-                          structuredSnippets[index] = { ...structuredSnippets[index], values };
-                          setDraft({ ...draft, structuredSnippets });
-                        }}
-                      />
-                    </Card>
-                  ))}
-                  {(draft.structuredSnippets.length || 1) < 2 ? (
+                    <Select
+                      style={{ width: 112 }}
+                      value={keyword.matchType}
+                      options={MATCH_OPTIONS}
+                      onChange={(matchType) => {
+                        const keywords = [...draft.keywords];
+                        keywords[index] = { ...keyword, matchType };
+                        setDraft({ ...draft, keywords });
+                      }}
+                    />
                     <Button
-                      type="dashed"
-                      block
+                      icon={<DeleteOutlined />}
                       onClick={() => setDraft({
                         ...draft,
-                        structuredSnippets: [
-                          ...(draft.structuredSnippets.length ? draft.structuredSnippets : [{ header: 'BRANDS', values: [] }]),
-                          { header: 'TYPES', values: [] },
-                        ],
+                        keywords: draft.keywords.filter((_, i) => i !== index),
                       })}
-                    >
-                      添加摘要类别
-                    </Button>
-                  ) : null}
-                </Space>
-              </Col>
-            </Row>
+                    />
+                  </Space.Compact>
+                ))}
+                <Button
+                  type="dashed"
+                  block
+                  onClick={() => setDraft({
+                    ...draft,
+                    keywords: [...draft.keywords, { text: '', matchType: 'PHRASE' }],
+                  })}
+                >
+                  + 添加关键词
+                </Button>
+                {suggestions.length ? (
+                  <div className="ad-review__hint">
+                    Semrush 建议：{suggestions.slice(0, 8).map((row) => row.keyword).join(' · ')}
+                  </div>
+                ) : null}
+              </Space>
+            </Card>
 
-            <Typography.Paragraph style={{ marginTop: 16 }} type="secondary">站内链接</Typography.Paragraph>
-            <Space direction="vertical" style={{ width: '100%' }} size={8}>
+            <Card size="small" style={{ marginTop: 16 }} title={`否定关键词（${draft.negativeKeywords.length} 条）`}>
+              <div className="ad-review__negatives">
+                {draft.negativeKeywords.map((keyword, index) => (
+                  <Tag
+                    key={`n-${index}`}
+                    className="ad-review__negative-tag"
+                    closable
+                    color="orange"
+                    onClose={(event) => {
+                      event.preventDefault();
+                      setDraft({
+                        ...draft,
+                        negativeKeywords: draft.negativeKeywords.filter((_, i) => i !== index),
+                      });
+                    }}
+                  >
+                    -{keyword.text}
+                  </Tag>
+                ))}
+              </div>
+              <Space.Compact style={{ width: '100%', marginTop: 12 }}>
+                <Input
+                  value={negInput}
+                  placeholder="输入否定词后回车添加"
+                  onChange={(event) => setNegInput(event.target.value)}
+                  onPressEnter={() => {
+                    const text = negInput.trim();
+                    if (!text) return;
+                    setDraft({
+                      ...draft,
+                      negativeKeywords: [...draft.negativeKeywords, { text, matchType: 'BROAD' }],
+                    });
+                    setNegInput('');
+                  }}
+                />
+                <Button
+                  type="primary"
+                  onClick={() => {
+                    const text = negInput.trim();
+                    if (!text) return;
+                    setDraft({
+                      ...draft,
+                      negativeKeywords: [...draft.negativeKeywords, { text, matchType: 'BROAD' }],
+                    });
+                    setNegInput('');
+                  }}
+                >
+                  添加
+                </Button>
+              </Space.Compact>
+              <div className="ad-review__hint">否定词默认广泛匹配，提交时一并写入系列，过滤非购买意图流量。</div>
+            </Card>
+
+            <Card size="small" style={{ marginTop: 16 }} title={`站内链接（${draft.sitelinks.length}/8）`}>
+              <Alert
+                type="info"
+                showIcon
+                style={{ marginBottom: 12 }}
+                message="建议至少 6 条站内链接，每条使用不同落地页。"
+              />
               {draft.sitelinks.map((link, index) => (
                 <Card
                   key={`sl-${index}`}
                   size="small"
                   type="inner"
+                  className="ad-review__sitelink"
                   title={`站内链接 ${index + 1}`}
                   extra={(
                     <Space>
-                      {link.verified ? <Tag color="success">已校验</Tag> : <Tag>未校验</Tag>}
+                      {link.verified ? <Tag color="success">已验证</Tag> : <Tag>未验证</Tag>}
                       <Button
+                        type="text"
                         size="small"
+                        danger
+                        icon={<DeleteOutlined />}
                         onClick={() => setDraft({
                           ...draft,
                           sitelinks: draft.sitelinks.filter((_, i) => i !== index),
                         })}
-                      >
-                        删
-                      </Button>
+                      />
                     </Space>
                   )}
                 >
-                  <Row gutter={8}>
+                  <Row gutter={[8, 8]}>
                     <Col span={8}>
                       <Input
-                        placeholder="链接文字 ≤20"
+                        placeholder="链接文字"
                         value={link.linkText}
                         onChange={(event) => {
                           const sitelinks = [...draft.sitelinks];
                           sitelinks[index] = { ...link, linkText: event.target.value };
                           setDraft({ ...draft, sitelinks });
                         }}
+                        suffix={charCount(link.linkText, SITELINK_TEXT_MAX)}
                       />
                     </Col>
                     <Col span={8}>
@@ -759,6 +705,7 @@ export default function AdJobReviewPage() {
                           sitelinks[index] = { ...link, description1: event.target.value };
                           setDraft({ ...draft, sitelinks });
                         }}
+                        suffix={charCount(link.description1, SITELINK_DESC_MAX)}
                       />
                     </Col>
                     <Col span={8}>
@@ -770,15 +717,16 @@ export default function AdJobReviewPage() {
                           sitelinks[index] = { ...link, description2: event.target.value };
                           setDraft({ ...draft, sitelinks });
                         }}
+                        suffix={charCount(link.description2, SITELINK_DESC_MAX)}
                       />
                     </Col>
-                    <Col span={24} style={{ marginTop: 8 }}>
+                    <Col span={24}>
                       <Input
-                        placeholder="最终网址"
+                        placeholder="落地页 URL（需与其它站内链接不同）"
                         value={link.finalUrl}
                         onChange={(event) => {
                           const sitelinks = [...draft.sitelinks];
-                          sitelinks[index] = { ...link, finalUrl: event.target.value };
+                          sitelinks[index] = { ...link, finalUrl: event.target.value, verified: false };
                           setDraft({ ...draft, sitelinks });
                         }}
                       />
@@ -807,9 +755,186 @@ export default function AdJobReviewPage() {
                   添加站内链接
                 </Button>
               ) : null}
-            </Space>
-          </Card>
-        </>
+            </Card>
+
+            <Card size="small" style={{ marginTop: 16 }} title="宣传信息 / 促销 / 结构化摘要">
+              <Form layout="vertical">
+                <Form.Item label="宣传信息（每行一条，≤25）">
+                  <Input.TextArea
+                    rows={3}
+                    value={draft.callouts.join('\n')}
+                    onChange={(event) => setDraft({
+                      ...draft,
+                      callouts: event.target.value.split(/\r?\n/).map((item) => item.trim()).filter(Boolean).slice(0, 8),
+                    })}
+                  />
+                </Form.Item>
+                <Form.Item label="促销（只写这里，不要写进宣传信息）">
+                  <Input
+                    value={draft.promotion}
+                    onChange={(event) => setDraft({ ...draft, promotion: event.target.value })}
+                  />
+                </Form.Item>
+                <Form.Item label="结构化摘要">
+                  <Space direction="vertical" style={{ width: '100%' }} size={8}>
+                    {(draft.structuredSnippets.length ? draft.structuredSnippets : [{ header: 'TYPES', values: [] }]).map((snippet, index) => (
+                      <Card key={`s-${index}`} size="small" type="inner">
+                        <Select
+                          style={{ width: '100%', marginBottom: 8 }}
+                          value={snippet.header}
+                          options={SNIPPET_HEADERS.map((header) => ({ value: header, label: header }))}
+                          onChange={(header) => {
+                            const structuredSnippets = [...(draft.structuredSnippets.length ? draft.structuredSnippets : [{ header: 'TYPES', values: [] }])];
+                            structuredSnippets[index] = { ...structuredSnippets[index], header };
+                            setDraft({ ...draft, structuredSnippets });
+                          }}
+                        />
+                        <Input.TextArea
+                          rows={2}
+                          placeholder="逗号或换行分隔，至少 4 个值"
+                          value={snippet.values.join(', ')}
+                          onChange={(event) => {
+                            const values = event.target.value
+                              .split(/[,\n]/)
+                              .map((item) => item.trim())
+                              .filter(Boolean)
+                              .slice(0, 10);
+                            const structuredSnippets = [...(draft.structuredSnippets.length ? draft.structuredSnippets : [{ header: 'TYPES', values: [] }])];
+                            structuredSnippets[index] = { ...structuredSnippets[index], values };
+                            setDraft({ ...draft, structuredSnippets });
+                          }}
+                        />
+                      </Card>
+                    ))}
+                  </Space>
+                </Form.Item>
+              </Form>
+            </Card>
+          </Col>
+
+          <Col xs={24} lg={10} xl={9}>
+            <div className="ad-review__aside">
+              <Card size="small" title="发布账户 (CID)">
+                <Form layout="vertical">
+                  <Form.Item label="MCC 账户">
+                    <Input value={formatCustomerId(job.mccCustomerId)} disabled />
+                  </Form.Item>
+                  <Form.Item
+                    label={(
+                      <Space>
+                        <span>CID 客户账户</span>
+                        <Button type="link" size="small" icon={<ReloadOutlined />} loading={syncingCid} onClick={() => void syncCidList()}>
+                          同步 CID 列表
+                        </Button>
+                      </Space>
+                    )}
+                    required
+                  >
+                    <Select
+                      showSearch
+                      optionFilterProp="label"
+                      value={customerId}
+                      placeholder={eligibleCustomers.length ? '选择空闲子账号' : '没有可用 CID'}
+                      options={eligibleCustomers.map((row) => ({
+                        value: row.customerId,
+                        label: `${formatCustomerId(row.customerId)} - ${row.activeCampaignCount}`,
+                      }))}
+                      onChange={setCustomerId}
+                    />
+                    <div className="ad-review__hint">右侧数字为在投系列数；已排除待验证 / 禁用账户。</div>
+                  </Form.Item>
+                  {customerId ? (
+                    <div className="ad-review__cid-banner">
+                      将发布到 CID: {formatCustomerId(customerId)}
+                    </div>
+                  ) : (
+                    <Alert type="warning" showIcon message="请选择可投放的 CID" style={{ marginTop: 8 }} />
+                  )}
+                  <Form.Item label="广告系列名（发布时自动生成）" style={{ marginTop: 12 }}>
+                    <Input value={previewCampaignName(job)} disabled />
+                    <div className="ad-review__hint">格式：序号-平台-商家-国家-日期-MID。???? 为发布时分配的序号。</div>
+                  </Form.Item>
+                </Form>
+              </Card>
+
+              <Card size="small" title="广告设置" style={{ marginTop: 16 }}>
+                <Form layout="vertical">
+                  <Form.Item label="每日预算 (USD)">
+                    <Input
+                      prefix="$"
+                      value={draft.dailyBudgetUsd}
+                      onChange={(event) => setDraft({ ...draft, dailyBudgetUsd: event.target.value })}
+                    />
+                  </Form.Item>
+                  <Form.Item label="出价策略">
+                    <Select
+                      value={draft.bidding}
+                      options={[
+                        { value: 'MAXIMIZE_CLICKS', label: '尽可能多的点击' },
+                        { value: 'MANUAL_CPC', label: '手动 CPC' },
+                      ]}
+                      onChange={(bidding) => setDraft({ ...draft, bidding })}
+                    />
+                  </Form.Item>
+                  <Form.Item label="最高 CPC (USD)">
+                    <Input
+                      prefix="$"
+                      value={draft.cpcBidCeilingUsd}
+                      onChange={(event) => setDraft({ ...draft, cpcBidCeilingUsd: event.target.value })}
+                    />
+                  </Form.Item>
+                  <Form.Item label="广告语言">
+                    <Select
+                      value={draft.languageCode || undefined}
+                      options={AD_LANGUAGE_OPTIONS}
+                      onChange={(languageCode) => setDraft({ ...draft, languageCode })}
+                    />
+                    <div className="ad-review__hint">Google Ads 系列语言定向，决定向哪些语言用户展示。</div>
+                  </Form.Item>
+                </Form>
+              </Card>
+
+              <Card size="small" title="商家信息" style={{ marginTop: 16 }}>
+                <div className="ad-review__meta" style={{ marginBottom: 12 }}>
+                  <Tag>{merchantName}</Tag>
+                  {job.input?.platformCode ? <Tag>{job.input.platformCode}</Tag> : null}
+                  <Tag color="blue">{job.targetCountry}</Tag>
+                  <Tag color="orange">{draft.languageCode || 'en'}</Tag>
+                </div>
+                <Form layout="vertical">
+                  <Form.Item label="落地页 URL">
+                    <Space.Compact style={{ width: '100%' }}>
+                      <Input
+                        value={draft.merchantUrl}
+                        onChange={(event) => setDraft({ ...draft, merchantUrl: event.target.value })}
+                      />
+                      <Button icon={<CopyOutlined />} onClick={() => copyText(draft.merchantUrl)} />
+                    </Space.Compact>
+                  </Form.Item>
+                  <Form.Item label="最终到达网址后缀">
+                    <Input
+                      value={draft.finalUrlSuffix}
+                      placeholder="utm_source=... 不要以 ? 或 & 开头"
+                      onChange={(event) => setDraft({ ...draft, finalUrlSuffix: event.target.value })}
+                    />
+                    <div className="ad-review__hint">提交 Google Ads 后会自动附加到落地页 URL 末尾。</div>
+                  </Form.Item>
+                </Form>
+                <Button
+                  type="primary"
+                  className="ad-review__publish"
+                  icon={<RocketOutlined />}
+                  size="large"
+                  loading={publishing}
+                  disabled={!customerId}
+                  onClick={confirmPublish}
+                >
+                  提交到 Google Ads
+                </Button>
+              </Card>
+            </div>
+          </Col>
+        </Row>
       )}
     </div>
   );

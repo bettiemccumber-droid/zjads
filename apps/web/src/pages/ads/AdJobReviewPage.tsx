@@ -192,6 +192,7 @@ export default function AdJobReviewPage() {
   const [suggestions, setSuggestions] = useState<SemrushSuggestion[]>([]);
   const [negInput, setNegInput] = useState('');
   const [campaignName, setCampaignName] = useState('');
+  const [campaignNameDirty, setCampaignNameDirty] = useState(false);
 
   const loadJob = useCallback(async () => {
     if (!id) return;
@@ -203,10 +204,10 @@ export default function AdJobReviewPage() {
     const next = res.data.data;
     setJob(next);
     if (next.draft) setDraft({ ...emptyDraft(), ...next.draft });
-    if (next.suggestedCampaignName) {
-      setCampaignName((prev) => (prev.trim() ? prev : next.suggestedCampaignName || ''));
+    if (next.suggestedCampaignName && !campaignNameDirty) {
+      setCampaignName(next.suggestedCampaignName);
     }
-  }, [id]);
+  }, [id, campaignNameDirty]);
 
   const loadCustomers = useCallback(async (mccCustomerId: string) => {
     if (!mccCustomerId || /^[A-Za-z]/.test(mccCustomerId)) {
@@ -848,16 +849,40 @@ export default function AdJobReviewPage() {
                   ) : (
                     <Alert type="warning" showIcon message="请选择可投放的 CID" style={{ marginTop: 8 }} />
                   )}
-                  <Form.Item label="广告系列名（可修改）" style={{ marginTop: 12 }}>
+                  <Form.Item
+                    label={(
+                      <Space>
+                        <span>广告系列名</span>
+                        {campaignNameDirty ? <Tag color="processing">已手改</Tag> : <Tag>可编辑</Tag>}
+                        {job.suggestedCampaignName && campaignNameDirty ? (
+                          <Button
+                            type="link"
+                            size="small"
+                            onClick={() => {
+                              setCampaignName(job.suggestedCampaignName || '');
+                              setCampaignNameDirty(false);
+                            }}
+                          >
+                            恢复建议名
+                          </Button>
+                        ) : null}
+                      </Space>
+                    )}
+                    style={{ marginTop: 12 }}
+                  >
                     <Input
                       value={campaignName}
                       maxLength={120}
-                      onChange={(event) => setCampaignName(event.target.value)}
+                      placeholder="序号-联盟序号-商家-国家-日期-MID"
+                      onChange={(event) => {
+                        setCampaignName(event.target.value);
+                        setCampaignNameDirty(true);
+                      }}
                       suffix={<span className="ad-review__count">{campaignName.length}/120</span>}
                     />
                     <div className="ad-review__hint">
-                      格式：序号-联盟序号-商家-国家-日期-MID。国家段需与草稿一致（{job.targetCountry}）。
-                      {job.affiliateAlias ? ` 当前联盟序号：${job.affiliateAlias}` : ''}
+                      可直接改任意段；国家段需含 {job.targetCountry}。留空则发布时用建议名。
+                      {job.affiliateAlias ? ` 联盟序号：${job.affiliateAlias}` : ''}
                     </div>
                   </Form.Item>
                 </Form>

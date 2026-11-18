@@ -98,9 +98,9 @@ interface SemrushSuggestion {
 }
 
 const MATCH_OPTIONS = [
-  { value: 'PHRASE', label: '短语' },
-  { value: 'EXACT', label: '精确' },
-  { value: 'BROAD', label: '广泛' },
+  { value: 'BROAD', label: '广泛匹配' },
+  { value: 'PHRASE', label: '词组匹配' },
+  { value: 'EXACT', label: '完全匹配' },
 ];
 
 const SNIPPET_HEADERS = [
@@ -499,7 +499,7 @@ export default function AdJobReviewPage() {
                         }}
                       />
                       <Select
-                        style={{ width: 96 }}
+                        style={{ width: 112 }}
                         value={keyword.matchType}
                         options={MATCH_OPTIONS}
                         onChange={(matchType) => {
@@ -558,7 +558,7 @@ export default function AdJobReviewPage() {
                         }}
                       />
                       <Select
-                        style={{ width: 96 }}
+                        style={{ width: 112 }}
                         value={keyword.matchType}
                         options={MATCH_OPTIONS}
                         onChange={(matchType) => {

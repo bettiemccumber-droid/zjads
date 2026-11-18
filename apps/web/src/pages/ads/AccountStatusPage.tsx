@@ -11,6 +11,7 @@ interface AccountRow {
   mccLabel: string;
   customerId: string;
   googleStatus: string;
+  verificationStatus?: string;
   availability: string;
   activeCampaignCount: number;
   updatedAt: string;
@@ -58,8 +59,25 @@ const STATUS_LABEL: Record<string, string> = {
   UNKNOWN: '未回传',
 };
 
+const VERIFICATION_LABEL: Record<string, { label: string; color: string }> = {
+  NOT_REQUIRED: { label: '无需验证', color: 'default' },
+  SUCCESS: { label: '已通过', color: 'success' },
+  PENDING_USER_ACTION: { label: '待验证', color: 'error' },
+  PENDING_REVIEW: { label: '审核中', color: 'processing' },
+  FAILURE: { label: '验证失败', color: 'error' },
+  API_UNAVAILABLE: { label: '需人工标记', color: 'warning' },
+  UNKNOWN: { label: '未检测', color: 'default' },
+};
+
 function isAbnormal(row: AccountRow) {
-  return row.availability === 'disabled' || row.googleStatus === 'SUSPENDED' || row.googleStatus === 'CANCELED' || row.googleStatus === 'CLOSED';
+  return (
+    row.availability === 'disabled'
+    || row.googleStatus === 'SUSPENDED'
+    || row.googleStatus === 'CANCELED'
+    || row.googleStatus === 'CLOSED'
+    || row.verificationStatus === 'PENDING_USER_ACTION'
+    || row.verificationStatus === 'FAILURE'
+  );
 }
 
 function digitsOnly(value: string) {
@@ -84,6 +102,8 @@ export default function AccountStatusPage() {
   const [saving, setSaving] = useState(false);
   const [syncingAll, setSyncingAll] = useState(false);
   const [syncingMcc, setSyncingMcc] = useState<string | null>(null);
+  const [verificationText, setVerificationText] = useState('');
+  const [markingVerification, setMarkingVerification] = useState(false);
 
   const load = useCallback(async () => {
     const [accounts, config] = await Promise.all([
@@ -175,7 +195,7 @@ export default function AccountStatusPage() {
         showIcon
         style={{ marginBottom: 16 }}
         message={board.live
-          ? '名单来自已连接的 Google Ads MCC。同一账号可挂多个 MCC；可按 MCC 筛选，也可单独同步。空闲和占用可投放，禁用是异常。'
+          ? '名单来自已连接的 Google Ads MCC。信用卡结算账号 API 读不到广告客户验证，请把验证中心里「已暂停」的 CID 粘贴下方标记为待验证，避免误投放。'
           : '空闲和占用的子账号可以投放，禁用的是异常。还没接上 Google Ads 时，在投系列按该 CID 最新一天里启用的系列计算，账户状态显示「未回传」。'}
       />
       <Card title="Google Ads MCC" style={{ marginBottom: 16 }}>
@@ -351,6 +371,78 @@ export default function AccountStatusPage() {
             保存并同步此 MCC
           </Button>
         </Form>
+
+        <Typography.Text strong style={{ display: 'block', marginTop: 24 }}>广告客户验证标记</Typography.Text>
+        <Typography.Paragraph type="secondary" style={{ marginBottom: 8 }}>
+          从 Google Ads 验证中心复制已暂停 / 待验证的 CID（可带横杠），粘贴后标记。标记后可用性会变成禁用，不会拿来自动上广告。
+        </Typography.Paragraph>
+        <Input.TextArea
+          rows={3}
+          value={verificationText}
+          onChange={(event) => setVerificationText(event.target.value)}
+          placeholder={'例如：\n580-633-8631\n462-545-9445'}
+        />
+        <Space style={{ marginTop: 8 }}>
+          <Button
+            danger
+            loading={markingVerification}
+            disabled={!verificationText.trim()}
+            onClick={() => {
+              const customerIds = verificationText.split(/[\s,;，；]+/).map((item) => item.trim()).filter(Boolean);
+              setMarkingVerification(true);
+              void api
+                .post<ApiResult<{ updated: number }>>('/google-ads/verification-flags', {
+                  customerIds,
+                  status: 'PENDING_USER_ACTION',
+                })
+                .then(async (res) => {
+                  if (!res.data.success) {
+                    message.error(res.data.message || '标记失败');
+                    return;
+                  }
+                  message.success(res.data.message || `已标记 ${res.data.data.updated} 个`);
+                  setVerificationText('');
+                  await load();
+                })
+                .catch((err) => {
+                  const apiMessage = (err as { response?: { data?: { message?: string | string[] } } }).response?.data?.message;
+                  message.error(Array.isArray(apiMessage) ? apiMessage.join('；') : apiMessage || '标记失败');
+                })
+                .finally(() => setMarkingVerification(false));
+            }}
+          >
+            标记为待验证
+          </Button>
+          <Button
+            loading={markingVerification}
+            disabled={!verificationText.trim()}
+            onClick={() => {
+              const customerIds = verificationText.split(/[\s,;，；]+/).map((item) => item.trim()).filter(Boolean);
+              setMarkingVerification(true);
+              void api
+                .post<ApiResult<{ updated: number }>>('/google-ads/verification-flags', {
+                  customerIds,
+                  status: 'CLEAR',
+                })
+                .then(async (res) => {
+                  if (!res.data.success) {
+                    message.error(res.data.message || '清除失败');
+                    return;
+                  }
+                  message.success(res.data.message || `已清除 ${res.data.data.updated} 个`);
+                  setVerificationText('');
+                  await load();
+                })
+                .catch((err) => {
+                  const apiMessage = (err as { response?: { data?: { message?: string | string[] } } }).response?.data?.message;
+                  message.error(Array.isArray(apiMessage) ? apiMessage.join('；') : apiMessage || '清除失败');
+                })
+                .finally(() => setMarkingVerification(false));
+            }}
+          >
+            清除标记
+          </Button>
+        </Space>
       </Card>
 
       <Row gutter={16} style={{ marginBottom: 16 }}>
@@ -411,12 +503,24 @@ export default function AccountStatusPage() {
               render: (value: string) => <Tag color={value === 'ENABLED' ? 'success' : value === 'SUSPENDED' ? 'error' : 'default'}>{STATUS_LABEL[value] ?? value}</Tag>,
             },
             {
+              title: '客户验证',
+              dataIndex: 'verificationStatus',
+              render: (value: string | undefined) => {
+                const item = VERIFICATION_LABEL[value || 'UNKNOWN'] ?? VERIFICATION_LABEL.UNKNOWN;
+                return <Tag color={item.color}>{item.label}</Tag>;
+              },
+            },
+            {
               title: '可用性',
               dataIndex: 'availability',
-              render: (value: string) => {
+              render: (value: string, row: AccountRow) => {
                 const item = AVAILABILITY[value];
                 if (!item) return '—';
-                return <Tooltip title={item.tip}><Tag color={item.color}>{item.label}</Tag></Tooltip>;
+                const tip =
+                  row.verificationStatus === 'PENDING_USER_ACTION' || row.verificationStatus === 'FAILURE'
+                    ? '广告客户验证未完成或失败，不能投放'
+                    : item.tip;
+                return <Tooltip title={tip}><Tag color={item.color}>{item.label}</Tag></Tooltip>;
               },
             },
             { title: '在投系列', dataIndex: 'activeCampaignCount' },

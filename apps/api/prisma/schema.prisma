@@ -541,13 +541,15 @@ model GoogleAdsConnection {
   @@map("google_ads_connections")
 }
 
-/// 子账户。可用性是系统自己的开关，Google 状态另记。
+/// 子账户。可用性是系统自己的开关，Google 状态另记；验证状态来自广告客户验证。
 model GoogleAdsCustomer {
   id                   Int      @id @default(autoincrement())
   connectionId         Int      @map("connection_id")
   customerId           String   @map("customer_id") @db.VarChar(16)
   googleStatus         String   @default("ENABLED") @map("google_status") @db.VarChar(32)
   availability         String   @default("available") @db.VarChar(32)
+  /// NOT_REQUIRED / SUCCESS / PENDING_USER_ACTION / PENDING_REVIEW / FAILURE / UNKNOWN
+  verificationStatus   String   @default("UNKNOWN") @map("verification_status") @db.VarChar(32)
   currencyCode         String   @default("USD") @map("currency_code") @db.VarChar(8)
   timeZone             String   @default("Asia/Shanghai") @map("time_zone") @db.VarChar(64)
   activeCampaignCount  Int      @default(0) @map("active_campaign_count")

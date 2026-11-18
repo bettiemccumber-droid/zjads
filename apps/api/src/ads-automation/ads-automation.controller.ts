@@ -479,6 +479,19 @@ export class AdsAutomationController {
     return ok(await this.ads.deleteConnection(user.id, mccCustomerId), '已删除 MCC 连接');
   }
 
+  @Post('google-ads/verification-flags')
+  async markVerificationFlags(
+    @CurrentUser() user: AuthUser,
+    @Body() body: { customerIds: string[]; status: 'PENDING_USER_ACTION' | 'CLEAR' },
+  ) {
+    this.assertWriter(user);
+    const result = await this.ads.markVerificationStatus(user.id, body);
+    return ok(
+      result,
+      body.status === 'CLEAR' ? `已清除 ${result.updated} 个 CID 的验证标记` : `已标记 ${result.updated} 个 CID 为待验证`,
+    );
+  }
+
   @Post('google-ads/sync')
   async syncGoogleAds(
     @CurrentUser() user: AuthUser,

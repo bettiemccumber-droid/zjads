@@ -451,10 +451,14 @@ export function isCustomerEligible(customer: {
   availability: string;
   currencyCode: string;
   timeZone: string;
+  verificationStatus?: string;
 }): boolean {
+  const verification = customer.verificationStatus ?? 'UNKNOWN';
+  const verificationBlocked = verification === 'PENDING_USER_ACTION' || verification === 'FAILURE';
   return (
     customer.availability === 'available' &&
     customer.googleStatus === 'ENABLED' &&
+    !verificationBlocked &&
     customer.currencyCode === 'USD'
   );
 }

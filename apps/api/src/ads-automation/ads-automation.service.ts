@@ -35,6 +35,7 @@ import {
   GoogleAdsCredentials,
   googleAdsAppConfig,
   googleAdsAppReady,
+  isVerificationBlocking,
   readCreatedResources,
 } from './google-ads.client';
 
@@ -993,6 +994,47 @@ export class AdsAutomationService implements OnModuleInit {
   }
 
   /**
+   * 信用卡结算时 API 读不到广告客户验证。从验证中心复制 CID 后在此标记，避免误当成可投放。
+   */
+  async markVerificationStatus(
+    ownerUserId: number,
+    input: { customerIds: string[]; status: 'PENDING_USER_ACTION' | 'CLEAR' },
+  ) {
+    const ids = [...new Set((input.customerIds ?? []).map((item) => digits(item)).filter((item) => item.length >= 6))];
+    if (!ids.length) throw new BadRequestException('请粘贴至少一个 CID');
+    const connections = await this.prisma.googleAdsConnection.findMany({
+      where: { ownerUserId },
+      select: { id: true },
+    });
+    if (!connections.length) throw new BadRequestException('请先同步 MCC');
+    const connectionIds = connections.map((row) => row.id);
+    const verificationStatus = input.status === 'CLEAR' ? 'UNKNOWN' : 'PENDING_USER_ACTION';
+    const availability = input.status === 'CLEAR' ? undefined : 'disabled';
+    const result = await this.prisma.googleAdsCustomer.updateMany({
+      where: { connectionId: { in: connectionIds }, customerId: { in: ids } },
+      data: {
+        verificationStatus,
+        ...(availability ? { availability } : {}),
+      },
+    });
+    if (!result.count) {
+      throw new BadRequestException('没有匹配到已同步的 CID，请先同步对应 MCC 再标记');
+    }
+    // 清除标记时，若账户本身是 ENABLED，恢复为 available，便于下次同步前也能投放判断。
+    if (input.status === 'CLEAR') {
+      await this.prisma.googleAdsCustomer.updateMany({
+        where: {
+          connectionId: { in: connectionIds },
+          customerId: { in: ids },
+          googleStatus: 'ENABLED',
+        },
+        data: { availability: 'available' },
+      });
+    }
+    return { updated: result.count, status: verificationStatus };
+  }
+
+  /**
    * 告诉页面 Google Ads 应用配置缺哪几项，不返回令牌原文。
    */
   async googleAdsSetup(ownerUserId: number) {
@@ -1736,19 +1778,27 @@ export class AdsAutomationService implements OnModuleInit {
       customerId: string;
       googleStatus: string;
       availability: string;
+      verificationStatus?: string;
       activeCampaignCount: number;
       updatedAt: Date;
     }>;
   }>) {
     const rows = connections.flatMap((connection) => connection.customers.map((customer) => {
       const customerId = digits(customer.customerId);
+      const verificationStatus = customer.verificationStatus || 'UNKNOWN';
       return {
         id: customerId,
         mccCustomerId: connection.mccCustomerId,
         mccLabel: connection.mccCustomerId,
         customerId,
         googleStatus: customer.googleStatus,
-        availability: accountAvailability(customer.googleStatus, customer.activeCampaignCount, customer.availability),
+        verificationStatus,
+        availability: accountAvailability(
+          customer.googleStatus,
+          customer.activeCampaignCount,
+          customer.availability,
+          verificationStatus,
+        ),
         activeCampaignCount: customer.activeCampaignCount,
         updatedAt: customer.updatedAt.toISOString(),
       };
@@ -1758,8 +1808,8 @@ export class AdsAutomationService implements OnModuleInit {
       live: true,
       summary: {
         total: rows.length,
-        enabled: rows.filter((row) => row.googleStatus === 'ENABLED').length,
-        suspended: rows.filter((row) => row.googleStatus === 'SUSPENDED').length,
+        enabled: rows.filter((row) => row.googleStatus === 'ENABLED' && !isVerificationBlocking(row.verificationStatus)).length,
+        suspended: rows.filter((row) => row.googleStatus === 'SUSPENDED' || isVerificationBlocking(row.verificationStatus)).length,
         closed: rows.filter((row) => row.googleStatus === 'CANCELED' || row.googleStatus === 'CLOSED').length,
         unknown: rows.filter((row) => row.googleStatus === 'UNKNOWN').length,
       },
@@ -1826,6 +1876,7 @@ export class AdsAutomationService implements OnModuleInit {
 
   /**
    * 用 customer_client 覆盖这条 MCC 下的子账号，并统计当前启用的系列。
+   * 对仍显示 ENABLED 的号再查广告客户验证，避免「验证暂停」被当成空闲。
    */
   private async syncConnection(connection: {
     id: number;
@@ -1840,14 +1891,38 @@ export class AdsAutomationService implements OnModuleInit {
     for (const child of children) {
       seen.add(child.customerId);
       let activeCampaignCount = 0;
+      let verificationStatus = 'UNKNOWN';
+      const existing = await this.prisma.googleAdsCustomer.findUnique({
+        where: { connectionId_customerId: { connectionId: connection.id, customerId: child.customerId } },
+        select: { verificationStatus: true },
+      });
       if (child.googleStatus === 'ENABLED') {
         try {
           activeCampaignCount = await this.googleAds.countEnabledCampaigns(child.customerId, creds);
         } catch {
           activeCampaignCount = 0;
         }
+        try {
+          const verification = await this.googleAds.getIdentityVerification(child.customerId, creds);
+          verificationStatus = verification.programStatus || 'UNKNOWN';
+        } catch {
+          verificationStatus = 'UNKNOWN';
+        }
+        // 信用卡结算时 API 读不到验证；保留人工标记的待验证/失败。
+        if (verificationStatus === 'API_UNAVAILABLE') {
+          verificationStatus = isVerificationBlocking(existing?.verificationStatus || '')
+            ? existing!.verificationStatus
+            : 'API_UNAVAILABLE';
+        }
+        await sleep(80);
+      } else if (isVerificationBlocking(existing?.verificationStatus || '')) {
+        verificationStatus = existing!.verificationStatus;
+      } else {
+        verificationStatus = 'NOT_REQUIRED';
       }
-      const availability = child.googleStatus === 'ENABLED' ? 'available' : 'disabled';
+      const blockedByVerification = isVerificationBlocking(verificationStatus);
+      const availability =
+        child.googleStatus === 'ENABLED' && !blockedByVerification ? 'available' : 'disabled';
       await this.prisma.googleAdsCustomer.upsert({
         where: { connectionId_customerId: { connectionId: connection.id, customerId: child.customerId } },
         create: {
@@ -1855,6 +1930,7 @@ export class AdsAutomationService implements OnModuleInit {
           customerId: child.customerId,
           googleStatus: child.googleStatus,
           availability,
+          verificationStatus,
           currencyCode: child.currencyCode || 'USD',
           timeZone: child.timeZone || 'UTC',
           activeCampaignCount,
@@ -1862,6 +1938,7 @@ export class AdsAutomationService implements OnModuleInit {
         update: {
           googleStatus: child.googleStatus,
           availability,
+          verificationStatus,
           currencyCode: child.currencyCode || 'USD',
           timeZone: child.timeZone || 'UTC',
           activeCampaignCount,
@@ -2135,18 +2212,28 @@ export class AdsAutomationService implements OnModuleInit {
 }
 
 /**
- * 可用性。暂停、取消、关闭为禁用；有启用系列为占用；其余为空闲。
+ * 可用性。暂停、取消、关闭、验证未完成/失败为禁用；有启用系列为占用；其余为空闲。
  */
-function accountAvailability(googleStatus: string, activeCampaignCount: number, saved: string): 'disabled' | 'occupied' | 'idle' {
+function accountAvailability(
+  googleStatus: string,
+  activeCampaignCount: number,
+  saved: string,
+  verificationStatus = 'UNKNOWN',
+): 'disabled' | 'occupied' | 'idle' {
   if (
     saved === 'disabled' ||
     googleStatus === 'SUSPENDED' ||
     googleStatus === 'CANCELED' ||
-    googleStatus === 'CLOSED'
+    googleStatus === 'CLOSED' ||
+    isVerificationBlocking(verificationStatus)
   ) {
     return 'disabled';
   }
   return activeCampaignCount > 0 ? 'occupied' : 'idle';
+}
+
+function sleep(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 /**

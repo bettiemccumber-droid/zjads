@@ -30,6 +30,20 @@ export interface GoogleChildAccount {
   manager: boolean;
 }
 
+export interface GoogleIdentityVerification {
+  /** NOT_REQUIRED / SUCCESS / PENDING_USER_ACTION / PENDING_REVIEW / FAILURE / UNKNOWN */
+  programStatus: string;
+  completionDeadline: string;
+  actionUrl: string;
+}
+
+/**
+ * 未完成或失败的广告客户验证，不能拿来投放。
+ */
+export function isVerificationBlocking(programStatus: string): boolean {
+  return programStatus === 'PENDING_USER_ACTION' || programStatus === 'FAILURE';
+}
+
 /**
  * 应用级 Google Ads 配置。刷新令牌和经理账号客户号可以只配在某一条 MCC 连接上。
  */
@@ -140,8 +154,74 @@ export class GoogleAdsClient {
     return results.length;
   }
 
+  /**
+   * 广告客户验证状态。空响应表示当前不要求验证。
+   * 该接口有单独配额，调用方应限流并缓存结果。
+   */
+  async getIdentityVerification(
+    customerId: string,
+    credentials: GoogleAdsCredentials,
+  ): Promise<GoogleIdentityVerification> {
+    try {
+      const data = asRecord(
+        await this.get(`customers/${digitsOnly(customerId)}/getIdentityVerification`, credentials),
+      );
+      const list = Array.isArray(data.identityVerification) ? data.identityVerification : [];
+      if (!list.length) {
+        return { programStatus: 'NOT_REQUIRED', completionDeadline: '', actionUrl: '' };
+      }
+      const first = asRecord(list[0]);
+      const progress = asRecord(first.verificationProgress);
+      const requirement = asRecord(first.identityVerificationRequirement);
+      const programStatus =
+        typeof progress.programStatus === 'string' && progress.programStatus
+          ? progress.programStatus
+          : 'UNKNOWN';
+      return {
+        programStatus,
+        completionDeadline:
+          typeof requirement.verificationCompletionDeadlineTime === 'string'
+            ? requirement.verificationCompletionDeadlineTime
+            : '',
+        actionUrl: typeof progress.actionUrl === 'string' ? progress.actionUrl : '',
+      };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : '';
+      // 信用卡结算等账号 API 读不到验证状态，需人工标记。
+      if (/BILLING_NOT_ON_MONTHLY_INVOICING/i.test(message)) {
+        return { programStatus: 'API_UNAVAILABLE', completionDeadline: '', actionUrl: '' };
+      }
+      if (/PERMISSION_DENIED|CUSTOMER_NOT_ENABLED/i.test(message)) {
+        return { programStatus: 'UNKNOWN', completionDeadline: '', actionUrl: '' };
+      }
+      return { programStatus: 'UNKNOWN', completionDeadline: '', actionUrl: '' };
+    }
+  }
+
   async mutate(customerId: string, body: Record<string, unknown>, credentials: GoogleAdsCredentials): Promise<unknown> {
     return this.post(`customers/${digitsOnly(customerId)}/googleAds:mutate`, body, credentials);
+  }
+
+  private async get(path: string, credentials: GoogleAdsCredentials): Promise<unknown> {
+    const accessToken = await this.accessToken(credentials);
+    const url = `${ADS_ROOT}/${credentials.apiVersion}/${path}`;
+    try {
+      const response = await axios.get(url, {
+        timeout: 30000,
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          'developer-token': credentials.developerToken,
+          'login-customer-id': credentials.loginCustomerId,
+        },
+        validateStatus: () => true,
+      });
+      if (response.status >= 200 && response.status < 300) return response.data;
+      throw new Error(googleAdsErrorMessage(response.data, `Google Ads HTTP ${response.status}`));
+    } catch (error) {
+      if (error instanceof Error && !axios.isAxiosError(error)) throw error;
+      const message = axios.isAxiosError(error) ? googleAdsErrorMessage(error.response?.data, error.message) : 'Google Ads 请求失败';
+      throw new Error(message);
+    }
   }
 
   private async searchAll(customerId: string, query: string, credentials: GoogleAdsCredentials): Promise<unknown[]> {

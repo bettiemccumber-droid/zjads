@@ -61,3 +61,21 @@ export const AD_COUNTRY_OPTIONS = [...GEO_COUNTRY_OPTIONS];
 
 /** 全球广告语言（与 API languageConstants 对齐）。 */
 export const AD_LANGUAGE_OPTIONS = [...GEO_LANGUAGE_OPTIONS];
+
+/** 国家 → 市场常用语言（含波兰 pl）。 */
+const DEFAULT_LANGUAGE_BY_COUNTRY: Record<string, string> = {
+  PL: 'pl', DE: 'de', AT: 'de', CH: 'de', FR: 'fr', BE: 'fr', ES: 'es', MX: 'es',
+  AR: 'es', CL: 'es', CO: 'es', PE: 'es', IT: 'it', PT: 'pt', BR: 'pt', NL: 'nl',
+  SE: 'sv', NO: 'no', DK: 'da', FI: 'fi', CZ: 'cs', SK: 'sk', HU: 'hu', RO: 'ro',
+  BG: 'bg', HR: 'hr', SI: 'sl', RS: 'sr', UA: 'uk', RU: 'ru', TR: 'tr', GR: 'el',
+  IL: 'he', AE: 'ar', SA: 'ar', JP: 'ja', KR: 'ko', CN: 'zh', TW: 'zh-TW', HK: 'zh-TW',
+  VN: 'vi', TH: 'th', ID: 'id', MY: 'ms', PH: 'tl', IN: 'hi',
+  US: 'en', GB: 'en', UK: 'en', IE: 'en', AU: 'en', NZ: 'en', CA: 'en', SG: 'en', ZA: 'en',
+};
+
+/**
+ * 目标国家未选手动语言时，用该市场常用语（如 PL → pl）。
+ */
+export function defaultLanguageForCountry(countryCode: string): string {
+  return DEFAULT_LANGUAGE_BY_COUNTRY[countryCode.trim().toUpperCase()] || 'en';
+}

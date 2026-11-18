@@ -19,18 +19,47 @@ import { completeModelGoChat } from './modelgo.client';
  */
 export function audienceLanguage(countryCode: string, languageCode: string): string {
   const country = countryCode.trim().toUpperCase();
-  const language = languageCode.trim().toLowerCase();
+  const language = languageCode.trim().toLowerCase().replace(/_/g, '-');
   if (country === 'MX' || language === 'es-mx') return 'Spanish as used in Mexico';
   if (country === 'ES' || language === 'es-es') return 'Spanish as used in Spain';
+  if (country === 'BR' || language === 'pt-br') return 'Portuguese as used in Brazil';
+  if (country === 'PT' || language === 'pt-pt') return 'Portuguese as used in Portugal';
   if (country === 'VN' || language.startsWith('vi')) return 'Vietnamese';
+  if (country === 'PL' || language.startsWith('pl')) return 'Polish';
   if (language.startsWith('es')) return 'Spanish';
+  if (language === 'zh-tw' || language === 'zh-hk') return 'Traditional Chinese';
   if (language.startsWith('zh')) return 'Simplified Chinese';
   if (language.startsWith('fr')) return 'French';
   if (language.startsWith('de')) return 'German';
+  if (language.startsWith('it')) return 'Italian';
+  if (language.startsWith('pt')) return 'Portuguese';
+  if (language.startsWith('nl')) return 'Dutch';
+  if (language.startsWith('sv')) return 'Swedish';
+  if (language.startsWith('no') || language.startsWith('nb')) return 'Norwegian';
+  if (language.startsWith('da')) return 'Danish';
+  if (language.startsWith('fi')) return 'Finnish';
+  if (language.startsWith('cs')) return 'Czech';
+  if (language.startsWith('sk')) return 'Slovak';
+  if (language.startsWith('hu')) return 'Hungarian';
+  if (language.startsWith('ro')) return 'Romanian';
+  if (language.startsWith('uk')) return 'Ukrainian';
+  if (language.startsWith('ru')) return 'Russian';
+  if (language.startsWith('tr')) return 'Turkish';
+  if (language.startsWith('el')) return 'Greek';
+  if (language.startsWith('he') || language.startsWith('iw')) return 'Hebrew';
+  if (language.startsWith('ar')) return 'Arabic';
+  if (language.startsWith('ja')) return 'Japanese';
+  if (language.startsWith('ko')) return 'Korean';
+  if (language.startsWith('th')) return 'Thai';
+  if (language.startsWith('id')) return 'Indonesian';
+  if (language.startsWith('ms')) return 'Malay';
+  if (language.startsWith('tl') || language.startsWith('fil')) return 'Filipino';
+  if (language.startsWith('hi')) return 'Hindi';
   if (country === 'US') return 'American English';
-  if (country === 'GB') return 'British English';
+  if (country === 'GB' || country === 'UK') return 'British English';
   if (country === 'AU') return 'Australian English';
-  return `the language coded ${language || 'en'} for readers in ${country || 'the target country'}`;
+  if (language.startsWith('en') || !language) return 'English';
+  return `the language coded ${language} for readers in ${country || 'the target country'}`;
 }
 
 /**

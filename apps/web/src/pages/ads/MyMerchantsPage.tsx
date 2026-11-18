@@ -23,6 +23,7 @@ import { OPS_PLATFORM_SHORT, opsPlatformShort } from '../../utils/opsPlatform';
 import {
   AD_COUNTRY_OPTIONS,
   AD_LANGUAGE_OPTIONS,
+  defaultLanguageForCountry,
   formatCustomerId,
   loadAdSettings,
   saveAdSettings,
@@ -1027,10 +1028,26 @@ export default function MyMerchantsPage() {
               <span className="merchant-setting-row__label">国家 / 语言</span>
               <div className="merchant-setting-row__body merchant-setting-row__body--split">
                 <Form.Item name="targetCountry" noStyle rules={[{ required: true, message: '填写国家' }]}>
-                  <Input size="small" className="merchant-setting-row__input" placeholder="US" />
+                  <Select
+                    size="small"
+                    showSearch
+                    optionFilterProp="label"
+                    className="merchant-setting-row__select"
+                    options={AD_COUNTRY_OPTIONS}
+                    onChange={(code: string) => {
+                      settingsForm.setFieldValue('languageCode', defaultLanguageForCountry(code));
+                    }}
+                  />
                 </Form.Item>
                 <Form.Item name="languageCode" noStyle>
-                  <Input size="small" className="merchant-setting-row__input" placeholder="en" />
+                  <Select
+                    size="small"
+                    showSearch
+                    optionFilterProp="label"
+                    className="merchant-setting-row__select"
+                    options={AD_LANGUAGE_OPTIONS}
+                    placeholder="语言"
+                  />
                 </Form.Item>
               </div>
             </div>
@@ -1528,7 +1545,7 @@ export default function MyMerchantsPage() {
                 catalogMerchantId: created.data.data.id,
                 mccCustomerId: values.mccCustomerId,
                 targetCountry: values.targetCountry,
-                languageCode: values.languageCode,
+                languageCode: values.languageCode || defaultLanguageForCountry(values.targetCountry),
                 bidding: settings.bidding,
                 dailyBudgetUsd: settings.dailyBudgetUsd,
                 cpcBidCeilingUsd: settings.bidding === 'MANUAL_CPC' ? settings.cpcBidCeilingUsd : '',

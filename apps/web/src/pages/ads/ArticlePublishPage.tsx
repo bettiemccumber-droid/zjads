@@ -107,18 +107,34 @@ function readUploadedImage(file: File): Promise<string> {
 }
 
 /**
- * 国家代码对应的文章语言。未列出的国家先按英文处理。
+ * 国家代码对应的文章语言。与广告投放常用语对齐。
  */
 function languageOf(countryCode: string): { code: string; label: string } {
   const country = countryCode.toUpperCase();
-  if (country === 'HK' || country === 'CN' || country === 'TW') return { code: 'zh', label: '中文' };
-  if (country === 'JP') return { code: 'ja', label: '日本語' };
-  if (country === 'DE') return { code: 'de', label: 'Deutsch' };
-  if (country === 'FR') return { code: 'fr', label: 'Français' };
-  if (country === 'VN') return { code: 'vi', label: 'Tiếng Việt' };
-  if (country === 'MX') return { code: 'es', label: 'Español (México)' };
-  if (country === 'ES') return { code: 'es', label: 'Español (España)' };
-  return { code: 'en', label: 'English' };
+  const map: Record<string, { code: string; label: string }> = {
+    PL: { code: 'pl', label: 'Polski' },
+    DE: { code: 'de', label: 'Deutsch' },
+    AT: { code: 'de', label: 'Deutsch' },
+    FR: { code: 'fr', label: 'Français' },
+    ES: { code: 'es', label: 'Español (España)' },
+    MX: { code: 'es', label: 'Español (México)' },
+    IT: { code: 'it', label: 'Italiano' },
+    PT: { code: 'pt', label: 'Português' },
+    BR: { code: 'pt', label: 'Português (Brasil)' },
+    NL: { code: 'nl', label: 'Nederlands' },
+    SE: { code: 'sv', label: 'Svenska' },
+    JP: { code: 'ja', label: '日本語' },
+    KR: { code: 'ko', label: '한국어' },
+    CN: { code: 'zh', label: '中文' },
+    HK: { code: 'zh-TW', label: '繁體中文' },
+    TW: { code: 'zh-TW', label: '繁體中文' },
+    VN: { code: 'vi', label: 'Tiếng Việt' },
+    TH: { code: 'th', label: 'ไทย' },
+    TR: { code: 'tr', label: 'Türkçe' },
+    RU: { code: 'ru', label: 'Русский' },
+    UA: { code: 'uk', label: 'Українська' },
+  };
+  return map[country] || { code: 'en', label: 'English' };
 }
 
 /**
@@ -170,6 +186,8 @@ export default function ArticlePublishPage() {
   const [retryUrl, setRetryUrl] = useState('');
   const uploadRef = useRef<HTMLInputElement>(null);
   const [preview, setPreview] = useState<ArticlePreview | null>(null);
+  /** 预览页可改的跟踪链接；发布时带回后端。 */
+  const [trackUrlEdit, setTrackUrlEdit] = useState('');
   const [generating, setGenerating] = useState(false);
   const [publishing, setPublishing] = useState(false);
   const [profileLoading, setProfileLoading] = useState(false);
@@ -218,7 +236,7 @@ export default function ArticlePublishPage() {
     }
   };
 
-  const currentPayload = () => ({
+  const currentPayload = (trackUrl?: string) => ({
     channelAccountId: draft.channelAccountId,
     siteId: account?.siteId ?? undefined,
     catalogMerchantId: picked?.catalogMerchantId ?? undefined,
@@ -228,6 +246,7 @@ export default function ArticlePublishPage() {
     countryCode: draft.countryCode,
     languageCode: languageOf(draft.countryCode || 'US').code,
     imageUrls: selectedImageUrls,
+    ...(trackUrl?.trim() ? { trackUrl: trackUrl.trim() } : {}),
   });
 
   useEffect(() => {
@@ -570,6 +589,7 @@ export default function ArticlePublishPage() {
                         return;
                       }
                       setPreview(res.data.data);
+                      setTrackUrlEdit(res.data.data.trackUrl || '');
                       setStep(4);
                     })
                     .catch((error: unknown) => message.error(errorText(error, '生成失败')))
@@ -587,7 +607,7 @@ export default function ArticlePublishPage() {
             <Typography.Title level={3}>{preview.title}</Typography.Title>
             {(preview.intro ?? []).map((text) => (
               <Typography.Paragraph key={text.slice(0, 24)}>
-                {previewRichText(text, preview.trackUrl)}
+                {previewRichText(text, trackUrlEdit || preview.trackUrl)}
               </Typography.Paragraph>
             ))}
             {preview.sections.map((section, index) => {
@@ -610,7 +630,7 @@ export default function ArticlePublishPage() {
                   <Typography.Title level={5}>{section.heading}</Typography.Title>
                   {paragraphs.map((text) => (
                     <Typography.Paragraph key={text.slice(0, 24)}>
-                      {previewRichText(text, preview.trackUrl)}
+                      {previewRichText(text, trackUrlEdit || preview.trackUrl)}
                     </Typography.Paragraph>
                   ))}
                 </div>
@@ -620,10 +640,21 @@ export default function ArticlePublishPage() {
               蓝色关键词会指向跟踪链接。配图插在各小节之间。卡片封面必须用商家页 https 图；只上传本地图时正文最多 1 张，且列表封面会空。
             </Typography.Paragraph>
             <div style={{ background: '#f6ffed', border: '1px solid #b7eb8f', borderRadius: 8, padding: 12, marginBottom: 8 }}>
-              <div>跟踪链接</div>
-              <a href={preview.trackUrl} target="_blank" rel="noreferrer">{preview.trackUrl}</a>
-              {preview.trackUrl === preview.merchantUrl && (
-                <div style={{ marginTop: 4 }}>这个联盟账号还没有跟踪链接前缀，正文链接暂时和商家网址相同。</div>
+              <div style={{ marginBottom: 6 }}>跟踪链接</div>
+              <Input
+                value={trackUrlEdit}
+                placeholder="https://..."
+                onChange={(event) => setTrackUrlEdit(event.target.value)}
+                addonAfter={
+                  /^https?:\/\//i.test(trackUrlEdit.trim()) ? (
+                    <a href={trackUrlEdit.trim()} target="_blank" rel="noreferrer">打开</a>
+                  ) : undefined
+                }
+              />
+              {(trackUrlEdit.trim() || preview.trackUrl) === preview.merchantUrl && (
+                <div style={{ marginTop: 6, color: 'rgba(0,0,0,0.45)' }}>
+                  当前与商家网址相同。可粘贴联盟跟踪链接；发布时正文关键词会指向这里。
+                </div>
               )}
             </div>
             <Typography.Text type="secondary">商家网址 {preview.merchantUrl}</Typography.Text>
@@ -638,14 +669,20 @@ export default function ArticlePublishPage() {
                       message.warning('请先在我的平台账号里绑定内容站');
                       return;
                     }
+                    const nextTrack = trackUrlEdit.trim() || preview.trackUrl;
+                    if (!/^https?:\/\//i.test(nextTrack)) {
+                      message.warning('跟踪链接需要以 http 或 https 开头');
+                      return;
+                    }
                     setPublishing(true);
-                    void api.post<ApiResult<ArticlePreview>>('/article-publish/publish', currentPayload())
+                    void api.post<ApiResult<ArticlePreview>>('/article-publish/publish', currentPayload(nextTrack))
                       .then((res) => {
                         if (!res.data.success) {
                           message.error(res.data.message || '保存失败');
                           return;
                         }
                         setPreview(res.data.data);
+                        setTrackUrlEdit(res.data.data.trackUrl || nextTrack);
                         message.success(res.data.data.accepted ? '内容站已回写文章地址' : '文章已保存，等待内容站回写');
                         setStep(5);
                       })
@@ -674,6 +711,7 @@ export default function ArticlePublishPage() {
                   setStep(0);
                   setPicked(null);
                   setPreview(null);
+                  setTrackUrlEdit('');
                   setImages([]);
                   setSelectedImageUrls([]);
                   setImageError('');

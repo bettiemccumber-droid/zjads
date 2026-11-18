@@ -239,6 +239,11 @@ class ArticlePublishBody {
   @IsArray()
   @IsString({ each: true })
   imageUrls?: string[];
+
+  /** 手动覆盖跟踪链接；不传则按联盟账号前缀自动拼。 */
+  @IsOptional()
+  @IsString()
+  trackUrl?: string;
 }
 
 /**

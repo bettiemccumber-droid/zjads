@@ -30,6 +30,7 @@ import {
 } from './ads-automation.util';
 import { crawlMerchantImages, crawlMerchantNavLinks } from './merchant-page-images';
 import { AiPersonaService } from './ai-persona.service';
+import { resolveAdLanguage } from './market-language';
 import { writeAdCopy, writeArticle } from './modelgo-copy';
 import { modelGoConfig } from './modelgo.client';
 import { buildCreateCampaignPayload } from './mutate-payload';
@@ -561,7 +562,7 @@ export class AdsAutomationService implements OnModuleInit {
   }
 
   /**
-   * 预览示例文章，不落库。跟踪链接按联盟账号规则生成。
+   * 预览示例文章，不落库。跟踪链接可手动覆盖，否则按联盟账号规则生成。
    */
   async previewComposedArticle(ownerUserId: number, input: ArticleComposeInput) {
     const prepared = await this.prepareComposedArticle(ownerUserId, input);
@@ -1197,6 +1198,7 @@ export class AdsAutomationService implements OnModuleInit {
       update: {},
     });
     const country = input.targetCountry.trim().toUpperCase();
+    const languageCode = resolveAdLanguage(country, input.languageCode);
     const channelAccount = await this.prisma.channelAccount.findFirst({
       where: { id: merchant.channelAccountId, ownerUserId },
       select: { affiliateAlias: true },
@@ -1215,7 +1217,7 @@ export class AdsAutomationService implements OnModuleInit {
         progressMessage: '排队中',
         mccCustomerId: mcc,
         targetCountry: country,
-        languageCode: (input.languageCode ?? '').trim(),
+        languageCode,
         input: {
           merchantName: merchant.name,
           merchantUrl: merchant.merchantUrl,
@@ -1223,10 +1225,10 @@ export class AdsAutomationService implements OnModuleInit {
           platformCode: merchant.platformCode,
           affiliateAlias,
           countryCode: country,
-          languageCode: (input.languageCode ?? '').trim(),
+          languageCode,
           bidding: input.bidding === 'MANUAL_CPC' ? 'MANUAL_CPC' : 'MAXIMIZE_CLICKS',
           dailyBudgetUsd: input.dailyBudgetUsd?.trim() || '3.00',
-          cpcBidCeilingUsd: input.cpcBidCeilingUsd?.trim() || '0.50',
+          cpcBidCeilingUsd: input.cpcBidCeilingUsd?.trim() || '',
         },
       },
     });
@@ -1761,7 +1763,7 @@ export class AdsAutomationService implements OnModuleInit {
         });
         await this.addEvent(jobId, 'RUNNING', step, message);
       }
-      const language = input.languageCode || 'en';
+      const language = resolveAdLanguage(input.countryCode || job.targetCountry || 'US', input.languageCode);
       const personaPrompt = useModel ? await this.personas.activePrompt(job.ownerUserId, 'ads') : '';
       const pageLinks = useModel ? await crawlMerchantNavLinks(input.merchantUrl) : [];
       if (useModel && pageLinks.length) {
@@ -2515,7 +2517,12 @@ export class AdsAutomationService implements OnModuleInit {
     const countryCode = input.countryCode.trim().toUpperCase();
     if (!/^[A-Z]{2}$/.test(countryCode)) throw new BadRequestException('目标国家用两位代码，例如 US');
     const languageCode = input.languageCode.trim() || 'en';
-    const trackUrl = buildTrackUrl(account.platform.code, merchantUrl, account.trackLinkPrefix);
+    const overrideTrack = (input.trackUrl ?? '').trim();
+    if (overrideTrack && !/^https?:\/\//i.test(overrideTrack)) {
+      throw new BadRequestException('跟踪链接需要以 http 或 https 开头');
+    }
+    const trackUrl = overrideTrack
+      || buildTrackUrl(account.platform.code, merchantUrl, account.trackLinkPrefix);
     const sample = modelGoConfig().enabled
       ? await this.articleFromModel(ownerUserId, name, merchantUrl, countryCode, languageCode)
       : buildSampleArticle({ merchantName: name, merchantUrl, trackUrl, languageCode });
@@ -2587,6 +2594,8 @@ interface ArticleComposeInput {
   countryCode: string;
   languageCode: string;
   imageUrls?: string[];
+  /** 手动填写时覆盖自动拼出的跟踪链接。 */
+  trackUrl?: string;
 }
 
 /**

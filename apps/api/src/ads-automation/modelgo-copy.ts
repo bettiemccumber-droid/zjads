@@ -103,8 +103,8 @@ Content rules:
 - structuredSnippets: pick exactly 2 headers from [${headers}] that best fit this merchant (e.g. travel: Types + Destinations; multi-brand: Types + Brands; own-brand: Types + Styles, avoid Brands). Use these exact English strings. Each needs at least ${AD_COPY_LIMITS.structuredValuesMin} short values.
 - Always include useful negativeKeywords (careers, login, free pdf, etc.).
 - Ad final URL (RSA) stays ${merchantUrl}. No URLs inside headline/description/callout text.
-- Each sitelink MUST include its own finalUrl. finalUrl values must be distinct https pages on the same merchant host, not all ${merchantUrl}. Prefer real subpages (quote, locations, services, how-it-works). Absolute paths or full URLs are both ok.
-${knownPages ? `Known on-site pages to prefer for sitelink finalUrl:\n${knownPages}` : ''}`;
+- Each sitelink MUST include its own finalUrl. finalUrl values must be distinct https pages on the same merchant host, not all ${merchantUrl}. Prefer purchase pages: shop, collections, products, best sellers, new arrivals, sale/deals, cart/checkout. Avoid Contact Us / About / Support / Careers / Login unless no purchase pages exist. Absolute paths or full URLs are both ok.
+${knownPages ? `Known on-site pages to prefer for sitelink finalUrl (purchase pages first):\n${knownPages}` : ''}`;
 }
 
 /**

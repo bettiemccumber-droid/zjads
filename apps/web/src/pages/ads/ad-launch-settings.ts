@@ -17,13 +17,22 @@ const DEFAULTS: AdLaunchSettings = {
 };
 
 /**
+ * 尽可能多点击时不带最高 CPC；兼容旧本地配置里残留的 0.50。
+ */
+export function normalizeAdSettings(value: Partial<AdLaunchSettings>): AdLaunchSettings {
+  const next = { ...DEFAULTS, ...value };
+  if (next.bidding !== 'MANUAL_CPC') next.cpcBidCeilingUsd = '';
+  return next;
+}
+
+/**
  * 读取当前员工保存在本机的投放默认值。
  */
 export function loadAdSettings(userId: number): AdLaunchSettings {
   try {
     const raw = localStorage.getItem(`zjads.adLaunchSettings.${userId}`);
     if (!raw) return { ...DEFAULTS };
-    return { ...DEFAULTS, ...JSON.parse(raw) };
+    return normalizeAdSettings(JSON.parse(raw) as Partial<AdLaunchSettings>);
   } catch {
     return { ...DEFAULTS };
   }
@@ -33,7 +42,7 @@ export function loadAdSettings(userId: number): AdLaunchSettings {
  * 保存投放默认值。新增广告时带上这些数字。
  */
 export function saveAdSettings(userId: number, value: AdLaunchSettings) {
-  localStorage.setItem(`zjads.adLaunchSettings.${userId}`, JSON.stringify(value));
+  localStorage.setItem(`zjads.adLaunchSettings.${userId}`, JSON.stringify(normalizeAdSettings(value)));
 }
 
 /**

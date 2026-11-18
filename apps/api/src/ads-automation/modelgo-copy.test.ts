@@ -1,10 +1,12 @@
 import assert from 'assert';
 import {
+  assignUniqueSitelinkUrls,
   buildSampleDraft,
   geoTargetForCountry,
   languageConstant,
   normalizePageKey,
   sanitizeDraftForReview,
+  sitelinkPageScore,
   validateDraft,
 } from './ads-automation.util';
 import { applyAdCopy, audienceLanguage, parseModelJson } from './modelgo-copy';
@@ -88,3 +90,19 @@ const payload = buildCreateCampaignPayload({
 const campaignOp = (payload.mutateOperations as Array<Record<string, any>>)
   .find((item) => item.campaignOperation);
 assert.deepStrictEqual(campaignOp?.campaignOperation.create.targetSpend, {});
+
+assert.ok(sitelinkPageScore('https://x.com/shop', 'shop') > sitelinkPageScore('https://x.com/contact-us', 'Contact Us'));
+const purchaseFirst = assignUniqueSitelinkUrls(
+  [
+    { linkText: 'Contact Us', description1: 'a', description2: 'b', finalUrl: 'https://example.com/pages/contact-us', verified: false },
+    { linkText: 'Shop now', description1: 'a', description2: 'b', finalUrl: '', verified: false },
+  ],
+  'https://example.com/',
+  [
+    { url: 'https://example.com/pages/contact-us', label: 'Contact Us' },
+    { url: 'https://example.com/collections/all', label: 'Shop' },
+    { url: 'https://example.com/products/bag', label: 'Bag' },
+  ],
+);
+assert.ok(!/contact/i.test(purchaseFirst[0].finalUrl));
+assert.ok(/collections|products|shop/i.test(purchaseFirst[0].finalUrl));

@@ -29,7 +29,9 @@ const sitelinks = assignUniqueSitelinkUrls(
 );
 
 assert.strictEqual(new Set(sitelinks.map((item) => normalizePageKey(item.finalUrl))).size, 3);
-assert.ok(sitelinks[0].finalUrl.includes('get-a-quote'));
+assert.ok(sitelinks.some((item) => item.finalUrl.includes('get-a-quote')));
+assert.ok(sitelinks.some((item) => item.finalUrl.includes('what-we-take')));
+assert.ok(sitelinks.some((item) => item.finalUrl.includes('how-it-works')));
 assert.ok(sitelinks.every((item) => item.verified));
 
 console.log('merchant-nav-links.test ok');

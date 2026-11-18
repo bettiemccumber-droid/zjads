@@ -343,7 +343,7 @@ export function buildSampleDraft(input: {
         '上新不断',
         '在线购买',
       ],
-      sitelinks: ['立即选购', '新品上市', '热销榜', '系列合集', '品牌介绍', '开始购物'],
+      sitelinks: ['立即选购', '新品上市', '热销榜', '系列合集', '优惠专区', '开始购物'],
     },
     keywords: [{ text: brand.toLowerCase().slice(0, 80), matchType: 'PHRASE' }],
     negativeKeywords: ['careers', 'jobs', 'login', 'wiki', 'free', 'pdf', 'manual'].map((text) => ({
@@ -381,9 +381,9 @@ export function buildSampleDraft(input: {
           verified: false,
         },
         {
-          linkText: 'About brand'.slice(0, AD_COPY_LIMITS.sitelinkText),
-          description1: 'Learn more'.slice(0, AD_COPY_LIMITS.sitelinkDescription),
-          description2: 'Brand story'.slice(0, AD_COPY_LIMITS.sitelinkDescription),
+          linkText: 'Sale deals'.slice(0, AD_COPY_LIMITS.sitelinkText),
+          description1: 'Limited offers'.slice(0, AD_COPY_LIMITS.sitelinkDescription),
+          description2: 'Shop savings'.slice(0, AD_COPY_LIMITS.sitelinkDescription),
           finalUrl: '',
           verified: false,
         },
@@ -401,7 +401,7 @@ export function buildSampleDraft(input: {
         { url: joinMerchantPath(input.merchantUrl, '/new-arrivals'), label: 'New arrivals' },
         { url: joinMerchantPath(input.merchantUrl, '/best-sellers'), label: 'Best sellers' },
         { url: joinMerchantPath(input.merchantUrl, '/collections'), label: 'Collections' },
-        { url: joinMerchantPath(input.merchantUrl, '/about'), label: 'About brand' },
+        { url: joinMerchantPath(input.merchantUrl, '/sale'), label: 'Sale deals' },
         { url: joinMerchantPath(input.merchantUrl, '/order'), label: 'Start shopping' },
       ],
     ),
@@ -780,7 +780,9 @@ export function sanitizeDraftForReview(draft: AdDraft, fallback: AdDraft): AdDra
     languageCode: draft.languageCode || fallback.languageCode,
     bidding: draft.bidding || fallback.bidding,
     dailyBudgetUsd: draft.dailyBudgetUsd || fallback.dailyBudgetUsd,
-    cpcBidCeilingUsd: draft.cpcBidCeilingUsd ?? fallback.cpcBidCeilingUsd ?? '',
+    cpcBidCeilingUsd: (draft.bidding || fallback.bidding) === 'MANUAL_CPC'
+      ? (draft.cpcBidCeilingUsd || fallback.cpcBidCeilingUsd || '')
+      : '',
   };
 }
 
@@ -1011,7 +1013,24 @@ export function sameMerchantPage(left: string, right: string): boolean {
 }
 
 /**
- * 给站内链接分配互不相同的同站落地页：优先模型给的 URL，其次按文案匹配爬到的内链，再轮询剩余内链，最后按文案造路径。
+ * 站内链接落地页偏好：购买/商品页优先，联系我们/关于页靠后。
+ */
+export function sitelinkPageScore(url: string, label = ''): number {
+  const text = `${url} ${label}`.toLowerCase();
+  if (/(contact|about|careers?|login|account|support|help|faq|privacy|terms|blog|press|investor|warranty|returns?)/i.test(text)) {
+    return -3;
+  }
+  if (/(shop|store|collection|product|catalog|cart|checkout|buy|order|sale|deal|best.?sell|new.?arriv|category|comprar|tienda| mercadoria)/i.test(text)) {
+    return 6;
+  }
+  if (/(bag|gear|outdoor|apparel|accessories|hat|drink|sku|item)/i.test(text)) {
+    return 3;
+  }
+  return 1;
+}
+
+/**
+ * 给站内链接分配互不相同的同站落地页：优先购买页，其次模型 URL / 文案匹配，最后造路径。
  */
 export function assignUniqueSitelinkUrls(
   sitelinks: AdSitelink[],
@@ -1026,30 +1045,35 @@ export function assignUniqueSitelinkUrls(
       label: (item.label ?? '').trim().toLowerCase(),
     }))
     .filter((item): item is { url: string; label: string } => Boolean(item.url))
-    .filter((item) => normalizePageKey(item.url) !== homeKey);
+    .filter((item) => normalizePageKey(item.url) !== homeKey)
+    .sort((a, b) => sitelinkPageScore(b.url, b.label) - sitelinkPageScore(a.url, a.label));
+
+  const unused = () => pool.filter((item) => {
+    const key = normalizePageKey(item.url);
+    return key && !used.has(key);
+  });
 
   return sitelinks.map((link) => {
     const fromModel = sameHostUrl(link.finalUrl, merchantUrl);
     let chosen = '';
     if (fromModel) {
       const key = normalizePageKey(fromModel);
-      if (key && key !== homeKey && !used.has(key)) chosen = fromModel;
+      if (key && key !== homeKey && !used.has(key)) {
+        const modelScore = sitelinkPageScore(fromModel, link.linkText);
+        const better = unused().find((item) => sitelinkPageScore(item.url, item.label) >= 3 && sitelinkPageScore(item.url, item.label) > modelScore);
+        chosen = modelScore >= 0 || !better ? fromModel : better.url;
+      }
     }
     if (!chosen) {
       const needle = link.linkText.trim().toLowerCase();
-      const matched = pool.find((item) => {
-        const key = normalizePageKey(item.url);
-        if (!key || used.has(key)) return false;
+      const matched = unused().find((item) => {
         if (!needle) return false;
         return item.label.includes(needle) || needle.includes(item.label) || slugifyLabel(item.label) === slugifyLabel(needle);
       });
       if (matched) chosen = matched.url;
     }
     if (!chosen) {
-      const next = pool.find((item) => {
-        const key = normalizePageKey(item.url);
-        return key && !used.has(key);
-      });
+      const next = unused()[0];
       if (next) chosen = next.url;
     }
     if (!chosen) {

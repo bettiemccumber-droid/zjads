@@ -999,12 +999,16 @@ export default function MyMerchantsPage() {
                 </span>
               </div>
             </div>
-            <div className="merchant-setting-row">
-              <span className="merchant-setting-row__label">CPC($)</span>
-              <Form.Item name="cpcBidCeilingUsd" noStyle>
-                <Input size="small" className="merchant-setting-row__input" placeholder="可选，一般不填" />
-              </Form.Item>
-            </div>
+            <Form.Item noStyle shouldUpdate={(prev, next) => prev.bidding !== next.bidding}>
+              {() => (settingsForm.getFieldValue('bidding') === 'MANUAL_CPC' ? (
+                <div className="merchant-setting-row">
+                  <span className="merchant-setting-row__label">CPC($)</span>
+                  <Form.Item name="cpcBidCeilingUsd" noStyle rules={[{ required: true, message: '填写最高 CPC' }]}>
+                    <Input size="small" className="merchant-setting-row__input" placeholder="手动 CPC 必填" />
+                  </Form.Item>
+                </div>
+              ) : null)}
+            </Form.Item>
             <div className="merchant-setting-row">
               <span className="merchant-setting-row__label">日预算($)</span>
               <Form.Item name="dailyBudgetUsd" noStyle rules={[{ required: true, message: '填写日预算' }]}>
@@ -1527,7 +1531,7 @@ export default function MyMerchantsPage() {
                 languageCode: values.languageCode,
                 bidding: settings.bidding,
                 dailyBudgetUsd: settings.dailyBudgetUsd,
-                cpcBidCeilingUsd: settings.cpcBidCeilingUsd,
+                cpcBidCeilingUsd: settings.bidding === 'MANUAL_CPC' ? settings.cpcBidCeilingUsd : '',
               });
               if (!res.data.success) {
                 message.error(res.data.message || '生成广告失败');

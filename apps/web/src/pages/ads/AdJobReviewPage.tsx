@@ -176,6 +176,13 @@ function emptyDraft(): AdDraft {
   };
 }
 
+/** 尽可能多点击时清掉最高 CPC，避免旧草稿残留 0.50。 */
+function hydrateDraft(raw?: Partial<AdDraft> | null): AdDraft {
+  const draft = { ...emptyDraft(), ...(raw || {}) };
+  if (draft.bidding !== 'MANUAL_CPC') draft.cpcBidCeilingUsd = '';
+  return draft;
+}
+
 function emptyPromotion(): AdPromotionAsset {
   return {
     enabled: false,
@@ -256,7 +263,7 @@ export default function AdJobReviewPage() {
     }
     const next = res.data.data;
     setJob(next);
-    if (next.draft) setDraft({ ...emptyDraft(), ...next.draft });
+    if (next.draft) setDraft(hydrateDraft(next.draft));
     if (next.suggestedCampaignName && !campaignNameDirty) {
       setCampaignName(next.suggestedCampaignName);
     }
@@ -320,7 +327,7 @@ export default function AdJobReviewPage() {
         return;
       }
       setJob(res.data.data);
-      if (res.data.data.draft) setDraft({ ...emptyDraft(), ...res.data.data.draft });
+      if (res.data.data.draft) setDraft(hydrateDraft(res.data.data.draft));
       message.success('草稿已保存');
     } catch (err) {
       const apiMessage = (err as { response?: { data?: { message?: string | string[] } } }).response?.data?.message;
@@ -361,7 +368,7 @@ export default function AdJobReviewPage() {
       }
       const payload = res.data.data;
       setJob(payload.job);
-      if (payload.job.draft) setDraft({ ...emptyDraft(), ...payload.job.draft });
+      if (payload.job.draft) setDraft(hydrateDraft(payload.job.draft));
       setSuggestions(payload.suggestions ?? []);
       message.success(`已导入 ${payload.imported} 个关键词（${payload.domain}）`);
     } catch (err) {
@@ -400,7 +407,7 @@ export default function AdJobReviewPage() {
             throw new Error('publish failed');
           }
           setJob(res.data.data);
-          if (res.data.data.draft) setDraft({ ...emptyDraft(), ...res.data.data.draft });
+          if (res.data.data.draft) setDraft(hydrateDraft(res.data.data.draft));
           const submitted = res.data.data.campaign?.status === 'ENABLED';
           message.success(submitted ? '已提交到 Google Ads' : '已写入待提交队列');
         } catch (err) {
@@ -1110,18 +1117,23 @@ export default function AdJobReviewPage() {
                         { value: 'MAXIMIZE_CLICKS', label: '尽可能多的点击' },
                         { value: 'MANUAL_CPC', label: '手动 CPC' },
                       ]}
-                      onChange={(bidding) => setDraft({ ...draft, bidding })}
+                      onChange={(bidding) => setDraft({
+                        ...draft,
+                        bidding,
+                        cpcBidCeilingUsd: bidding === 'MANUAL_CPC' ? draft.cpcBidCeilingUsd : '',
+                      })}
                     />
                   </Form.Item>
-                  <Form.Item label="最高 CPC (USD)">
-                    <Input
-                      prefix="$"
-                      value={draft.cpcBidCeilingUsd}
-                      placeholder="可不填"
-                      onChange={(event) => setDraft({ ...draft, cpcBidCeilingUsd: event.target.value })}
-                    />
-                    <div className="ad-review__hint">尽可能多点击时一般不设；仅手动 CPC 必填。</div>
-                  </Form.Item>
+                  {draft.bidding === 'MANUAL_CPC' ? (
+                    <Form.Item label="最高 CPC (USD)" required>
+                      <Input
+                        prefix="$"
+                        value={draft.cpcBidCeilingUsd}
+                        placeholder="手动 CPC 必填"
+                        onChange={(event) => setDraft({ ...draft, cpcBidCeilingUsd: event.target.value })}
+                      />
+                    </Form.Item>
+                  ) : null}
                   <Form.Item label="广告语言">
                     <Select
                       value={draft.languageCode || undefined}

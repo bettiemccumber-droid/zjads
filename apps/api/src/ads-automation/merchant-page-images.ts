@@ -10,49 +10,201 @@ export interface MerchantPageImage {
   alt: string;
 }
 
+export interface MerchantImageSource {
+  kind: 'site' | 'social' | 'search';
+  url: string;
+  imageCount: number;
+}
+
 /** 首页导航里抽出的同站内链，用来给站内链接分配不同落地页。 */
 export interface MerchantNavLink {
   url: string;
   label: string;
 }
 
-const MAX_IMAGES = 24;
-const MAX_DEEP_PAGES = 4;
+const MAX_IMAGES = 40;
+const MAX_DEEP_PAGES = 10;
+const MAX_SOCIAL_PAGES = 4;
+const MAX_SEARCH_IMAGES = 10;
 const MAX_NAV_LINKS = 40;
 const MAX_HTML_BYTES = 1_500_000;
 
 /**
  * 打开商家网页，抽出可放进文章的图片地址。不访问内网地址。
- * 抽出后会探测可用性，尽量只返回能打开的图。
- * deep=true 时再抓若干同站内页，补更多商品图。
+ * 多源：官网深爬 + 首页发现的社媒主页 + 可选 Google CSE 按域名搜图。
+ * 探测：验活优先，再用未验活候选填满额度，避免只剩几张。
  */
 export async function crawlMerchantImages(
   pageUrl: string,
-  options: { deep?: boolean } = {},
-): Promise<{ pageUrl: string; images: MerchantPageImage[] }> {
+  options: { deep?: boolean; social?: boolean; search?: boolean } = {},
+): Promise<{ pageUrl: string; images: MerchantPageImage[]; sources: MerchantImageSource[] }> {
   const { html, finalUrl } = await fetchMerchantHtml(pageUrl);
   const extracted = extractMerchantImages(html, finalUrl);
   const seen = new Set(extracted.map((item) => item.url));
+  let siteCount = extracted.length;
+
+  const pushUnique = (image: MerchantPageImage) => {
+    if (seen.has(image.url) || extracted.length >= MAX_IMAGES) return false;
+    seen.add(image.url);
+    extracted.push(image);
+    return true;
+  };
+
   if (options.deep !== false) {
-    const links = extractMerchantNavLinks(html, finalUrl)
-      .filter((link) => !isNoiseNavPath(safePathname(link.url)))
-      .slice(0, MAX_DEEP_PAGES);
+    const links = prioritizeDeepLinks(extractMerchantNavLinks(html, finalUrl)).slice(0, MAX_DEEP_PAGES);
     for (const link of links) {
       if (extracted.length >= MAX_IMAGES) break;
       try {
         const nested = await fetchMerchantHtml(link.url);
         for (const image of extractMerchantImages(nested.html, nested.finalUrl)) {
-          if (seen.has(image.url) || extracted.length >= MAX_IMAGES) continue;
-          seen.add(image.url);
-          extracted.push(image);
+          if (pushUnique(image)) siteCount += 1;
         }
       } catch {
         // 内页失败不影响首页图
       }
     }
   }
+
+  const sources: MerchantImageSource[] = [{ kind: 'site', url: finalUrl, imageCount: siteCount }];
+
+  if (options.social !== false) {
+    for (const social of extractSocialProfileLinks(html, finalUrl).slice(0, MAX_SOCIAL_PAGES)) {
+      if (extracted.length >= MAX_IMAGES) break;
+      let added = 0;
+      try {
+        const nested = await fetchMerchantHtml(social.url);
+        for (const image of extractMerchantImages(nested.html, nested.finalUrl)) {
+          if (pushUnique(image)) added += 1;
+        }
+      } catch {
+        // 社媒拦爬则跳过
+      }
+      if (added) sources.push({ kind: 'social', url: social.url, imageCount: added });
+    }
+  }
+
+  if (options.search !== false) {
+    const searchHits = await searchGoogleImagesByDomain(finalUrl, MAX_SEARCH_IMAGES);
+    let searchAdded = 0;
+    for (const image of searchHits) {
+      if (pushUnique(image)) searchAdded += 1;
+    }
+    if (searchAdded) {
+      try {
+        sources.push({ kind: 'search', url: new URL(finalUrl).hostname, imageCount: searchAdded });
+      } catch {
+        sources.push({ kind: 'search', url: finalUrl, imageCount: searchAdded });
+      }
+    }
+  }
+
   const images = await probeMerchantImages(extracted, MAX_IMAGES);
-  return { pageUrl: finalUrl, images };
+  return { pageUrl: finalUrl, images, sources };
+}
+
+/** 商品/分类向内链优先，再按路径深度。 */
+export function prioritizeDeepLinks(links: MerchantNavLink[]): MerchantNavLink[] {
+  return [...links]
+    .filter((link) => !isNoiseNavPath(safePathname(link.url)))
+    .sort((a, b) => productPathScore(b.url) - productPathScore(a.url) || navDepth(a.url) - navDepth(b.url) || a.url.localeCompare(b.url));
+}
+
+function productPathScore(url: string): number {
+  const path = safePathname(url).toLowerCase();
+  if (/(product|collection|shop|catalog|category|store|item|goods)/i.test(path)) return 3;
+  if (/(new|sale|best|featured|arrival)/i.test(path)) return 2;
+  return 0;
+}
+
+/**
+ * 从首页抽出品牌社媒主页（Instagram / Facebook / X / LinkedIn）。
+ */
+export function extractSocialProfileLinks(html: string, baseUrl: string): MerchantNavLink[] {
+  const byHost = new Map<string, MerchantNavLink>();
+  for (const tag of tags(html, 'a')) {
+    const href = attr(tag, 'href').trim();
+    if (!href || href.startsWith('#') || /^(mailto:|tel:|javascript:)/i.test(href)) continue;
+    let absolute: URL;
+    try {
+      absolute = new URL(href, baseUrl);
+    } catch {
+      continue;
+    }
+    if (absolute.protocol !== 'http:' && absolute.protocol !== 'https:') continue;
+    const host = normalizeHost(absolute.hostname);
+    const kind = socialKind(host, absolute.pathname);
+    if (!kind) continue;
+    absolute.hash = '';
+    const label = decodeHtml(stripTags(tag)).replace(/\s+/g, ' ').trim().slice(0, 80) || kind;
+    const key = `${kind}:${absolute.pathname.replace(/\/+$/, '').toLowerCase()}`;
+    if (!byHost.has(key)) byHost.set(key, { url: absolute.toString(), label });
+  }
+  return [...byHost.values()].slice(0, MAX_SOCIAL_PAGES);
+}
+
+function socialKind(host: string, pathname: string): string | null {
+  if (host === 'instagram.com' || host.endsWith('.instagram.com')) {
+    if (/^\/(p|reel|tv|stories)\b/i.test(pathname)) return null;
+    return 'instagram';
+  }
+  if (host === 'facebook.com' || host === 'fb.com' || host.endsWith('.facebook.com')) {
+    if (/^\/(sharer|dialog|plugins)\b/i.test(pathname)) return null;
+    return 'facebook';
+  }
+  if (host === 'x.com' || host === 'twitter.com' || host.endsWith('.twitter.com')) {
+    if (/^\/(intent|share|home)\b/i.test(pathname)) return null;
+    return 'x';
+  }
+  if (host === 'linkedin.com' || host.endsWith('.linkedin.com')) {
+    if (!/^\/company\//i.test(pathname)) return null;
+    return 'linkedin';
+  }
+  return null;
+}
+
+/**
+ * Google Programmable Search 图片搜索 site:域名。未配置 CSE 时返回空。
+ */
+export async function searchGoogleImagesByDomain(pageUrl: string, limit = MAX_SEARCH_IMAGES): Promise<MerchantPageImage[]> {
+  const key = (process.env.GOOGLE_CSE_API_KEY || '').trim();
+  const cx = (process.env.GOOGLE_CSE_CX || '').trim();
+  if (!key || !cx) return [];
+  let domain = '';
+  try {
+    domain = normalizeHost(new URL(pageUrl).hostname);
+  } catch {
+    return [];
+  }
+  if (!domain) return [];
+  try {
+    const res = await axios.get<{
+      items?: Array<{ link?: string; title?: string; image?: { contextLink?: string } }>;
+    }>('https://www.googleapis.com/customsearch/v1', {
+      timeout: 12000,
+      params: {
+        key,
+        cx,
+        q: `site:${domain}`,
+        searchType: 'image',
+        num: Math.min(10, Math.max(1, limit)),
+        safe: 'active',
+      },
+      validateStatus: () => true,
+    });
+    if (res.status < 200 || res.status >= 300) return [];
+    const out: MerchantPageImage[] = [];
+    const seen = new Set<string>();
+    for (const item of res.data.items ?? []) {
+      const url = (item.link || '').trim();
+      if (!url || seen.has(url) || !isUsableImage(url)) continue;
+      seen.add(url);
+      out.push({ url, alt: (item.title || '').slice(0, 120) });
+      if (out.length >= limit) break;
+    }
+    return out;
+  } catch {
+    return [];
+  }
 }
 
 function safePathname(url: string): string {
@@ -191,8 +343,20 @@ export function extractMerchantImages(html: string, baseUrl: string): MerchantPa
       || attr(tag, 'data-src')
       || attr(tag, 'data-original')
       || attr(tag, 'data-lazy-src')
+      || attr(tag, 'data-image')
+      || attr(tag, 'data-zoom-image')
+      || attr(tag, 'data-large')
+      || attr(tag, 'data-large_image')
       || largestSrcset(attr(tag, 'srcset') || attr(tag, 'data-srcset'));
     push(src, attr(tag, 'alt'));
+  }
+
+  for (const tag of tags(source, 'source')) {
+    push(attr(tag, 'src') || largestSrcset(attr(tag, 'srcset')), '');
+  }
+
+  for (const match of source.matchAll(/background(?:-image)?\s*:\s*url\(\s*['"]?([^'")\s]+)['"]?\s*\)/gi)) {
+    push(match[1] || '', '');
   }
 
   for (const match of source.matchAll(/(?:https?:)?\/\/[^\s"'()<>]+?\.(?:jpe?g|png|webp)(?:\?[^\s"'()<>]*)?/gi)) {
@@ -496,17 +660,27 @@ export async function probeMerchantImages(
 ): Promise<MerchantPageImage[]> {
   const filtered = candidates.filter((item) => !looksLikeScriptNoise(item.url) && isUsableImage(item.url));
   const alive: MerchantPageImage[] = [];
+  const aliveUrls = new Set<string>();
   for (const item of filtered) {
     if (alive.length >= limit) break;
     try {
       await assertPublicHttpUrl(item.url);
-      if (await imageUrlLooksAlive(item.url)) alive.push(item);
+      if (await imageUrlLooksAlive(item.url)) {
+        alive.push(item);
+        aliveUrls.add(item.url);
+      }
     } catch {
       // 单张失败不影响其它图
     }
   }
-  if (alive.length) return alive;
-  return filtered.slice(0, limit);
+  // 验活优先，再用未验活候选填满，避免 CDN 只放过几张时列表过短。
+  const filled = [...alive];
+  for (const item of filtered) {
+    if (filled.length >= limit) break;
+    if (aliveUrls.has(item.url)) continue;
+    filled.push(item);
+  }
+  return filled;
 }
 
 async function imageUrlLooksAlive(url: string): Promise<boolean> {

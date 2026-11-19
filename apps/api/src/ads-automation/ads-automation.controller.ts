@@ -4,13 +4,16 @@ import {
   Delete,
   ForbiddenException,
   Get,
+  Header,
   Param,
   ParseIntPipe,
   Patch,
   Post,
   Query,
+  Res,
   UseGuards,
 } from '@nestjs/common';
+import type { Response } from 'express';
 import { AuthGuard } from '@nestjs/passport';
 import { UserRole } from '@prisma/client';
 import { Type } from 'class-transformer';
@@ -546,6 +549,20 @@ export class AdsAutomationController {
   async crawlArticleImages(@CurrentUser() user: AuthUser, @Query('merchantUrl') merchantUrl?: string) {
     this.assertWriter(user);
     return ok(await this.ads.crawlArticleImages(merchantUrl ?? ''));
+  }
+
+  @Get('article-publish/image-proxy')
+  @Header('Cache-Control', 'private, max-age=300')
+  async proxyArticleImage(
+    @CurrentUser() user: AuthUser,
+    @Query('url') url: string | undefined,
+    @Res() res: Response,
+  ) {
+    this.assertWriter(user);
+    const file = await this.ads.proxyArticleImage(url ?? '');
+    res.setHeader('Content-Type', file.contentType);
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.send(file.buffer);
   }
 
   @Get('article-publish/merchant-profile')

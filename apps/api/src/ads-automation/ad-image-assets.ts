@@ -14,6 +14,32 @@ export interface PreparedAdImage {
 }
 
 /**
+ * 代理下载公网图片，供前端 canvas 裁切（绕过跨域污染）。
+ */
+export async function fetchPublicImageBuffer(url: string): Promise<{ buffer: Buffer; contentType: string }> {
+  const trimmed = url.trim();
+  if (!/^https?:\/\//i.test(trimmed)) throw new Error('图片地址无效');
+  const response = await axios.get<ArrayBuffer>(trimmed, {
+    timeout: 15000,
+    responseType: 'arraybuffer',
+    maxContentLength: 5_500_000,
+    maxRedirects: 3,
+    httpAgent: ipv4Http,
+    httpsAgent: ipv4Https,
+    headers: {
+      'User-Agent': 'Mozilla/5.0 (compatible; zjads-ad-images/1.0)',
+      Accept: 'image/jpeg,image/png,image/webp,*/*;q=0.8',
+    },
+    validateStatus: (status) => status >= 200 && status < 400,
+  });
+  const buffer = Buffer.from(response.data);
+  if (buffer.length < 100 || buffer.length > 5_242_880) throw new Error('图片过大或无效');
+  const headerType = String(response.headers['content-type'] || '').split(';')[0].trim();
+  const contentType = /^image\//i.test(headerType) ? headerType : (sniffMime(buffer) || 'application/octet-stream');
+  return { buffer, contentType };
+}
+
+/**
  * 下载广告图并转成 Google Ads imageAsset.data（base64）。
  * 优先保留正方形；最多 20 张；单张 ≤ 5MB。
  */

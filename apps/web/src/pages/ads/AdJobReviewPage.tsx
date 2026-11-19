@@ -16,6 +16,7 @@ import {
   Switch,
   Tag,
   Typography,
+  Upload,
   message,
 } from 'antd';
 import {
@@ -23,6 +24,8 @@ import {
   CloudDownloadOutlined,
   CopyOutlined,
   DeleteOutlined,
+  InboxOutlined,
+  PictureOutlined,
   ReloadOutlined,
   RocketOutlined,
   SaveOutlined,
@@ -95,6 +98,7 @@ interface AdDraft {
   languageCode: string;
   geoTargetId: string;
   imageUrls?: string[];
+  logoUrls?: string[];
 }
 
 interface AdImageCandidate {
@@ -121,10 +125,7 @@ function measureImage(url: string): Promise<{ width: number; height: number }> {
   });
 }
 
-/**
- * 从横/竖图中心裁成正方形 JPEG，供广告 AD_IMAGE 使用。
- */
-function cropSquareDataUrl(url: string, target = 1200): Promise<string> {
+function cropFromImageSrc(src: string, target = 1200): Promise<string> {
   return new Promise((resolve, reject) => {
     const image = new Image();
     image.crossOrigin = 'anonymous';
@@ -150,7 +151,44 @@ function cropSquareDataUrl(url: string, target = 1200): Promise<string> {
     };
     image.onerror = () => reject(new Error('load failed'));
     image.referrerPolicy = 'no-referrer';
-    image.src = url;
+    image.src = src;
+  });
+}
+
+/**
+ * 从横/竖图中心裁成正方形 JPEG。跨域失败时走后端代理再裁。
+ */
+async function cropSquareDataUrl(url: string, target = 1200): Promise<string> {
+  try {
+    return await cropFromImageSrc(url, target);
+  } catch {
+    const res = await api.get(`/article-publish/image-proxy`, {
+      params: { url },
+      responseType: 'blob',
+    });
+    const objectUrl = URL.createObjectURL(res.data as Blob);
+    try {
+      return await cropFromImageSrc(objectUrl, target);
+    } finally {
+      URL.revokeObjectURL(objectUrl);
+    }
+  }
+}
+
+function readFileAsDataUrl(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    if (!/^image\/(jpeg|png)$/i.test(file.type)) {
+      reject(new Error('仅支持 JPG、PNG'));
+      return;
+    }
+    if (file.size > 5 * 1024 * 1024) {
+      reject(new Error('单张最大 5MB'));
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result || ''));
+    reader.onerror = () => reject(new Error('读取失败'));
+    reader.readAsDataURL(file);
   });
 }
 
@@ -259,16 +297,20 @@ function emptyDraft(): AdDraft {
     languageCode: 'en',
     geoTargetId: '',
     imageUrls: [],
+    logoUrls: [],
   };
+}
+
+function acceptedMediaUrl(url: string) {
+  return /^https?:\/\//i.test(url) || /^data:image\/(?:jpeg|png);base64,/i.test(url);
 }
 
 /** 尽可能多点击时清掉最高 CPC，避免旧草稿残留 0.50。 */
 function hydrateDraft(raw?: Partial<AdDraft> | null): AdDraft {
   const draft = { ...emptyDraft(), ...(raw || {}) };
   if (draft.bidding !== 'MANUAL_CPC') draft.cpcBidCeilingUsd = '';
-  draft.imageUrls = Array.isArray(draft.imageUrls)
-    ? draft.imageUrls.filter((url) => /^https?:\/\//i.test(url) || /^data:image\/(?:jpeg|png);base64,/i.test(url))
-    : [];
+  draft.imageUrls = Array.isArray(draft.imageUrls) ? draft.imageUrls.filter(acceptedMediaUrl) : [];
+  draft.logoUrls = Array.isArray(draft.logoUrls) ? draft.logoUrls.filter(acceptedMediaUrl) : [];
   return draft;
 }
 
@@ -345,12 +387,16 @@ export default function AdJobReviewPage() {
   const [campaignName, setCampaignName] = useState('');
   const [campaignNameDirty, setCampaignNameDirty] = useState(false);
   const [adImages, setAdImages] = useState<AdImageCandidate[]>([]);
+  const [logoImages, setLogoImages] = useState<AdImageCandidate[]>([]);
   const [loadingAdImages, setLoadingAdImages] = useState(false);
+  const [pasteImageUrl, setPasteImageUrl] = useState('');
+  const [pasteLogoUrl, setPasteLogoUrl] = useState('');
   // 用 ref 读脏标记，避免改系列名时重建 loadJob → 重新拉任务盖掉未保存的广告草稿
   const campaignNameDirtyRef = useRef(false);
   campaignNameDirtyRef.current = campaignNameDirty;
 
   const selectedImageUrls = draft.imageUrls ?? [];
+  const selectedLogoUrls = draft.logoUrls ?? [];
   const selectedSquareCount = adImages.filter((item) => selectedImageUrls.includes(item.url) && item.square).length;
 
   useEffect(() => {
@@ -393,10 +439,11 @@ export default function AdJobReviewPage() {
     }
     setLoadingAdImages(true);
     try {
-      const res = await api.get<ApiResult<{ pageUrl: string; images: Array<{ url: string; alt: string }> }>>(
-        '/article-publish/images',
-        { params: { merchantUrl } },
-      );
+      const res = await api.get<ApiResult<{
+        pageUrl: string;
+        images: Array<{ url: string; alt: string }>;
+        sources?: Array<{ kind: string; url: string; imageCount: number }>;
+      }>>('/article-publish/images', { params: { merchantUrl } });
       if (!res.data.success) {
         message.error(res.data.message || '抓取图片失败');
         return;
@@ -406,6 +453,7 @@ export default function AdJobReviewPage() {
       for (const row of rows) {
         try {
           const size = await measureImage(row.url);
+          if (size.width < 300 || size.height < 300) continue;
           measured.push({
             url: row.url,
             alt: row.alt || '',
@@ -417,7 +465,6 @@ export default function AdJobReviewPage() {
           // 浏览器打不开的图丢掉
         }
       }
-      // 商家站常只有横图：自动从最大图裁一张正方形，方便过 Google 要求
       if (measured.length && !measured.some((item) => item.square)) {
         const source = [...measured].sort((a, b) => (b.width * b.height) - (a.width * a.height))[0];
         try {
@@ -430,22 +477,82 @@ export default function AdJobReviewPage() {
             square: true,
           });
         } catch {
-          // 跨域 canvas 失败时仍展示原图，提示人工换图
+          // 代理裁切也失败时仍展示原图
         }
       }
       setAdImages(measured);
-      const squares = measured.filter((item) => item.square).map((item) => item.url);
-      const extras = measured.filter((item) => !item.square).slice(0, 6).map((item) => item.url);
-      const picked = [...new Set([...(draft.imageUrls ?? []), ...squares, ...extras])].slice(0, 20);
-      if (picked.length) setDraft((current) => ({ ...current, imageUrls: picked }));
-      if (!measured.length) message.warning('没有抓到可用图片，可换商家网址或稍后重试');
-      else if (!squares.length) message.warning(`已加载 ${measured.length} 张，但裁正方形失败（可能跨域）。可换图或手动上传。`);
-      else message.success(`已加载 ${measured.length} 张（含正方形 ${squares.length}）；首页图少时会再扫内页`);
+      const logoPool = measured
+        .filter((item) => item.square || Math.abs(item.width / item.height - 1) < 0.35)
+        .slice(0, 15);
+      setLogoImages(logoPool.length ? logoPool : measured.filter((item) => item.square).slice(0, 15));
+      const sources = res.data.data.sources ?? [];
+      const site = sources.filter((item) => item.kind === 'site').reduce((sum, item) => sum + item.imageCount, 0);
+      const social = sources.filter((item) => item.kind === 'social').reduce((sum, item) => sum + item.imageCount, 0);
+      const search = sources.filter((item) => item.kind === 'search').reduce((sum, item) => sum + item.imageCount, 0);
+      const squareCount = measured.filter((item) => item.square).length;
+      if (!measured.length) message.warning('没有抓到可用图片，可拖入本地图或粘贴 URL');
+      else {
+        const parts = [`官网 ${site || measured.length}`];
+        if (social) parts.push(`社媒 ${social}`);
+        if (search) parts.push(`搜索 ${search}`);
+        message.success(`已加载 ${measured.length} 张可选（${parts.join(' / ')}，正方形 ${squareCount}）`);
+      }
     } catch (err) {
       const apiMessage = (err as { response?: { data?: { message?: string | string[] } } }).response?.data?.message;
       message.error(Array.isArray(apiMessage) ? apiMessage.join('；') : apiMessage || '抓取图片失败');
     } finally {
       setLoadingAdImages(false);
+    }
+  };
+
+  const addMediaUrl = async (kind: 'image' | 'logo', raw: string) => {
+    const url = raw.trim();
+    if (!acceptedMediaUrl(url)) {
+      message.warning('请粘贴 http(s) 或已上传的图片地址');
+      return;
+    }
+    try {
+      const size = await measureImage(url);
+      if (size.width < 300 || size.height < 300) {
+        message.warning('图片至少 300×300');
+        return;
+      }
+      const candidate: AdImageCandidate = {
+        url,
+        alt: '',
+        width: size.width,
+        height: size.height,
+        square: isNearSquare(size.width, size.height),
+      };
+      if (kind === 'image') {
+        setAdImages((prev) => (prev.some((item) => item.url === url) ? prev : [candidate, ...prev]));
+        setDraft((current) => ({
+          ...current,
+          imageUrls: [...new Set([...(current.imageUrls ?? []), url])].slice(0, 20),
+        }));
+        setPasteImageUrl('');
+      } else {
+        setLogoImages((prev) => (prev.some((item) => item.url === url) ? prev : [candidate, ...prev]));
+        setDraft((current) => ({
+          ...current,
+          logoUrls: [...new Set([...(current.logoUrls ?? []), url])].slice(0, 5),
+        }));
+        setPasteLogoUrl('');
+      }
+      message.success('已添加');
+    } catch {
+      message.error('无法打开该图片地址');
+    }
+  };
+
+  const addLocalFiles = async (kind: 'image' | 'logo', files: File[]) => {
+    for (const file of files) {
+      try {
+        const dataUrl = await readFileAsDataUrl(file);
+        await addMediaUrl(kind, dataUrl);
+      } catch (err) {
+        message.error(err instanceof Error ? err.message : '上传失败');
+      }
     }
   };
 
@@ -615,14 +722,6 @@ export default function AdJobReviewPage() {
     }
     if (!customerId) {
       message.warning('请先选择可投放的 CID');
-      return;
-    }
-    if (!selectedImageUrls.length) {
-      message.warning('请至少选择 1 张广告图片');
-      return;
-    }
-    if (selectedSquareCount < 1) {
-      message.warning('广告图片里至少需要 1 张正方形（约 1:1）');
       return;
     }
     Modal.confirm({
@@ -1084,221 +1183,38 @@ export default function AdJobReviewPage() {
               ) : null}
             </Card>
 
-            <Card size="small" style={{ marginTop: 16 }} title="宣传信息 / 促销 / 结构化摘要">
-              <Form layout="vertical">
-                <div className="ad-review__section-title">
-                  <h4>宣传信息（{draft.callouts.length}/8，每条 ≤25）</h4>
-                </div>
-                {draft.callouts.map((text, index) => (
-                  <div className="ad-review__row" key={`c-${index}`}>
-                    <div className="ad-review__row-index">{index + 1}</div>
-                    <div className="ad-review__row-main">
-                      <Input
-                        value={text}
-                        maxLength={25}
-                        onChange={(event) => {
-                          const callouts = [...draft.callouts];
-                          callouts[index] = event.target.value;
-                          setDraft({ ...draft, callouts });
-                        }}
-                      />
-                      {zhHint(draft.translations, 'callouts', index) ? (
-                        <div className="ad-review__zh">{zhHint(draft.translations, 'callouts', index)}</div>
-                      ) : null}
-                    </div>
-                    <div className="ad-review__row-actions">
-                      {charCount(text, 25)}
-                      <Button
-                        type="text"
-                        size="small"
-                        danger
-                        icon={<DeleteOutlined />}
-                        onClick={() => setDraft({
-                          ...draft,
-                          callouts: draft.callouts.filter((_, i) => i !== index),
-                        })}
-                      />
-                    </div>
-                  </div>
-                ))}
-                {draft.callouts.length < 8 ? (
-                  <Button
-                    type="dashed"
-                    block
-                    style={{ marginBottom: 16 }}
-                    onClick={() => setDraft({ ...draft, callouts: [...draft.callouts, ''] })}
-                  >
-                    添加宣传信息
-                  </Button>
-                ) : null}
-
-                <Form.Item
-                  label={(
-                    <Space>
-                      <span>促销附加信息（可选）</span>
-                      <Switch
-                        checked={Boolean(draft.promotionAsset?.enabled)}
-                        onChange={(enabled) => setDraft({
-                          ...draft,
-                          promotionAsset: {
-                            ...(draft.promotionAsset || emptyPromotion()),
-                            enabled,
-                            languageCode: draft.promotionAsset?.languageCode || draft.languageCode || 'en',
-                            finalUrl: draft.promotionAsset?.finalUrl || draft.merchantUrl,
-                          },
-                        })}
-                      />
-                    </Space>
-                  )}
-                >
-                  {draft.promotionAsset?.enabled ? (
-                    <Space direction="vertical" style={{ width: '100%' }} size={8}>
-                      <Input
-                        placeholder="商品/对象（≤20）"
-                        maxLength={20}
-                        value={draft.promotionAsset.promotionTarget}
-                        onChange={(event) => setDraft({
-                          ...draft,
-                          promotionAsset: { ...draft.promotionAsset!, promotionTarget: event.target.value },
-                        })}
-                        suffix={`${draft.promotionAsset.promotionTarget.length}/20`}
-                      />
-                      <Space wrap>
-                        <Select
-                          style={{ width: 140 }}
-                          value={draft.promotionAsset.discountType}
-                          options={[
-                            { value: 'PERCENT', label: '折扣百分比' },
-                            { value: 'MONETARY', label: '折扣金额' },
-                          ]}
-                          onChange={(discountType) => setDraft({
-                            ...draft,
-                            promotionAsset: { ...draft.promotionAsset!, discountType },
-                          })}
-                        />
-                        {draft.promotionAsset.discountType === 'PERCENT' ? (
-                          <Input
-                            style={{ width: 140 }}
-                            suffix="%"
-                            value={draft.promotionAsset.percentOff ?? ''}
-                            onChange={(event) => setDraft({
-                              ...draft,
-                              promotionAsset: {
-                                ...draft.promotionAsset!,
-                                percentOff: Number(event.target.value) || 0,
-                              },
-                            })}
-                          />
-                        ) : (
-                          <Space>
-                            <Input
-                              style={{ width: 90 }}
-                              value={draft.promotionAsset.currencyCode || 'USD'}
-                              onChange={(event) => setDraft({
-                                ...draft,
-                                promotionAsset: { ...draft.promotionAsset!, currencyCode: event.target.value },
-                              })}
-                            />
-                            <Input
-                              style={{ width: 120 }}
-                              value={draft.promotionAsset.moneyAmountOff || ''}
-                              onChange={(event) => setDraft({
-                                ...draft,
-                                promotionAsset: { ...draft.promotionAsset!, moneyAmountOff: event.target.value },
-                              })}
-                            />
-                          </Space>
-                        )}
-                      </Space>
-                      <Input
-                        placeholder="最终到达网址"
-                        value={draft.promotionAsset.finalUrl || draft.merchantUrl}
-                        onChange={(event) => setDraft({
-                          ...draft,
-                          promotionAsset: { ...draft.promotionAsset!, finalUrl: event.target.value },
-                        })}
-                      />
-                      <Input
-                        placeholder="促销代码（可选）"
-                        value={draft.promotionAsset.promotionCode || ''}
-                        onChange={(event) => setDraft({
-                          ...draft,
-                          promotionAsset: { ...draft.promotionAsset!, promotionCode: event.target.value },
-                        })}
-                      />
-                      {draft.translations?.promotion ? (
-                        <div className="ad-review__zh">{draft.translations.promotion}</div>
-                      ) : null}
-                      <div className="ad-review__hint">对应 Google Ads 促销附加信息；没有明确折扣时可关闭。</div>
-                    </Space>
-                  ) : (
-                    <div className="ad-review__hint">默认关闭。有明确折扣/满减时再打开并填写。</div>
-                  )}
-                </Form.Item>
-                <Form.Item label="结构化摘要">
-                  <Space direction="vertical" style={{ width: '100%' }} size={8}>
-                    {(draft.structuredSnippets.length ? draft.structuredSnippets : [{ header: 'Types', values: [] }]).map((snippet, index) => (
-                      <Card key={`s-${index}`} size="small" type="inner">
-                        <Select
-                          style={{ width: '100%', marginBottom: 8 }}
-                          value={snippet.header}
-                          options={SNIPPET_HEADERS.map((header) => ({ value: header, label: header }))}
-                          onChange={(header) => {
-                            const structuredSnippets = [...(draft.structuredSnippets.length ? draft.structuredSnippets : [{ header: 'Types', values: [] }])];
-                            structuredSnippets[index] = { ...structuredSnippets[index], header };
-                            setDraft({ ...draft, structuredSnippets });
-                          }}
-                        />
-                        <Input.TextArea
-                          rows={2}
-                          placeholder="逗号或换行分隔，至少 4 个值"
-                          value={snippet.values.join(', ')}
-                          onChange={(event) => {
-                            const values = event.target.value
-                              .split(/[,\n]/)
-                              .map((item) => item.trim())
-                              .filter(Boolean)
-                              .slice(0, 10);
-                            const structuredSnippets = [...(draft.structuredSnippets.length ? draft.structuredSnippets : [{ header: 'Types', values: [] }])];
-                            structuredSnippets[index] = { ...structuredSnippets[index], values };
-                            setDraft({ ...draft, structuredSnippets });
-                          }}
-                        />
-                        {zhHint(draft.translations, 'structuredSnippets', index) ? (
-                          <div className="ad-review__zh" style={{ marginTop: 6 }}>
-                            {zhHint(draft.translations, 'structuredSnippets', index)}
-                          </div>
-                        ) : null}
-                      </Card>
-                    ))}
-                  </Space>
-                </Form.Item>
-              </Form>
-            </Card>
-
             <Card
               size="small"
               style={{ marginTop: 16 }}
-              title={`广告图片（已选 ${selectedImageUrls.length}/20，正方形 ${selectedSquareCount}）`}
+              title={(
+                <Space>
+                  <PictureOutlined />
+                  <span>商家图片（可选）</span>
+                  <Tag color="blue">自动生成</Tag>
+                </Space>
+              )}
               extra={(
-                <Button size="small" loading={loadingAdImages} onClick={() => void loadAdImages()} disabled={!editable}>
-                  从商家站拉图
+                <Button size="small" icon={<ReloadOutlined />} loading={loadingAdImages} onClick={() => void loadAdImages()} disabled={!editable}>
+                  重新提取
                 </Button>
               )}
             >
               <div className="ad-review__hint" style={{ marginBottom: 8 }}>
-                搜索广告建议带图；必须至少勾选 1 张接近正方形（约 1:1，边长 ≥300）。商家首页图少时会再扫内页；没有方图时会自动从最大图裁一张。
+                系统从商家官网、社媒与（若已配置）Google 按域名搜图拉取候选；可选。失败时可拖入图片或粘贴 URL。Google Ads 要求最低 300×300。
               </div>
-              {!adImages.length ? (
-                <div className="ad-review__hint">点「从商家站拉图」扫描商家页与内页；加载成功后会优先勾选正方形图。</div>
-              ) : (
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, minmax(0, 1fr))', gap: 8 }}>
+              <div className="ad-review__hint" style={{ marginBottom: 8 }}>
+                可选图片 {adImages.length} 张，已选 {selectedImageUrls.length} 张（点击选择/取消）
+                {selectedSquareCount ? ` · 正方形 ${selectedSquareCount}` : ''}
+              </div>
+              {adImages.length ? (
+                <div className="ad-review__media-grid">
                   {adImages.map((image) => {
                     const selected = selectedImageUrls.includes(image.url);
                     return (
                       <button
                         key={image.url}
                         type="button"
+                        className={`ad-review__media-tile${selected ? ' is-selected' : ''}`}
                         disabled={!editable}
                         title={`${image.width}x${image.height}${image.square ? ' · 正方形' : ''}`}
                         onClick={() => {
@@ -1310,29 +1226,299 @@ export default function AdJobReviewPage() {
                             return { ...current, imageUrls: next };
                           });
                         }}
-                        style={{
-                          padding: 0,
-                          borderRadius: 8,
-                          overflow: 'hidden',
-                          border: selected ? '2px solid #1677ff' : '1px solid #f0f0f0',
-                          background: '#fafafa',
-                          cursor: editable ? 'pointer' : 'default',
-                        }}
                       >
-                        <img
-                          src={image.url}
-                          alt={image.alt || '广告图'}
-                          referrerPolicy="no-referrer"
-                          style={{ width: '100%', height: 88, objectFit: 'cover', display: 'block' }}
-                        />
-                        <div style={{ fontSize: 11, padding: '2px 4px', color: image.square ? '#1677ff' : 'rgba(0,0,0,0.45)' }}>
-                          {image.square ? '正方形' : `${image.width}×${image.height}`}
-                        </div>
+                        <img src={image.url} alt={image.alt || '广告图'} referrerPolicy="no-referrer" />
                       </button>
                     );
                   })}
                 </div>
+              ) : null}
+              <Upload.Dragger
+                disabled={!editable}
+                multiple
+                accept="image/jpeg,image/png,.jpg,.jpeg,.png"
+                showUploadList={false}
+                beforeUpload={(file) => {
+                  void addLocalFiles('image', [file]);
+                  return false;
+                }}
+                className="ad-review__media-drop"
+              >
+                <p className="ant-upload-drag-icon"><InboxOutlined /></p>
+                <p className="ant-upload-text">点击或拖入商家产品图片</p>
+                <p className="ant-upload-hint">支持 JPG、PNG，最大 5MB（Google Ads 要求最低 300×300 像素）</p>
+              </Upload.Dragger>
+              <Space.Compact style={{ width: '100%', marginTop: 8 }}>
+                <Input
+                  disabled={!editable}
+                  value={pasteImageUrl}
+                  placeholder="或粘贴图片 URL (https://...)"
+                  onChange={(event) => setPasteImageUrl(event.target.value)}
+                  onPressEnter={() => void addMediaUrl('image', pasteImageUrl)}
+                />
+                <Button type="primary" disabled={!editable} onClick={() => void addMediaUrl('image', pasteImageUrl)}>
+                  + 添加 URL
+                </Button>
+              </Space.Compact>
+            </Card>
+
+            <Card
+              size="small"
+              style={{ marginTop: 16 }}
+              title={(
+                <Space>
+                  <PictureOutlined />
+                  <span>商家商标（可选）</span>
+                </Space>
               )}
+              extra={(
+                <Button size="small" icon={<ReloadOutlined />} loading={loadingAdImages} onClick={() => void loadAdImages()} disabled={!editable}>
+                  重新提取
+                </Button>
+              )}
+            >
+              <div className="ad-review__hint" style={{ marginBottom: 8 }}>
+                商标建议接近正方形。可选；不选也可提交。已选 {selectedLogoUrls.length}/5。
+              </div>
+              {logoImages.length ? (
+                <div className="ad-review__media-grid">
+                  {logoImages.map((image) => {
+                    const selected = selectedLogoUrls.includes(image.url);
+                    return (
+                      <button
+                        key={`logo-${image.url}`}
+                        type="button"
+                        className={`ad-review__media-tile${selected ? ' is-selected' : ''}`}
+                        disabled={!editable}
+                        onClick={() => {
+                          setDraft((current) => {
+                            const urls = current.logoUrls ?? [];
+                            const next = selected
+                              ? urls.filter((url) => url !== image.url)
+                              : [...urls, image.url].slice(0, 5);
+                            return { ...current, logoUrls: next };
+                          });
+                        }}
+                      >
+                        <img src={image.url} alt={image.alt || '商标'} referrerPolicy="no-referrer" />
+                      </button>
+                    );
+                  })}
+                </div>
+              ) : (
+                <div className="ad-review__hint" style={{ marginBottom: 8 }}>点「重新提取」或上传/粘贴商标图。</div>
+              )}
+              <Upload.Dragger
+                disabled={!editable}
+                multiple
+                accept="image/jpeg,image/png,.jpg,.jpeg,.png"
+                showUploadList={false}
+                beforeUpload={(file) => {
+                  void addLocalFiles('logo', [file]);
+                  return false;
+                }}
+                className="ad-review__media-drop"
+              >
+                <p className="ant-upload-drag-icon"><InboxOutlined /></p>
+                <p className="ant-upload-text">点击或拖入商家商标</p>
+                <p className="ant-upload-hint">支持 JPG、PNG，最大 5MB，建议正方形</p>
+              </Upload.Dragger>
+              <Space.Compact style={{ width: '100%', marginTop: 8 }}>
+                <Input
+                  disabled={!editable}
+                  value={pasteLogoUrl}
+                  placeholder="或粘贴商标 URL (https://...)"
+                  onChange={(event) => setPasteLogoUrl(event.target.value)}
+                  onPressEnter={() => void addMediaUrl('logo', pasteLogoUrl)}
+                />
+                <Button type="primary" disabled={!editable} onClick={() => void addMediaUrl('logo', pasteLogoUrl)}>
+                  + 添加 URL
+                </Button>
+              </Space.Compact>
+            </Card>
+
+            <Card size="small" style={{ marginTop: 16 }} title={`宣传信息（${draft.callouts.length}/8）`}>
+              {draft.callouts.map((text, index) => (
+                <div className="ad-review__row" key={`c-${index}`}>
+                  <div className="ad-review__row-index">{index + 1}</div>
+                  <div className="ad-review__row-main">
+                    <Input
+                      value={text}
+                      maxLength={25}
+                      onChange={(event) => {
+                        const callouts = [...draft.callouts];
+                        callouts[index] = event.target.value;
+                        setDraft({ ...draft, callouts });
+                      }}
+                    />
+                    {zhHint(draft.translations, 'callouts', index) ? (
+                      <div className="ad-review__zh">{zhHint(draft.translations, 'callouts', index)}</div>
+                    ) : null}
+                  </div>
+                  <div className="ad-review__row-actions">
+                    {charCount(text, 25)}
+                    <Button
+                      type="text"
+                      size="small"
+                      danger
+                      icon={<DeleteOutlined />}
+                      onClick={() => setDraft({
+                        ...draft,
+                        callouts: draft.callouts.filter((_, i) => i !== index),
+                      })}
+                    />
+                  </div>
+                </div>
+              ))}
+              {draft.callouts.length < 8 ? (
+                <Button type="dashed" block onClick={() => setDraft({ ...draft, callouts: [...draft.callouts, ''] })}>
+                  + 添加宣传信息（最多 10）
+                </Button>
+              ) : null}
+            </Card>
+
+            <Card
+              size="small"
+              style={{ marginTop: 16 }}
+              title={(
+                <Space>
+                  <span>促销（可选）</span>
+                  <Switch
+                    checked={Boolean(draft.promotionAsset?.enabled)}
+                    onChange={(enabled) => setDraft({
+                      ...draft,
+                      promotionAsset: {
+                        ...(draft.promotionAsset || emptyPromotion()),
+                        enabled,
+                        languageCode: draft.promotionAsset?.languageCode || draft.languageCode || 'en',
+                        finalUrl: draft.promotionAsset?.finalUrl || draft.merchantUrl,
+                      },
+                    })}
+                  />
+                </Space>
+              )}
+            >
+              {draft.promotionAsset?.enabled ? (
+                <Space direction="vertical" style={{ width: '100%' }} size={8}>
+                  <Input
+                    placeholder="商品/对象（≤20）"
+                    maxLength={20}
+                    value={draft.promotionAsset.promotionTarget}
+                    onChange={(event) => setDraft({
+                      ...draft,
+                      promotionAsset: { ...draft.promotionAsset!, promotionTarget: event.target.value },
+                    })}
+                    suffix={`${draft.promotionAsset.promotionTarget.length}/20`}
+                  />
+                  <Space wrap>
+                    <Select
+                      style={{ width: 140 }}
+                      value={draft.promotionAsset.discountType}
+                      options={[
+                        { value: 'PERCENT', label: '折扣百分比' },
+                        { value: 'MONETARY', label: '折扣金额' },
+                      ]}
+                      onChange={(discountType) => setDraft({
+                        ...draft,
+                        promotionAsset: { ...draft.promotionAsset!, discountType },
+                      })}
+                    />
+                    {draft.promotionAsset.discountType === 'PERCENT' ? (
+                      <Input
+                        style={{ width: 140 }}
+                        suffix="%"
+                        value={draft.promotionAsset.percentOff ?? ''}
+                        onChange={(event) => setDraft({
+                          ...draft,
+                          promotionAsset: {
+                            ...draft.promotionAsset!,
+                            percentOff: Number(event.target.value) || 0,
+                          },
+                        })}
+                      />
+                    ) : (
+                      <Space>
+                        <Input
+                          style={{ width: 90 }}
+                          value={draft.promotionAsset.currencyCode || 'USD'}
+                          onChange={(event) => setDraft({
+                            ...draft,
+                            promotionAsset: { ...draft.promotionAsset!, currencyCode: event.target.value },
+                          })}
+                        />
+                        <Input
+                          style={{ width: 120 }}
+                          value={draft.promotionAsset.moneyAmountOff || ''}
+                          onChange={(event) => setDraft({
+                            ...draft,
+                            promotionAsset: { ...draft.promotionAsset!, moneyAmountOff: event.target.value },
+                          })}
+                        />
+                      </Space>
+                    )}
+                  </Space>
+                  <Input
+                    placeholder="最终到达网址"
+                    value={draft.promotionAsset.finalUrl || draft.merchantUrl}
+                    onChange={(event) => setDraft({
+                      ...draft,
+                      promotionAsset: { ...draft.promotionAsset!, finalUrl: event.target.value },
+                    })}
+                  />
+                  <Input
+                    placeholder="促销代码（可选）"
+                    value={draft.promotionAsset.promotionCode || ''}
+                    onChange={(event) => setDraft({
+                      ...draft,
+                      promotionAsset: { ...draft.promotionAsset!, promotionCode: event.target.value },
+                    })}
+                  />
+                  {draft.translations?.promotion ? (
+                    <div className="ad-review__zh">{draft.translations.promotion}</div>
+                  ) : null}
+                </Space>
+              ) : (
+                <div className="ad-review__hint">默认关闭。有明确折扣/满减时再打开并填写。</div>
+              )}
+            </Card>
+
+            <Card size="small" style={{ marginTop: 16 }} title="结构化摘要">
+              <Space direction="vertical" style={{ width: '100%' }} size={8}>
+                {(draft.structuredSnippets.length ? draft.structuredSnippets : [{ header: 'Types', values: [] }]).map((snippet, index) => (
+                  <Card key={`s-${index}`} size="small" type="inner">
+                    <Select
+                      style={{ width: '100%', marginBottom: 8 }}
+                      value={snippet.header}
+                      options={SNIPPET_HEADERS.map((header) => ({ value: header, label: header }))}
+                      onChange={(header) => {
+                        const structuredSnippets = [...(draft.structuredSnippets.length ? draft.structuredSnippets : [{ header: 'Types', values: [] }])];
+                        structuredSnippets[index] = { ...structuredSnippets[index], header };
+                        setDraft({ ...draft, structuredSnippets });
+                      }}
+                    />
+                    <Input.TextArea
+                      rows={2}
+                      placeholder="逗号或换行分隔，至少 4 个值"
+                      value={snippet.values.join(', ')}
+                      onChange={(event) => {
+                        const values = event.target.value
+                          .split(/[,\n]/)
+                          .map((item) => item.trim())
+                          .filter(Boolean)
+                          .slice(0, 10);
+                        const structuredSnippets = [...(draft.structuredSnippets.length ? draft.structuredSnippets : [{ header: 'Types', values: [] }])];
+                        structuredSnippets[index] = { ...structuredSnippets[index], values };
+                        setDraft({ ...draft, structuredSnippets });
+                      }}
+                    />
+                    {zhHint(draft.translations, 'structuredSnippets', index) ? (
+                      <div className="ad-review__zh" style={{ marginTop: 6 }}>
+                        {zhHint(draft.translations, 'structuredSnippets', index)}
+                      </div>
+                    ) : null}
+                  </Card>
+                ))}
+              </Space>
             </Card>
           </Col>
 

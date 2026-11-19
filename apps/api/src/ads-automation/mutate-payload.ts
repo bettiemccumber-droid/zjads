@@ -17,6 +17,8 @@ export function buildCreateCampaignPayload(input: {
   draft: AdDraft;
   /** 已下载的图片 base64；有则挂到系列 AD_IMAGE。 */
   imageAssets?: Array<{ name: string; data: string }>;
+  /** 已下载的商标 base64；有则挂到系列 LOGO。 */
+  logoAssets?: Array<{ name: string; data: string }>;
 }): Record<string, unknown> {
   const customerId = input.customerId.replace(/-/g, '');
   const budget = `customers/${customerId}/campaignBudgets/-1`;
@@ -194,6 +196,16 @@ export function buildCreateCampaignPayload(input: {
     customerId,
     campaign,
     images: input.imageAssets ?? [],
+    fieldType: 'AD_IMAGE',
+    assetOffset: 100,
+  }));
+  operations.push(...buildAdImageAssetOperations({
+    customerId,
+    campaign,
+    images: input.logoAssets ?? [],
+    fieldType: 'LOGO',
+    assetOffset: 200,
+    max: 5,
   }));
 
   operations.push({
@@ -220,22 +232,26 @@ export function buildCreateCampaignPayload(input: {
 }
 
 /**
- * 搜索广告图片素材（AD_IMAGE）。需至少一张接近正方形的图更易通过审核。
+ * 搜索广告图片 / 商标素材。fieldType 为 AD_IMAGE 或 LOGO；无图时返回空。
  */
 function buildAdImageAssetOperations(input: {
   customerId: string;
   campaign: string;
   images: Array<{ name: string; data: string }>;
+  fieldType: 'AD_IMAGE' | 'LOGO';
+  assetOffset: number;
+  max?: number;
 }): Record<string, unknown>[] {
   const ops: Record<string, unknown>[] = [];
-  input.images.slice(0, 20).forEach((image, index) => {
+  const label = input.fieldType === 'LOGO' ? 'Logo' : 'Ad image';
+  input.images.slice(0, input.max ?? 20).forEach((image, index) => {
     if (!image.data) return;
-    const asset = `customers/${input.customerId}/assets/-${100 + index}`;
+    const asset = `customers/${input.customerId}/assets/-${input.assetOffset + index}`;
     ops.push({
       assetOperation: {
         create: {
           resourceName: asset,
-          name: (image.name || `Ad image ${index + 1}`).slice(0, 128),
+          name: (image.name || `${label} ${index + 1}`).slice(0, 128),
           type: 'IMAGE',
           imageAsset: { data: image.data },
         },
@@ -243,7 +259,7 @@ function buildAdImageAssetOperations(input: {
     });
     ops.push({
       campaignAssetOperation: {
-        create: { asset, campaign: input.campaign, fieldType: 'AD_IMAGE' },
+        create: { asset, campaign: input.campaign, fieldType: input.fieldType },
       },
     });
   });

@@ -1,5 +1,11 @@
 import assert from 'assert';
-import { crawlMerchantImages, extractMerchantImages, looksLikeScriptNoise } from './merchant-page-images';
+import {
+  crawlMerchantImages,
+  extractMerchantImages,
+  extractSocialProfileLinks,
+  looksLikeScriptNoise,
+  prioritizeDeepLinks,
+} from './merchant-page-images';
 
 const html = `<!doctype html>
 <html><head>
@@ -27,6 +33,24 @@ assert.deepStrictEqual(images.map((item) => item.url), [
 assert.strictEqual(images[1].alt, 'Shoe');
 assert.ok(!images.some((item) => looksLikeScriptNoise(item.url) || looksLikeScriptNoise(item.alt)));
 assert.ok(looksLikeScriptNoise('${(i=e==null?void 0:e.title)!=null?i:}'));
+
+const socialHtml = `<a href="https://instagram.com/bluehost">IG</a>
+<a href="https://www.facebook.com/bluehost">FB</a>
+<a href="https://x.com/intent/tweet">skip</a>
+<a href="https://www.linkedin.com/company/bluehost-com">LI</a>`;
+const social = extractSocialProfileLinks(socialHtml, 'https://www.bluehost.com/');
+assert.ok(social.some((item) => item.url.includes('instagram.com/bluehost')));
+assert.ok(social.some((item) => item.url.includes('facebook.com/bluehost')));
+assert.ok(social.some((item) => item.url.includes('linkedin.com/company/bluehost-com')));
+assert.ok(!social.some((item) => item.url.includes('/intent/')));
+
+const ranked = prioritizeDeepLinks([
+  { url: 'https://shop.example.com/about', label: 'About' },
+  { url: 'https://shop.example.com/collections/all', label: 'Shop' },
+  { url: 'https://shop.example.com/products/shoe', label: 'Shoe' },
+]);
+assert.strictEqual(ranked[0].url, 'https://shop.example.com/collections/all');
+assert.ok(ranked.some((item) => item.url.includes('/products/')));
 
 crawlMerchantImages('http://127.0.0.1/secret').then(() => {
   throw new Error('private address was crawled');

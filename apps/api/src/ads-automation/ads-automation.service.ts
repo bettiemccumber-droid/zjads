@@ -36,7 +36,7 @@ import { AiPersonaService } from './ai-persona.service';
 import { resolveAdLanguage } from './market-language';
 import { writeAdCopy, writeArticle } from './modelgo-copy';
 import { modelGoConfig } from './modelgo.client';
-import { prepareAdImageAssets } from './ad-image-assets';
+import { fetchPublicImageBuffer, prepareAdImageAssets } from './ad-image-assets';
 import { buildCreateCampaignPayload } from './mutate-payload';
 import {
   GoogleAdsClient,
@@ -553,12 +553,25 @@ export class AdsAutomationService implements OnModuleInit {
 
   /**
    * 打开商家网址，返回页面上能用的配图。没有图片时列表为空。
+   * 多源：官网深爬、社媒、可选 Google CSE。
    */
   async crawlArticleImages(merchantUrl: string) {
     try {
       return await crawlMerchantImages(merchantUrl);
     } catch (error) {
       const message = error instanceof Error ? error.message : '抓取商家页面失败';
+      throw new BadRequestException(message);
+    }
+  }
+
+  /**
+   * 代理商家图，供预览页 canvas 裁切正方形（避免跨域污染）。
+   */
+  async proxyArticleImage(imageUrl: string) {
+    try {
+      return await fetchPublicImageBuffer(imageUrl);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : '下载图片失败';
       throw new BadRequestException(message);
     }
   }
@@ -1437,10 +1450,20 @@ export class AdsAutomationService implements OnModuleInit {
     });
     if (duplicate) return this.getJob(ownerUserId, duplicate.id);
 
+    const imageAssets = (await prepareAdImageAssets(draft.imageUrls ?? [])).map((item) => ({
+      name: item.name,
+      data: item.data,
+    }));
+    const logoAssets = (await prepareAdImageAssets(draft.logoUrls ?? [])).map((item, index) => ({
+      name: item.name.replace(/^ad-image/, 'logo') || `logo-${index + 1}`,
+      data: item.data,
+    }));
     const payload = buildCreateCampaignPayload({
       customerId: customer.customerId,
       campaignName,
       draft,
+      imageAssets,
+      logoAssets,
     });
     const budgetMicros = BigInt(usdToMicros(draft.dailyBudgetUsd));
     const ceilingRaw = draft.cpcBidCeilingUsd?.trim() || '';
@@ -2376,6 +2399,12 @@ export class AdsAutomationService implements OnModuleInit {
           data: item.data,
         }))
       : [];
+    const logoAssets = draft
+      ? (await prepareAdImageAssets(draft.logoUrls ?? [])).map((item, index) => ({
+          name: item.name.replace(/^ad-image/, 'logo') || `logo-${index + 1}`,
+          data: item.data,
+        }))
+      : [];
     const rebuilt = draft
       ? buildCreateCampaignPayload({
           customerId: campaign.customerId,
@@ -2387,6 +2416,7 @@ export class AdsAutomationService implements OnModuleInit {
             finalUrlSuffix: campaign.finalUrlSuffix || draft.finalUrlSuffix,
           },
           imageAssets,
+          logoAssets,
         })
       : null;
     const payload = rebuilt ?? outbox.payload;

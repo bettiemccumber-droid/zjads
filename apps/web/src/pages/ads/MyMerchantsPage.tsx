@@ -105,7 +105,7 @@ interface DiscoverResult {
   page: number;
   pageSize: number;
   rows: DiscoverRow[];
-  errors: Array<{ message: string }>;
+  errors: Array<{ message: string; channelAccountId?: number; platformCode?: string }>;
   hint: string;
 }
 

@@ -455,7 +455,7 @@ export default function MyMerchantsPage() {
   const [settingsForm] = Form.useForm<AdLaunchSettings>();
   const [claimForm] = Form.useForm();
   const [tab, setTab] = useState('mine');
-  const [discoverAccountId, setDiscoverAccountId] = useState<number | undefined>();
+  const [discoverPlatform, setDiscoverPlatform] = useState<string | undefined>();
   const [discoverQuery, setDiscoverQuery] = useState('');
   const [discover, setDiscover] = useState<DiscoverResult | null>(null);
   const [discoverLoading, setDiscoverLoading] = useState(false);
@@ -473,6 +473,9 @@ export default function MyMerchantsPage() {
   const [activePersonaName, setActivePersonaName] = useState('');
   const [activePersonaTags, setActivePersonaTags] = useState<string[]>([]);
   const loadGen = useRef(0);
+  const discoverGen = useRef(0);
+  /** 同一账号切回「选取商家」不重复请求；账号/用户变化才刷新 */
+  const discoverLoadedKey = useRef('');
 
   const applyPersonaSummary = useCallback((data: {
     total: number;
@@ -535,26 +538,143 @@ export default function MyMerchantsPage() {
     }
   }, [viewUserId]);
 
-  const searchDiscover = useCallback(async (page = 1, query = discoverQuery) => {
-    setDiscoverLoading(true);
-    try {
-      const params = new URLSearchParams({ page: String(page), pageSize: '20' });
-      if (discoverAccountId) params.set('channelAccountId', String(discoverAccountId));
-      if (query.trim()) params.set('q', query.trim());
-      if (viewUserId) params.set('userId', String(viewUserId));
-      const res = await api.get<ApiResult<DiscoverResult>>(`/catalog-merchants/discover?${params.toString()}`);
-      if (!res.data.success) {
-        message.error(res.data.message || '查找商家失败');
-        return;
-      }
-      setDiscover(res.data.data);
-    } catch (err) {
-      const apiMessage = (err as { response?: { data?: { message?: string } } }).response?.data?.message;
-      message.error(apiMessage || '查找商家失败');
-    } finally {
-      setDiscoverLoading(false);
+  const fetchDiscoverOnce = useCallback(async (opts: {
+    page?: number;
+    query?: string;
+    platformCode?: string;
+  }) => {
+    const params = new URLSearchParams({
+      page: String(opts.page ?? 1),
+      pageSize: '20',
+    });
+    if (opts.platformCode) params.set('platformCode', opts.platformCode);
+    if (opts.query?.trim()) params.set('q', opts.query.trim());
+    if (viewUserId) params.set('userId', String(viewUserId));
+    const res = await api.get<ApiResult<DiscoverResult>>(`/catalog-merchants/discover?${params.toString()}`);
+    if (!res.data.success) {
+      throw new Error(res.data.message || '查找商家失败');
     }
-  }, [discoverAccountId, discoverQuery, viewUserId]);
+    return res.data.data;
+  }, [viewUserId]);
+
+  /** 全平台结果按平台交错，避免某一平台占满列表。 */
+  const interleaveDiscoverRows = useCallback((rows: DiscoverRow[], limit = 20) => {
+    const buckets = new Map<string, DiscoverRow[]>();
+    for (const row of rows) {
+      const key = row.platformCode || String(row.channelAccountId);
+      const list = buckets.get(key) ?? [];
+      list.push(row);
+      buckets.set(key, list);
+    }
+    const queues = [...buckets.values()];
+    const out: DiscoverRow[] = [];
+    let index = 0;
+    while (out.length < limit && queues.some((queue) => queue.length > index)) {
+      for (const queue of queues) {
+        const row = queue[index];
+        if (row) out.push(row);
+        if (out.length >= limit) break;
+      }
+      index += 1;
+    }
+    return out;
+  }, []);
+
+  const searchDiscover = useCallback(async (page = 1, query = discoverQuery) => {
+    const gen = ++discoverGen.current;
+    const cacheKey = `${viewUserId ?? ''}:${discoverPlatform ?? 'all'}:${query.trim()}:${page}`;
+    setDiscoverLoading(true);
+
+    // 单平台：一次请求即可翻页
+    if (discoverPlatform) {
+      try {
+        const data = await fetchDiscoverOnce({ page, query, platformCode: discoverPlatform });
+        if (gen !== discoverGen.current) return;
+        discoverLoadedKey.current = cacheKey;
+        setDiscover(data);
+      } catch (err) {
+        if (gen !== discoverGen.current) return;
+        const apiMessage = (err as { response?: { data?: { message?: string } }; message?: string }).response?.data?.message
+          || (err as { message?: string }).message;
+        message.error(apiMessage || '查找商家失败');
+      } finally {
+        if (gen === discoverGen.current) setDiscoverLoading(false);
+      }
+      return;
+    }
+
+    // 全平台：按平台并行请求，谁先回来谁先上屏，不再等最慢的那个
+    const platforms = [...new Set(accounts.map((item) => item.platformCode).filter(Boolean))];
+    if (platforms.length === 0) {
+      try {
+        const data = await fetchDiscoverOnce({ page: 1, query });
+        if (gen !== discoverGen.current) return;
+        discoverLoadedKey.current = cacheKey;
+        setDiscover(data);
+      } catch (err) {
+        if (gen !== discoverGen.current) return;
+        message.error((err as { message?: string }).message || '查找商家失败');
+      } finally {
+        if (gen === discoverGen.current) setDiscoverLoading(false);
+      }
+      return;
+    }
+
+    const byPlatform = new Map<string, DiscoverResult>();
+    const mergeProgress = () => {
+      if (gen !== discoverGen.current) return;
+      const parts = [...byPlatform.values()];
+      const rows = interleaveDiscoverRows(parts.flatMap((part) => part.rows), 20);
+      const errors = parts.flatMap((part) => part.errors ?? []);
+      const total = parts.reduce((sum, part) => sum + (part.total || 0), 0);
+      const pending = platforms.length - byPlatform.size;
+      discoverLoadedKey.current = cacheKey;
+      setDiscover({
+        total,
+        page: 1,
+        pageSize: 20,
+        rows,
+        errors,
+        hint: pending > 0
+          ? `已加载 ${byPlatform.size}/${platforms.length} 个平台，其余仍在拉取…`
+          : (parts.find((part) => part.hint)?.hint || ''),
+      });
+    };
+
+    setDiscover({
+      total: 0,
+      page: 1,
+      pageSize: 20,
+      rows: [],
+      errors: [],
+      hint: `正在并行加载 ${platforms.length} 个平台…`,
+    });
+
+    await Promise.all(platforms.map(async (code) => {
+      try {
+        const data = await fetchDiscoverOnce({ page: 1, query, platformCode: code });
+        if (gen !== discoverGen.current) return;
+        byPlatform.set(code, data);
+        mergeProgress();
+      } catch (err) {
+        if (gen !== discoverGen.current) return;
+        const msg = (err as { response?: { data?: { message?: string } }; message?: string }).response?.data?.message
+          || (err as { message?: string }).message
+          || '查找失败';
+        byPlatform.set(code, {
+          total: 0,
+          page: 1,
+          pageSize: 20,
+          rows: [],
+          errors: [{ channelAccountId: 0, platformCode: code, message: `${PLATFORM_SHORT[code] || code}: ${msg}` }],
+          hint: '',
+        });
+        mergeProgress();
+      }
+    }));
+
+    if (gen === discoverGen.current) setDiscoverLoading(false);
+  }, [accounts, discoverPlatform, discoverQuery, fetchDiscoverOnce, interleaveDiscoverRows, viewUserId]);
 
   const openLaunch = useCallback((row: DiscoverRow) => {
     if (!/^https?:\/\//i.test(row.merchantUrl)) {
@@ -572,8 +692,13 @@ export default function MyMerchantsPage() {
 
   useEffect(() => {
     if (tab !== 'pick') return;
+    // 全平台要等账号列表出来再按平台拆请求，否则又会打成一次大请求
+    if (!discoverPlatform && accounts.length === 0) return;
+    const key = `${viewUserId ?? ''}:${discoverPlatform ?? 'all'}:${discoverQuery.trim()}:1`;
+    if (discoverLoadedKey.current === key && discover) return;
     void searchDiscover(1);
-  }, [tab, discoverAccountId]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- discover 结果本身不应触发重拉
+  }, [tab, discoverPlatform, viewUserId, searchDiscover, accounts.length]);
 
   useEffect(() => {
     if (!user || scopeUserId == null) return;
@@ -648,6 +773,10 @@ export default function MyMerchantsPage() {
   const minePlatforms = useMemo(
     () => [...new Set(advertised.map((item) => item.platformCode).filter(Boolean))],
     [advertised],
+  );
+  const discoverPlatforms = useMemo(
+    () => [...new Set(accounts.map((item) => item.platformCode).filter(Boolean))],
+    [accounts],
   );
   const pickTags = useMemo(() => {
     const tags = new Set<string>();
@@ -1197,16 +1326,16 @@ export default function MyMerchantsPage() {
                     <Select
                       placeholder="全平台"
                       style={{ width: 140 }}
-                      value={discoverAccountId ?? 'all'}
-                      onChange={(value: number | 'all') => {
+                      value={discoverPlatform ?? 'all'}
+                      onChange={(value: string) => {
                         setPickTag('');
-                        setDiscoverAccountId(typeof value === 'number' ? value : undefined);
+                        setDiscoverPlatform(value === 'all' ? undefined : value);
                       }}
                       options={[
                         { value: 'all', label: '全平台' },
-                        ...accounts.map((item) => ({
-                          value: item.id,
-                          label: PLATFORM_SHORT[item.platformCode] || item.platformCode,
+                        ...discoverPlatforms.map((code) => ({
+                          value: code,
+                          label: PLATFORM_SHORT[code] || code,
                         })),
                       ]}
                     />
@@ -1231,8 +1360,8 @@ export default function MyMerchantsPage() {
                       onClick={() => {
                         setDiscoverQuery('');
                         setPickTag('');
-                        if (discoverAccountId !== undefined) {
-                          setDiscoverAccountId(undefined);
+                        if (discoverPlatform !== undefined) {
+                          setDiscoverPlatform(undefined);
                           return;
                         }
                         void searchDiscover(1, '');
@@ -1251,9 +1380,10 @@ export default function MyMerchantsPage() {
                     rowKey={(row) => `${row.channelAccountId}:${row.mid}`}
                     size="middle"
                     scroll={{ x: 1200 }}
-                    loading={discoverLoading}
+                    loading={discoverLoading && pickRows.length === 0}
                     dataSource={pickRows}
-                    pagination={discoverAccountId ? {
+                    locale={{ emptyText: discoverLoading ? '正在加载商家…' : '暂无数据' }}
+                    pagination={discoverPlatform ? {
                       current: discover?.page ?? 1,
                       pageSize: discover?.pageSize ?? 20,
                       total: discover?.total ?? 0,

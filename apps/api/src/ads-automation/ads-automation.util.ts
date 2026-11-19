@@ -481,11 +481,11 @@ export function validateDraft(draft: AdDraft): string[] {
     errors.push(`站内链接需要 ${limits.sitelinkCount.min} 到 ${limits.sitelinkCount.max} 条（默认 ${limits.sitelinkCount.prefer} 条）`);
   }
   const sitelinkUrlKeys = new Set<string>();
-  const homeKey = normalizePageKey(draft.merchantUrl);
-  let hasOfficialHome = false;
   draft.sitelinks.forEach((link, index) => {
     if (!link.linkText.trim()) errors.push(`站内链接 ${index + 1} 需要填写文案`);
-    if (!link.verified) errors.push(`站内链接 ${index + 1} 尚未验证`);
+    if (!link.verified) {
+      errors.push(`站内链接 ${index + 1} 尚未验证，请点「标记已验证」确认落地页可用`);
+    }
     if (link.linkText.length > limits.sitelinkText) {
       errors.push(`站内链接 ${index + 1} 文案超过 ${limits.sitelinkText} 个字符`);
     }
@@ -499,27 +499,22 @@ export function validateDraft(draft: AdDraft): string[] {
       errors.push(`站内链接 ${index + 1} 需要有效落地页网址`);
     } else {
       const key = normalizePageKey(link.finalUrl);
-      if (homeKey && key === homeKey) hasOfficialHome = true;
       if (key && sitelinkUrlKeys.has(key)) {
         errors.push(`站内链接 ${index + 1} 的落地页与其它站内链接重复，请换成不同页面`);
       } else if (key) {
         sitelinkUrlKeys.add(key);
       }
     }
-    errors.push(...policyHits(`${link.linkText} ${link.description1} ${link.description2}`, `站内链接 ${index + 1}`));
+    errors.push(...policyHits(`${link.linkText} ${link.description1} ${link.description2}`, `站内链接 ${index + 1}`, { allowPromo: true }));
   });
-  if (draft.sitelinks.length && homeKey && !hasOfficialHome) {
-    errors.push('站内链接里至少要有一条指向商家官网首页');
-  }
+  // 有官网更好，没有不拦发布（商家登记网址未必是站点根路径）
   if (draft.callouts.length > limits.calloutCount.max) {
     errors.push(`宣传信息最多 ${limits.calloutCount.max} 条`);
   }
   draft.callouts.forEach((text, index) => {
     if (text.length > limits.callout) errors.push(`宣传信息 ${index + 1} 超过 ${limits.callout} 个字符`);
-    errors.push(...policyHits(text, `宣传信息 ${index + 1}`));
-    if (calloutHasPromoLeak(text)) {
-      errors.push(`宣传信息 ${index + 1} 不要写免运费、满减、折扣等促销语，促销请放促销栏`);
-    }
+    // 宣传信息 / 描述均可写折扣、物流等促销语；仍拦免费体验与风险词
+    errors.push(...policyHits(text, `宣传信息 ${index + 1}`, { allowPromo: true }));
   });
   const snippets = draft.structuredSnippets ?? [];
   if (snippets.length && snippets.length !== limits.structuredCategories) {
@@ -606,7 +601,7 @@ export function softenExcessiveUppercase(
 
 /**
  * Google Ads / 联盟投放常见拒登与禁忌词。命中则返回中文错误。
- * allowPromo：标题/描述可写折扣与物流；宣传信息仍禁止促销语。
+ * allowPromo：允许折扣、满减、免运费等促销语（标题/描述/宣传信息/站内链接）。
  */
 export function policyHits(
   text: string,
@@ -643,10 +638,6 @@ export function policyHits(
     hits.push(`${label} 含医疗功效承诺`);
   }
   return hits;
-}
-
-function calloutHasPromoLeak(text: string): boolean {
-  return /免运费|满减|折扣|退货|free\s+shipping|discount|coupon|% off|sale\b/i.test(text);
 }
 
 /**
@@ -700,10 +691,9 @@ export function isUnsafeAdText(
 ): boolean {
   const value = text.trim();
   if (!value) return true;
-  const allowPromo = kind === 'headline' || kind === 'description';
-  if (policyHits(value, 't', { allowPromo }).length) return true;
-  if (kind === 'callout' && calloutHasPromoLeak(value)) return true;
-  return false;
+  // 标题 / 描述 / 宣传信息均可写折扣类促销语
+  const allowPromo = kind === 'headline' || kind === 'description' || kind === 'callout';
+  return policyHits(value, 't', { allowPromo }).length > 0;
 }
 
 /**
@@ -1249,6 +1239,25 @@ export function sameMerchantPage(left: string, right: string): boolean {
 }
 
 /**
+ * 是否算「官网」落地页：与商家登记网址同页，或同站根路径。
+ * 不把商家深链强行改成 / 再比对，避免误判。
+ */
+export function isMerchantHomepageUrl(candidate: string, merchantUrl: string): boolean {
+  if (sameMerchantPage(candidate, merchantUrl)) return true;
+  try {
+    const page = new URL(candidate);
+    const home = new URL(merchantUrl);
+    const pageHost = page.hostname.toLowerCase().replace(/^www\./, '');
+    const homeHost = home.hostname.toLowerCase().replace(/^www\./, '');
+    if (pageHost !== homeHost) return false;
+    const path = page.pathname.replace(/\/+$/, '') || '/';
+    return path === '/';
+  } catch {
+    return false;
+  }
+}
+
+/**
  * 站内链接落地页偏好：购买/商品页优先，联系我们/关于页靠后。
  */
 export function sitelinkPageScore(url: string, label = ''): number {
@@ -1267,7 +1276,7 @@ export function sitelinkPageScore(url: string, label = ''): number {
 
 /**
  * 给站内链接分配互不相同的同站落地页。
- * 第 1 条固定商家官网首页；其余优先购买页，避免再用首页。
+ * 优先把商家登记网址放第 1 条（有则更好）；不强行改成站点根路径。
  */
 export function assignUniqueSitelinkUrls(
   sitelinks: AdSitelink[],
@@ -1278,9 +1287,8 @@ export function assignUniqueSitelinkUrls(
     try {
       const url = new URL(merchantUrl);
       url.hash = '';
-      url.pathname = url.pathname.replace(/\/+$/, '') || '/';
-      if (url.pathname !== '/') url.pathname = '/';
       url.search = '';
+      url.pathname = url.pathname.replace(/\/+$/, '') || '/';
       return url.toString();
     } catch {
       return merchantUrl;
@@ -1288,7 +1296,6 @@ export function assignUniqueSitelinkUrls(
   })();
   const homeKey = normalizePageKey(homeUrl);
   const used = new Set<string>();
-  if (homeKey) used.add(homeKey);
   const pool = pageLinks
     .map((item) => ({
       url: sameHostUrl(item.url, merchantUrl),
@@ -1304,15 +1311,16 @@ export function assignUniqueSitelinkUrls(
   });
 
   return sitelinks.map((link, index) => {
-    // 第一条固定官网，满足「至少一条站内链接是官网」
-    if (index === 0) {
+    // 第 1 条优先用商家网址当官网；没有可用网址则按普通内页分配
+    if (index === 0 && homeUrl && /^https?:\/\//i.test(homeUrl)) {
+      if (homeKey) used.add(homeKey);
       return {
         ...link,
         linkText: (link.linkText.trim() || 'Official website').slice(0, AD_COPY_LIMITS.sitelinkText),
         description1: (link.description1.trim() || 'Visit our site').slice(0, AD_COPY_LIMITS.sitelinkDescription),
         description2: (link.description2.trim() || 'Explore online').slice(0, AD_COPY_LIMITS.sitelinkDescription),
         finalUrl: homeUrl,
-        verified: Boolean(homeUrl && /^https?:\/\//i.test(homeUrl)),
+        verified: false,
       };
     }
 
@@ -1320,7 +1328,7 @@ export function assignUniqueSitelinkUrls(
     let chosen = '';
     if (fromModel) {
       const key = normalizePageKey(fromModel);
-      if (key && key !== homeKey && !used.has(key)) {
+      if (key && !used.has(key)) {
         const modelScore = sitelinkPageScore(fromModel, link.linkText);
         const better = unused().find((item) => sitelinkPageScore(item.url, item.label) >= 3 && sitelinkPageScore(item.url, item.label) > modelScore);
         chosen = modelScore >= 0 || !better ? fromModel : better.url;
@@ -1346,13 +1354,14 @@ export function assignUniqueSitelinkUrls(
     return {
       ...link,
       finalUrl: chosen,
-      verified: Boolean(chosen && /^https?:\/\//i.test(chosen)),
+      // 生成时不自动算已验证，需人工点「标记已验证」
+      verified: false,
     };
   });
 }
 
 /**
- * 保证默认 6 条站内链接且字段填满；第 1 条指向官网。
+ * 保证默认 6 条站内链接且字段填满；有商家网址时第 1 条优先指向它。
  */
 export function ensureCompleteSitelinks(
   sitelinks: AdSitelink[],

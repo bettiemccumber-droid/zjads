@@ -434,11 +434,12 @@ export class AdsAutomationController {
     return ok(await this.ads.listAdvertisedMerchants(ownerUserId, logos === '1'));
   }
 
-  /** 从联盟商家库翻页查找，结果里带商家网址。 */
+  /** 从联盟商家库翻页查找，结果里带商家网址。可按平台或联盟账号筛选。 */
   @Get('catalog-merchants/discover')
   async discoverMerchants(
     @CurrentUser() user: AuthUser,
     @Query('channelAccountId') channelAccountId?: string,
+    @Query('platformCode') platformCode?: string,
     @Query('q') q?: string,
     @Query('page') page?: string,
     @Query('pageSize') pageSize?: string,
@@ -448,6 +449,7 @@ export class AdsAutomationController {
     return ok(
       await this.ads.discoverMerchants(ownerUserId, {
         channelAccountId: channelAccountId ? Number(channelAccountId) : undefined,
+        platformCode: platformCode?.trim() || undefined,
         q,
         page: page ? Number(page) : 1,
         pageSize: pageSize ? Number(pageSize) : 20,

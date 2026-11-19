@@ -29,9 +29,9 @@ const sitelinks = assignUniqueSitelinkUrls(
 );
 
 assert.strictEqual(new Set(sitelinks.map((item) => normalizePageKey(item.finalUrl))).size, 3);
+assert.strictEqual(normalizePageKey(sitelinks[0].finalUrl), normalizePageKey('http://www.1800gotjunk.com/'));
 assert.ok(sitelinks.some((item) => item.finalUrl.includes('get-a-quote')));
-assert.ok(sitelinks.some((item) => item.finalUrl.includes('what-we-take')));
-assert.ok(sitelinks.some((item) => item.finalUrl.includes('how-it-works')));
-assert.ok(sitelinks.every((item) => item.verified));
+assert.ok(sitelinks.some((item) => item.finalUrl.includes('what-we-take') || item.finalUrl.includes('how-it-works')));
+assert.ok(sitelinks.every((item) => item.finalUrl && !item.verified));
 
 console.log('merchant-nav-links.test ok');

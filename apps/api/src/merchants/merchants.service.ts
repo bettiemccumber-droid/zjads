@@ -42,6 +42,8 @@ export interface MerchantStatusSummaryDto {
 
 export interface DiscoverMerchantQuery {
   channelAccountId?: number;
+  /** 按联盟平台筛选；与 channelAccountId 二选一，优先账号 */
+  platformCode?: string;
   q?: string;
   page?: number;
   pageSize?: number;
@@ -80,6 +82,13 @@ export interface DiscoverMerchantResult {
 export class MerchantsService {
   /** 名称搜索只扫每个账号商家库的前 2000 条，避免每次把全库拉下来。 */
   private readonly discoverScanCache = new Map<number, { at: number; rows: MonetizationBrandRow[]; truncated: boolean }>();
+  /** 无搜索词翻页缓存。单页结果，10 分钟内同账号同页秒开。 */
+  private readonly discoverPageCache = new Map<string, {
+    at: number;
+    rows: MonetizationBrandRow[];
+    total: number;
+    pages: number;
+  }>();
   /** 我的商家按 MID 补商标。十分钟内不重复打联盟。 */
   private readonly logoCache = new Map<string, { at: number; logo: string }>();
 
@@ -87,6 +96,22 @@ export class MerchantsService {
     private readonly prisma: PrismaService,
     private readonly crypto: CryptoService,
   ) {}
+
+  private withTimeout_<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
+    return new Promise<T>((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error(`${label} 超时（${Math.round(ms / 1000)}s）`)), ms);
+      promise.then(
+        (value) => {
+          clearTimeout(timer);
+          resolve(value);
+        },
+        (error) => {
+          clearTimeout(timer);
+          reject(error);
+        },
+      );
+    });
+  }
 
   /**
    * 解析粘贴文本为查询项
@@ -390,93 +415,160 @@ export class MerchantsService {
     const page = Math.max(1, Math.floor(query.page ?? 1) || 1);
     const pageSize = Math.min(50, Math.max(1, Math.floor(query.pageSize ?? 20) || 20));
     const q = (query.q ?? '').trim();
-    const accounts = await this.loadAccountsForQuery_(
+    const platformCode = (query.platformCode ?? '').trim().toLowerCase();
+    let accounts = await this.loadAccountsForQuery_(
       ownerUserId,
       query.channelAccountId ? [query.channelAccountId] : undefined,
     );
+    if (!query.channelAccountId && platformCode) {
+      accounts = accounts.filter((account) => account.platform.code.toLowerCase() === platformCode);
+      if (accounts.length === 0) {
+        throw new BadRequestException(`没有可用的 ${platformCode} 联盟账号`);
+      }
+    }
+    const scoped = Boolean(query.channelAccountId || platformCode);
     const errors: DiscoverMerchantResult['errors'] = [];
     const collected: Array<DiscoverMerchantRow & { sort: number }> = [];
     let total = 0;
     let truncated = false;
     let pendingOnly = 0;
 
-    if (!query.channelAccountId && page > 1) {
-      throw new BadRequestException('翻页请先选择一个联盟账号');
+    if (!scoped && page > 1) {
+      throw new BadRequestException('翻页请先选择一个联盟平台');
     }
 
-    for (const account of accounts) {
+    // 全平台只向每个账号要够交错的一小段，单平台才拉满一页
+    const browseSize = !scoped && !q
+      ? Math.max(6, Math.ceil(pageSize / Math.max(1, accounts.length)))
+      : pageSize;
+    // 浏览 12s、名称扫描 25s；避免某个联盟拖到 axios 120s
+    const browseTimeoutMs = 12_000;
+    const scanTimeoutMs = 25_000;
+
+    // 多个联盟账号并行拉库，避免「全平台」串行排队很久
+    const settled = await Promise.all(accounts.map(async (account) => {
       if (!isMerchantStatusPlatformSupported(account.platform.code)) {
-        errors.push({
-          channelAccountId: account.id,
-          platformCode: account.platform.code,
-          message: `${account.platform.name} 暂不支持商家库`,
-        });
-        continue;
+        return {
+          error: {
+            channelAccountId: account.id,
+            platformCode: account.platform.code,
+            message: `${account.platform.name} 暂不支持商家库`,
+          } as DiscoverMerchantResult['errors'][number],
+        };
       }
       let apiToken = '';
       try {
         apiToken = this.crypto.decrypt<{ apiToken: string }>(account.credentialsEnc).apiToken;
       } catch {
-        errors.push({
-          channelAccountId: account.id,
-          platformCode: account.platform.code,
-          message: `${account.displayName} 的 Token 解密失败`,
-        });
-        continue;
+        return {
+          error: {
+            channelAccountId: account.id,
+            platformCode: account.platform.code,
+            message: `${account.displayName} 的 Token 解密失败`,
+          } as DiscoverMerchantResult['errors'][number],
+        };
       }
       if (!apiToken) {
-        errors.push({
-          channelAccountId: account.id,
-          platformCode: account.platform.code,
-          message: `${account.displayName} 没有 API Token`,
-        });
-        continue;
+        return {
+          error: {
+            channelAccountId: account.id,
+            platformCode: account.platform.code,
+            message: `${account.displayName} 没有 API Token`,
+          } as DiscoverMerchantResult['errors'][number],
+        };
       }
 
       try {
         if (/^\d+$/.test(q)) {
-          const brands = await preloadMonetizationBrandsForAccount(account.platform.code, apiToken, [{ merchantId: q }]);
+          const brands = await this.withTimeout_(
+            preloadMonetizationBrandsForAccount(account.platform.code, apiToken, [{ merchantId: q }]),
+            browseTimeoutMs,
+            account.platform.name,
+          );
           const approved = brands.filter((row) => this.isApprovedMerchant_(row));
-          pendingOnly += brands.length - approved.length;
-          total += approved.length;
-          approved.forEach((row, index) => {
-            const mapped = this.toDiscoverRow_(account, row);
-            if (mapped) collected.push({ ...mapped, sort: index });
-          });
-          continue;
+          return {
+            pendingOnly: brands.length - approved.length,
+            total: approved.length,
+            rows: approved
+              .map((row, index) => {
+                const mapped = this.toDiscoverRow_(account, row);
+                return mapped ? { ...mapped, sort: index } : null;
+              })
+              .filter((row): row is DiscoverMerchantRow & { sort: number } => row != null),
+          };
         }
 
         if (q) {
-          const scanned = await this.loadDiscoverScan_(account.platform.code, account.id, apiToken);
-          if (scanned.truncated) truncated = true;
+          const scanned = await this.withTimeout_(
+            this.loadDiscoverScan_(account.platform.code, account.id, apiToken),
+            scanTimeoutMs,
+            account.platform.name,
+          );
           const matched = scanned.rows.filter((row) => this.isApprovedMerchant_(row) && monetizationRowMatchesText(row, q));
-          total += matched.length;
-          const start = query.channelAccountId ? (page - 1) * pageSize : 0;
-          const slice = query.channelAccountId ? matched.slice(start, start + pageSize) : matched.slice(0, pageSize);
-          slice.forEach((row, index) => {
-            const mapped = this.toDiscoverRow_(account, row);
-            if (mapped) collected.push({ ...mapped, sort: index });
-          });
-          continue;
+          const start = scoped && accounts.length === 1 ? (page - 1) * pageSize : 0;
+          const slice = matched.slice(start, start + pageSize);
+          return {
+            truncated: scanned.truncated,
+            total: matched.length,
+            rows: slice
+              .map((row, index) => {
+                const mapped = this.toDiscoverRow_(account, row);
+                return mapped ? { ...mapped, sort: index } : null;
+              })
+              .filter((row): row is DiscoverMerchantRow & { sort: number } => row != null),
+          };
         }
 
-        const browsed = await browseMonetizationPage(account.platform.code, apiToken, page, pageSize, 'Joined');
+        const browsed = await this.withTimeout_(
+          this.loadDiscoverBrowsePage_(
+            account.platform.code,
+            account.id,
+            apiToken,
+            page,
+            browseSize,
+          ),
+          browseTimeoutMs,
+          account.platform.name,
+        );
         const approved = browsed.rows.filter((row) => this.isApprovedMerchant_(row));
-        total += approved.length === browsed.rows.length ? browsed.total : approved.length;
-        approved.forEach((row, index) => {
-          const mapped = this.toDiscoverRow_(account, row);
-          if (mapped) collected.push({ ...mapped, sort: index });
-        });
+        return {
+          total: approved.length === browsed.rows.length ? browsed.total : approved.length,
+          rows: approved
+            .map((row, index) => {
+              const mapped = this.toDiscoverRow_(account, row);
+              return mapped ? { ...mapped, sort: index } : null;
+            })
+            .filter((row): row is DiscoverMerchantRow & { sort: number } => row != null),
+        };
       } catch (err) {
-        errors.push({
-          channelAccountId: account.id,
-          platformCode: account.platform.code,
-          message: err instanceof Error ? err.message : String(err),
-        });
+        return {
+          error: {
+            channelAccountId: account.id,
+            platformCode: account.platform.code,
+            message: err instanceof Error ? err.message : String(err),
+          } as DiscoverMerchantResult['errors'][number],
+        };
       }
+    }));
+
+    for (const item of settled) {
+      if ('error' in item && item.error) {
+        errors.push(item.error);
+        continue;
+      }
+      if ('pendingOnly' in item && item.pendingOnly) pendingOnly += item.pendingOnly;
+      if ('truncated' in item && item.truncated) truncated = true;
+      if ('total' in item && item.total) total += item.total;
+      if ('rows' in item && item.rows?.length) collected.push(...item.rows);
     }
 
-    const mids = [...new Set(collected.map((row) => row.mid))];
+    // 多账号合并时按平台交错，保证每个平台都有商家出现在首页
+    const needsMerge = accounts.length > 1;
+    const merged = needsMerge
+      ? this.interleaveDiscoverRows_(collected, pageSize)
+      : collected;
+
+    const mids = [...new Set(merged.map((row) => row.mid))];
     const claimed = mids.length
       ? await this.prisma.catalogMerchant.findMany({
           where: { ownerUserId, mid: { in: mids }, blockReason: 'none' },
@@ -484,7 +576,7 @@ export class MerchantsService {
         })
       : [];
     const claimedKeys = new Set(claimed.map((row) => `${row.channelAccountId}:${row.mid}`));
-    const rows = collected.map(({ sort: _sort, ...row }) => ({
+    const rows = merged.map(({ sort: _sort, ...row }) => ({
       ...row,
       claimed: claimedKeys.has(`${row.channelAccountId}:${row.mid}`),
     }));
@@ -499,8 +591,36 @@ export class MerchantsService {
         ? '这个商家还没通过审核，不能领取。选取商家只列出已经通过审核、可以投放的商家。'
         : q && !/^\d+$/.test(q) && truncated
           ? '名称只在已通过审核的商家里匹配前 2000 条。知道 MID 时直接搜 MID。'
-          : '',
+          : !scoped
+            ? '全平台已按平台交错加载。翻页或名称搜索建议先选单个平台，会更快。'
+            : '',
     };
+  }
+
+  /** 按平台轮询交错，避免某一平台占满整页。 */
+  private interleaveDiscoverRows_(
+    rows: Array<DiscoverMerchantRow & { sort: number }>,
+    pageSize: number,
+  ): Array<DiscoverMerchantRow & { sort: number }> {
+    const buckets = new Map<string, Array<DiscoverMerchantRow & { sort: number }>>();
+    for (const row of rows) {
+      const key = row.platformCode || String(row.channelAccountId);
+      const list = buckets.get(key) ?? [];
+      list.push(row);
+      buckets.set(key, list);
+    }
+    const queues = [...buckets.values()];
+    const out: Array<DiscoverMerchantRow & { sort: number }> = [];
+    let index = 0;
+    while (out.length < pageSize && queues.some((queue) => queue.length > index)) {
+      for (const queue of queues) {
+        const row = queue[index];
+        if (row) out.push(row);
+        if (out.length >= pageSize) break;
+      }
+      index += 1;
+    }
+    return out;
   }
 
   async lookupMerchantSite(ownerUserId: number, channelAccountId: number, merchantId: string) {
@@ -645,6 +765,45 @@ export class MerchantsService {
     };
     this.discoverScanCache.set(channelAccountId, entry);
     return entry;
+  }
+
+  /**
+   * 无搜索词翻页。优先完整扫描缓存，其次单页缓存，最后才打联盟。
+   * 单页结果只进 pageCache，避免污染名称搜索的全量扫描缓存。
+   */
+  private async loadDiscoverBrowsePage_(
+    platformCode: string,
+    channelAccountId: number,
+    apiToken: string,
+    page: number,
+    pageSize: number,
+  ) {
+    const scanned = this.discoverScanCache.get(channelAccountId);
+    if (scanned && Date.now() - scanned.at < 10 * 60 * 1000 && scanned.rows.length >= pageSize) {
+      const start = (page - 1) * pageSize;
+      return {
+        rows: scanned.rows.slice(start, start + pageSize),
+        total: scanned.truncated ? Math.max(scanned.rows.length, start + pageSize + 1) : scanned.rows.length,
+        pages: Math.max(1, Math.ceil((scanned.truncated ? scanned.rows.length + 1 : scanned.rows.length) / pageSize)),
+      };
+    }
+    const pageKey = `${channelAccountId}:${page}:${pageSize}`;
+    const pageCached = this.discoverPageCache.get(pageKey);
+    if (pageCached && Date.now() - pageCached.at < 10 * 60 * 1000) {
+      return {
+        rows: pageCached.rows,
+        total: pageCached.total,
+        pages: pageCached.pages,
+      };
+    }
+    const browsed = await browseMonetizationPage(platformCode, apiToken, page, pageSize, 'Joined');
+    this.discoverPageCache.set(pageKey, {
+      at: Date.now(),
+      rows: browsed.rows,
+      total: browsed.total,
+      pages: browsed.pages,
+    });
+    return browsed;
   }
 
   /**

@@ -97,7 +97,7 @@ ${seasonHint}`,
     `Write Google search ads for ${input.merchantName}. Audience language: ${language}. Country: ${input.countryCode}.`,
     `Previous draft failed validation: ${errors.slice(0, 3).join('; ')}.
 ${shape}
-Fix every limit and policy issue. Prefer shorter lines. Never put prices, %, discounts, or placeholders in callouts.`,
+Fix every limit and policy issue. Prefer shorter lines. Callouts may mention discounts/shipping; never use placeholders like $X or [link].`,
     2200,
     input.personaPrompt,
   );
@@ -121,7 +121,7 @@ Hard character limits (spaces/punctuation count):
 - callout <= ${AD_COPY_LIMITS.callout}
 - sitelink linkText <= ${AD_COPY_LIMITS.sitelinkText}; every sitelink must fill linkText, description1, description2, and finalUrl
 - each sitelink description <= ${AD_COPY_LIMITS.sitelinkDescription}, both filled (never leave description blank)
-- Exactly one sitelink must use the merchant homepage as finalUrl (official website). Other sitelinks must use different on-site pages.
+- Prefer one sitelink using the merchant URL as finalUrl when available; if not available, use distinct on-site pages only (homepage is preferred, not required).
 - each structured snippet value <= ${AD_COPY_LIMITS.structuredValue}
 - promotionTarget <= 20
 
@@ -131,13 +131,13 @@ Content rules:
 - Include several headlines/descriptions about discounts, logistics, and nearby real holidays/shopping seasons when relevant (Black Friday, Cyber Monday, Christmas, New Year, Singles Day, Valentine, Mother's Day, back-to-school, etc.). Prefer real merchant offers; if unknown, use soft seasonal or logistics lines without inventing fake coupon codes or fake % off.
 - Forbidden: free trial/gift wording, placeholders like $X or [link], Google risk words (gun/firearm/tactical/combat/military/prescription/Rx/wine/vodka/etc), medical cure claims.
 - Never use more than 4 consecutive uppercase Latin letters (SHOPNOW is bad; Shop Now / FREE is ok). Avoid ALL-CAPS words longer than 4 letters.
-- Callouts must NOT mention free shipping, discounts, coupons, returns, or sale numbers. Put real promos in promotionAsset (optional) instead.
+- Callouts and descriptions MAY mention discounts, free shipping, coupons, or sale language when plausible. Concrete % off / coupon codes still prefer promotionAsset when known.
 - promotionAsset: optional. Set enabled=true only when a concrete discount is known or strongly typical for this merchant; otherwise enabled=false or null. Use percentOff as whole percent (20 means 20%). moneyAmountOff is a decimal string. languageCode should match the ad language. finalUrl defaults to merchant URL if omitted. occasion may be empty or a real holiday occasion when applicable.
 - translations: required Simplified Chinese glosses for human review only (not sent to Google). Must include: headlines, descriptions, callouts, sitelinks, keywords (aligned to keywords[]), structuredSnippets (2 strings; each is comma-separated Chinese glosses for that snippet's values), and promotion if any.
 - structuredSnippets: pick exactly 2 headers from [${headers}] that best fit this merchant (e.g. travel: Types + Destinations; multi-brand: Types + Brands; own-brand: Types + Styles, avoid Brands). Use these exact English strings. Each needs at least ${AD_COPY_LIMITS.structuredValuesMin} short values.
 - Always include useful negativeKeywords (careers, login, free pdf, etc.).
 - Ad final URL (RSA) stays ${merchantUrl}. No URLs inside headline/description/callout text.
-- Each sitelink MUST include its own finalUrl, linkText, description1, and description2 (all required). finalUrl values must be distinct https pages on the same merchant host. Use ${merchantUrl} for exactly ONE official-website sitelink; the other ${AD_COPY_LIMITS.sitelinkCount.prefer - 1} must NOT all be the homepage. Prefer purchase pages: shop, collections, products, best sellers, new arrivals, sale/deals. Avoid Contact Us / About / Support / Careers / Login unless no purchase pages exist.
+- Each sitelink MUST include its own finalUrl, linkText, description1, and description2 (all required). finalUrl values must be distinct https pages on the same merchant host. Prefer using ${merchantUrl} for one sitelink when it works as a landing page; do not invent a root homepage if the merchant only has deeper paths. Prefer purchase pages: shop, collections, products, best sellers, new arrivals, sale/deals. Avoid Contact Us / About / Support / Careers / Login unless no purchase pages exist.
 ${knownPages ? `Known on-site pages to prefer for sitelink finalUrl (purchase pages first):\n${knownPages}` : ''}`;
 }
 

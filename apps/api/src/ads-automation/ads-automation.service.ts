@@ -984,7 +984,7 @@ export class AdsAutomationService implements OnModuleInit {
    */
   async discoverMerchants(
     ownerUserId: number,
-    query: { channelAccountId?: number; q?: string; page?: number; pageSize?: number },
+    query: { channelAccountId?: number; platformCode?: string; q?: string; page?: number; pageSize?: number },
   ) {
     return this.merchants.browseMerchantCatalog(ownerUserId, query);
   }

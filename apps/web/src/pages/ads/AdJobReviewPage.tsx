@@ -1115,12 +1115,41 @@ export default function AdJobReviewPage() {
               <div className="ad-review__hint">否定词默认广泛匹配，提交时一并写入系列，过滤非购买意图流量。</div>
             </Card>
 
-            <Card size="small" className="ad-review__card" title={`站内链接（${draft.sitelinks.length}/6，最多 8）`}>
+            <Card
+              size="small"
+              className="ad-review__card"
+              title={`站内链接（${draft.sitelinks.length}/6，最多 8）`}
+              extra={(
+                <Button
+                  size="small"
+                  type="link"
+                  disabled={!draft.sitelinks.length || draft.sitelinks.every((item) => item.verified)}
+                  onClick={() => {
+                    const pending = draft.sitelinks.filter((item) => !item.verified && /^https?:\/\//i.test(item.finalUrl.trim()));
+                    if (!pending.length) {
+                      message.warning('请先填写有效的 http(s) 落地页');
+                      return;
+                    }
+                    setDraft({
+                      ...draft,
+                      sitelinks: draft.sitelinks.map((item) => (
+                        /^https?:\/\//i.test(item.finalUrl.trim())
+                          ? { ...item, verified: true }
+                          : item
+                      )),
+                    });
+                    message.success(`已标记 ${pending.length} 条为已验证`);
+                  }}
+                >
+                  全部标记已验证
+                </Button>
+              )}
+            >
               <Alert
                 type="info"
                 showIcon
                 style={{ marginBottom: 12 }}
-                message="默认 6 条站内链接：第 1 条为官网首页，其余为不同内页；文案、两条描述和落地页都需填满。"
+                message="默认 6 条：有商家网址时第 1 条优先用它，其余用不同内页。官网有更好，没有也可发布。发布前请确认落地页并点「标记已验证」。"
               />
               {draft.sitelinks.map((link, index) => (
                 <Card
@@ -1128,10 +1157,41 @@ export default function AdJobReviewPage() {
                   size="small"
                   type="inner"
                   className="ad-review__sitelink"
-                  title={`站内链接 ${index + 1}`}
+                  title={`站内链接 ${index + 1}${index === 0 ? '（优先官网）' : ''}`}
                   extra={(
                     <Space>
-                      {link.verified ? <Tag color="success">已验证</Tag> : <Tag>未验证</Tag>}
+                      {link.verified ? <Tag color="success">已验证</Tag> : <Tag color="warning">未验证</Tag>}
+                      {link.verified ? (
+                        <Button
+                          type="link"
+                          size="small"
+                          onClick={() => {
+                            const sitelinks = [...draft.sitelinks];
+                            sitelinks[index] = { ...link, verified: false };
+                            setDraft({ ...draft, sitelinks });
+                          }}
+                        >
+                          取消验证
+                        </Button>
+                      ) : (
+                        <Button
+                          type="link"
+                          size="small"
+                          disabled={!/^https?:\/\//i.test(link.finalUrl.trim())}
+                          onClick={() => {
+                            if (!/^https?:\/\//i.test(link.finalUrl.trim())) {
+                              message.warning('请先填写有效的落地页 URL');
+                              return;
+                            }
+                            const sitelinks = [...draft.sitelinks];
+                            sitelinks[index] = { ...link, verified: true };
+                            setDraft({ ...draft, sitelinks });
+                            message.success(`站内链接 ${index + 1} 已标记验证`);
+                          }}
+                        >
+                          标记已验证
+                        </Button>
+                      )}
                       <Button
                         type="text"
                         size="small"
@@ -1377,6 +1437,9 @@ export default function AdJobReviewPage() {
             </Card>
 
             <Card size="small" className="ad-review__card" title={`宣传信息（${draft.callouts.length}/8）`}>
+              <div className="ad-review__hint" style={{ marginBottom: 8 }}>
+                可写折扣、免运费、优惠等促销语；具体百分比优惠码更建议放下方促销栏。
+              </div>
               {draft.callouts.map((text, index) => (
                 <div className="ad-review__row" key={`c-${index}`}>
                   <div className="ad-review__row-index">{index + 1}</div>

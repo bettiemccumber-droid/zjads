@@ -34,6 +34,11 @@ assert.strictEqual(languageConstant('zh_TW'), '1018');
 assert.strictEqual(languageConstant('he'), '1027');
 assert.strictEqual(languageConstant('fil'), '1042');
 
+const withVerifiedSitelinks = <T extends { sitelinks: Array<{ verified: boolean }> }>(draft: T): T => ({
+  ...draft,
+  sitelinks: draft.sitelinks.map((link) => ({ ...link, verified: true })),
+});
+
 const base = buildSampleDraft({
   merchantName: 'Acegolfs',
   merchantUrl: 'https://example.com/',
@@ -46,7 +51,8 @@ const draft = applyAdCopy(
 {"headlines":["Gậy golf Acegolfs","Xem Acegolfs","Acegolfs hôm nay","${'x'.repeat(40)}"],"descriptions":["Xem gậy và phụ kiện Acegolfs.","Các mẫu đang bán tại Acegolfs."],"keywords":["acegolfs"],"sitelinks":[{"linkText":"Xem ngay","description1":"Gậy golf","description2":"Phụ kiện"}]}
 \`\`\``),
 );
-assert.deepStrictEqual(validateDraft(draft), []);
+assert.ok(draft.sitelinks.every((link) => !link.verified), '生成后站内链接默认未验证');
+assert.deepStrictEqual(validateDraft(withVerifiedSitelinks(draft)), []);
 assert.ok(draft.headlines.length >= 3);
 assert.strictEqual(draft.merchantUrl, 'https://example.com/');
 assert.strictEqual(draft.dailyBudgetUsd, '3.00');
@@ -54,7 +60,7 @@ assert.strictEqual(draft.sitelinks.length, 6);
 assert.ok(draft.sitelinks.every((link) => link.linkText && link.description1 && link.description2 && link.finalUrl));
 const sitelinkKeys = new Set(draft.sitelinks.map((link) => normalizePageKey(link.finalUrl)));
 assert.strictEqual(sitelinkKeys.size, draft.sitelinks.length);
-assert.ok(sitelinkKeys.has(normalizePageKey(draft.merchantUrl)), '至少一条站内链接指向官网');
+assert.ok(sitelinkKeys.has(normalizePageKey(draft.merchantUrl)), '有商家网址时优先放一条官网');
 assert.strictEqual(normalizePageKey(draft.sitelinks[0].finalUrl), normalizePageKey(draft.merchantUrl));
 
 const longDesc = `Discover travel deals and experiences with Klook across Australia including tours activities and attractions you can book today with flexible options for every traveler.`;
@@ -66,7 +72,7 @@ const repaired = applyAdCopy(base, {
   callouts: ['Official Site', 'Shop Online'],
   structuredSnippets: [{ header: 'TYPES', values: ['Tours', 'Tickets', 'Activities', 'Transfers'] }],
 });
-assert.deepStrictEqual(validateDraft(repaired), []);
+assert.deepStrictEqual(validateDraft(withVerifiedSitelinks(repaired)), []);
 assert.ok(repaired.descriptions.every((text) => text.length <= 90));
 assert.ok(repaired.descriptions.length >= 2);
 assert.ok(repaired.headlines.length >= 3);
@@ -82,10 +88,19 @@ const dirty = {
   cpcBidCeilingUsd: '',
 };
 const cleaned = sanitizeDraftForReview(dirty, base);
-assert.ok(!cleaned.callouts.some((text) => /\$|%|free shipping/i.test(text)));
+// 宣传信息允许折扣 / 免运费；促销备注里的占位符 $X 仍会清掉
+assert.ok(cleaned.callouts.some((text) => /\$|free shipping/i.test(text)));
 assert.ok(cleaned.headlines.some((text) => /50%\s*off/i.test(text)));
 assert.strictEqual(cleaned.promotion, '');
-assert.deepStrictEqual(validateDraft(cleaned), []);
+// 生成后的站内链接需人工标记已验证后才能过校验
+assert.ok(cleaned.sitelinks.every((link) => link.finalUrl && !link.verified));
+assert.deepStrictEqual(
+  validateDraft({
+    ...cleaned,
+    sitelinks: cleaned.sitelinks.map((link) => ({ ...link, verified: true })),
+  }),
+  [],
+);
 assert.ok(cleaned.sitelinks.length >= 6);
 
 const payload = buildCreateCampaignPayload({

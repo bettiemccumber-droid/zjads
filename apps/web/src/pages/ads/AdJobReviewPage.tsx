@@ -414,7 +414,7 @@ export default function AdJobReviewPage() {
           const submitted = res.data.data.campaign?.status === 'ENABLED';
           message.success(
             submitted
-              ? '已提交到 Google Ads；若账号有跟踪链接前缀且已绑内容站，将尝试自动发露出文'
+              ? '已提交到 Google Ads；已绑内容站时会尝试自动发露出文（无联盟链则用官网兜底）'
               : '已写入待提交队列；配置 API 后提交时会尝试自动发露出文',
           );
         } catch (err) {

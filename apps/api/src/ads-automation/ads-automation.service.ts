@@ -589,7 +589,9 @@ export class AdsAutomationService implements OnModuleInit {
    */
   async publishComposedArticle(ownerUserId: number, input: ArticleComposeInput) {
     const prepared = await this.prepareComposedArticle(ownerUserId, input);
-    assertDistinctTrackUrl(prepared.trackUrl, prepared.merchantUrl);
+    if (!/^https?:\/\//i.test(prepared.trackUrl.trim())) {
+      throw new BadRequestException('请填写跟踪链接（可用联盟链，或商家官网兜底）');
+    }
     if (!prepared.account.siteId || !prepared.account.site) {
       throw new BadRequestException('请先在我的平台账号里绑定内容站');
     }
@@ -1495,15 +1497,7 @@ export class AdsAutomationService implements OnModuleInit {
       return;
     }
     const trackUrl = buildTrackUrl(account.platform.code, merchantUrl, account.trackLinkPrefix);
-    if (samePageUrl(trackUrl, merchantUrl)) {
-      await this.addEvent(
-        jobId,
-        'COMPLETED',
-        'ARTICLE',
-        '广告已提交；联盟账号没有跟踪链接前缀，请到「快速发布文章」填写跟踪链接后再发文',
-      );
-      return;
-    }
+    const usingMerchantFallback = samePageUrl(trackUrl, merchantUrl);
     const catalog = job.catalogMerchantId
       ? await this.prisma.catalogMerchant.findFirst({ where: { id: job.catalogMerchantId, ownerUserId } })
       : null;
@@ -1551,7 +1545,10 @@ export class AdsAutomationService implements OnModuleInit {
       jobId,
       'COMPLETED',
       'ARTICLE',
-      articleUrl ? `已自动发布露出文：${articleUrl}` : '露出文已保存，等待内容站回写',
+      [
+        articleUrl ? `已自动发布露出文：${articleUrl}` : '露出文已保存，等待内容站回写',
+        usingMerchantFallback ? '（无联盟前缀，正文暂用商家官网链接；可在快速发布里改成联盟链）' : '',
+      ].filter(Boolean).join(''),
     );
   }
 
@@ -2626,19 +2623,6 @@ export class AdsAutomationService implements OnModuleInit {
       .filter((url, index, all) => acceptedArticleImage(url) && all.indexOf(url) === index)
       .slice(0, 8);
     return { account, merchant, name, mid, countryCode, languageCode, trackUrl, merchantUrl, sample, imageUrls };
-  }
-}
-
-/**
- * 联盟跟踪链接必须可用，且不能和商家网址相同。
- */
-function assertDistinctTrackUrl(trackUrl: string, merchantUrl: string) {
-  const track = trackUrl.trim();
-  if (!/^https?:\/\//i.test(track)) {
-    throw new BadRequestException('请填写联盟跟踪链接');
-  }
-  if (samePageUrl(track, merchantUrl)) {
-    throw new BadRequestException('请填写联盟跟踪链接，不能和商家网址相同');
   }
 }
 

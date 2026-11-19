@@ -674,11 +674,11 @@ export default function ArticlePublishPage() {
               蓝色关键词会指向跟踪链接。配图插在各小节之间。卡片封面必须用商家页 https 图；只上传本地图时正文最多 1 张，且列表封面会空。
             </Typography.Paragraph>
             <div style={{ background: '#f6ffed', border: '1px solid #b7eb8f', borderRadius: 8, padding: 12, marginBottom: 8 }}>
-              <div style={{ marginBottom: 6 }}>跟踪链接（必填，须为联盟链接）</div>
+              <div style={{ marginBottom: 6 }}>跟踪链接（可手填；无联盟链时可用官网）</div>
               <Input
                 value={trackUrlEdit}
-                status={samePageUrl(trackUrlEdit.trim() || preview.trackUrl, preview.merchantUrl) ? 'error' : undefined}
-                placeholder="粘贴联盟跟踪链接 https://..."
+                status={samePageUrl(trackUrlEdit.trim() || preview.trackUrl, preview.merchantUrl) ? 'warning' : undefined}
+                placeholder="联盟跟踪链接，或商家官网 https://..."
                 onChange={(event) => setTrackUrlEdit(event.target.value)}
                 addonAfter={
                   /^https?:\/\//i.test(trackUrlEdit.trim()) ? (
@@ -687,8 +687,8 @@ export default function ArticlePublishPage() {
                 }
               />
               {samePageUrl(trackUrlEdit.trim() || preview.trackUrl, preview.merchantUrl) ? (
-                <div style={{ marginTop: 6, color: '#cf1322' }}>
-                  还没有联盟跟踪链接。请粘贴后再发布；正文蓝色关键词都会指向这里。
+                <div style={{ marginTop: 6, color: '#d48806' }}>
+                  当前与商家网址相同（拒登/下架等可用官网兜底）。有联盟链时建议改成跟踪链接；正文关键词会指向这里。
                 </div>
               ) : (
                 <div style={{ marginTop: 6, color: 'rgba(0,0,0,0.45)' }}>
@@ -718,10 +718,6 @@ export default function ArticlePublishPage() {
                     const nextTrack = trackUrlEdit.trim() || preview.trackUrl;
                     if (!/^https?:\/\//i.test(nextTrack)) {
                       message.warning('跟踪链接需要以 http 或 https 开头');
-                      return;
-                    }
-                    if (samePageUrl(nextTrack, preview.merchantUrl)) {
-                      message.warning('请填写联盟跟踪链接，不能和商家网址相同');
                       return;
                     }
                     setPublishing(true);

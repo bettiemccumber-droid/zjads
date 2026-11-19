@@ -1,5 +1,5 @@
 import assert from 'assert';
-import { crawlMerchantImages, extractMerchantImages } from './merchant-page-images';
+import { crawlMerchantImages, extractMerchantImages, looksLikeScriptNoise } from './merchant-page-images';
 
 const html = `<!doctype html>
 <html><head>
@@ -10,6 +10,7 @@ const html = `<!doctype html>
 <img src="/products/shoe.jpg" alt="Shoe">
 <img src="https://cdn.example.com/sprite.svg" alt="icon">
 <img src="https://www.facebook.com/tr?id=1" alt="track">
+<img src="\${(i=e==null?void 0:e.title)!=null?i:''}" alt="bad">
 <img src=\\"https:\\/\\/cdn.example.com\\/pay\\/visa.png\\" alt=\\"Visa\\" />
 <img src=\\"https:\\/\\/cdn.example.com\\/catalog\\/shoe.jpg\\" alt=\\"Shoe photo\\" />
 <div style="background-image:url(//cdn.example.com/hero-wide.jpg)"></div>
@@ -24,6 +25,8 @@ assert.deepStrictEqual(images.map((item) => item.url), [
   'https://cdn.example.com/pay/visa.png',
 ]);
 assert.strictEqual(images[1].alt, 'Shoe');
+assert.ok(!images.some((item) => looksLikeScriptNoise(item.url) || looksLikeScriptNoise(item.alt)));
+assert.ok(looksLikeScriptNoise('${(i=e==null?void 0:e.title)!=null?i:}'));
 
 crawlMerchantImages('http://127.0.0.1/secret').then(() => {
   throw new Error('private address was crawled');

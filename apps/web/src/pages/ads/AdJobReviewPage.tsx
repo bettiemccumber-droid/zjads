@@ -414,8 +414,8 @@ export default function AdJobReviewPage() {
           const submitted = res.data.data.campaign?.status === 'ENABLED';
           message.success(
             submitted
-              ? '已提交到 Google Ads（文章需在「快速发布文章」单独生成）'
-              : '已写入待提交队列（文章需在「快速发布文章」单独生成）',
+              ? '已提交到 Google Ads；若账号有跟踪链接前缀且已绑内容站，将尝试自动发露出文'
+              : '已写入待提交队列；配置 API 后提交时会尝试自动发露出文',
           );
         } catch (err) {
           if (err instanceof Error && (err.message === 'save failed' || err.message === 'publish failed')) {

@@ -1,6 +1,8 @@
 import assert from 'assert';
 import { buildCreateCampaignPayload } from './mutate-payload';
 import {
+  affiliateKeywordDensity,
+  annotateAffiliateKeywords,
   buildCampaignName,
   buildSampleDraft,
   buildTrackUrl,
@@ -72,5 +74,31 @@ assert.deepStrictEqual(
   validateDraft({ ...draft, headlines: ['FREE Shipping', 'Shop Brand', 'Visit Store'] }),
   [],
 );
+
+const plainArticle = {
+  title: 'Koia drinks',
+  intro: [
+    'I tried Koia on a busy Monday. Koia protein shakes were easy to pack.',
+    'Friends asked about Koia after seeing my bottle.',
+  ],
+  sections: [
+    {
+      heading: 'Taste',
+      paragraphs: [
+        'Koia tastes clean. I keep Koia in the fridge and grab Koia before workouts.',
+        'Would I buy Koia again? Yes, Koia fits my routine.',
+      ],
+    },
+    {
+      heading: 'Next',
+      paragraphs: ['Shop Koia if you want a simple shake. Visit Koia for flavors.'],
+    },
+  ],
+};
+const linked = annotateAffiliateKeywords(plainArticle, 'Koia');
+const density = affiliateKeywordDensity(linked);
+assert.ok(density.keywords.length >= 2);
+assert.ok(density.ratio >= 0.05);
+assert.ok(linked.intro.join(' ').includes('[[affiliate:'));
 
 console.log('ads-automation.util.test.ts: ok');

@@ -914,39 +914,195 @@ export function renderAffiliateText(text: string, trackUrl: string): string {
   return html;
 }
 
+/** 正文联盟关键词锚文字数 / 正文字数，目标约 8%–10%。 */
+export const AFFILIATE_KEYWORD_DENSITY = { min: 0.08, max: 0.1 };
+
 /**
- * 模型没标关键词时，至少把商家名嵌进开篇和收尾。
+ * 去掉已有标记，便于重新从成稿抽词挂链。
  */
-export function ensureAffiliateMarkers(article: SampleArticle, merchantName: string): SampleArticle {
-  const brand = merchantName.trim() || 'this store';
-  const marker = `[[affiliate:${brand}]]`;
-  const countMarkers = (text: string) => (text.match(/\[\[affiliate:[^\]]+\]\]/gi) || []).length;
-  let total = [...article.intro, ...article.sections.flatMap((section) => section.paragraphs)].reduce(
-    (sum, text) => sum + countMarkers(text),
-    0,
-  );
-  if (total >= 3) return article;
+export function stripAffiliateMarkers(text: string): string {
+  return text.replace(/\[\[affiliate:([^\]]+)\]\]/gi, '$1');
+}
 
-  const inject = (text: string) => {
-    if (countMarkers(text) > 0) return text;
-    const index = text.toLowerCase().indexOf(brand.toLowerCase());
-    if (index >= 0) {
-      return `${text.slice(0, index)}${marker}${text.slice(index + brand.length)}`;
+/**
+ * 统计锚文字数占比（不含标记符号本身）。
+ */
+export function affiliateKeywordDensity(article: SampleArticle): { ratio: number; anchorChars: number; plainChars: number; keywords: string[] } {
+  const chunks = articlePlainChunks(article);
+  const keywords: string[] = [];
+  let anchorChars = 0;
+  let plainChars = 0;
+  const marker = /\[\[affiliate:([^\]]+)\]\]/gi;
+  for (const chunk of chunks) {
+    let last = 0;
+    let match: RegExpExecArray | null;
+    const re = new RegExp(marker.source, 'gi');
+    while ((match = re.exec(chunk)) !== null) {
+      plainChars += stripAffiliateMarkers(chunk.slice(last, match.index)).length;
+      const label = match[1].replace(/\s+/g, ' ').trim();
+      if (label) {
+        keywords.push(label);
+        anchorChars += label.length;
+        plainChars += label.length;
+      }
+      last = match.index + match[0].length;
     }
-    return `${text} ${marker}`.trim();
+    plainChars += stripAffiliateMarkers(chunk.slice(last)).length;
+  }
+  return {
+    ratio: plainChars > 0 ? anchorChars / plainChars : 0,
+    anchorChars,
+    plainChars,
+    keywords,
   };
+}
 
-  const intro = article.intro.length ? article.intro.map((text, index) => (index === 0 ? inject(text) : text)) : [marker];
-  const sections = article.sections.map((section, index) => {
-    if (index !== article.sections.length - 1) return section;
-    const paragraphs = section.paragraphs.length
-      ? section.paragraphs.map((text, paragraphIndex) => (
-          paragraphIndex === section.paragraphs.length - 1 ? inject(text) : text
-        ))
-      : [`Learn more at ${marker}.`];
-    return { ...section, paragraphs };
-  });
-  return { ...article, intro, sections };
+/**
+ * 先写自然文，再从成稿里找品牌/相关短语挂联盟链，密度尽量落在 8%–10%。
+ */
+export function annotateAffiliateKeywords(article: SampleArticle, merchantName: string): SampleArticle {
+  const brand = merchantName.trim() || 'this store';
+  const cleared: SampleArticle = {
+    title: stripAffiliateMarkers(article.title || ''),
+    intro: (article.intro ?? []).map(stripAffiliateMarkers),
+    sections: (article.sections ?? []).map((section) => ({
+      heading: stripAffiliateMarkers(section.heading || ''),
+      paragraphs: (section.paragraphs ?? []).map(stripAffiliateMarkers),
+    })),
+  };
+  const candidates = affiliatePhraseCandidates(cleared, brand);
+  let working = cleared;
+  let density = affiliateKeywordDensity(working);
+  for (const phrase of candidates) {
+    density = affiliateKeywordDensity(working);
+    if (density.ratio >= AFFILIATE_KEYWORD_DENSITY.min) break;
+    working = wrapPhraseOnce(working, phrase, AFFILIATE_KEYWORD_DENSITY.max);
+  }
+  density = affiliateKeywordDensity(working);
+  if (density.ratio < AFFILIATE_KEYWORD_DENSITY.min) {
+    working = wrapAllBrandMentions(working, brand, AFFILIATE_KEYWORD_DENSITY.max);
+  }
+  density = affiliateKeywordDensity(working);
+  if (density.keywords.length === 0) {
+    const marker = `[[affiliate:${brand}]]`;
+    const intro = working.intro.length
+      ? working.intro.map((text, index) => (index === 0 ? `${text} ${marker}`.trim() : text))
+      : [marker];
+    working = { ...working, intro };
+  }
+  return working;
+}
+
+/** @deprecated 使用 annotateAffiliateKeywords */
+export function ensureAffiliateMarkers(article: SampleArticle, merchantName: string): SampleArticle {
+  return annotateAffiliateKeywords(article, merchantName);
+}
+
+function articlePlainChunks(article: SampleArticle): string[] {
+  return [
+    ...(article.intro ?? []),
+    ...(article.sections ?? []).flatMap((section) => section.paragraphs ?? []),
+  ];
+}
+
+function affiliatePhraseCandidates(article: SampleArticle, brand: string): string[] {
+  const plain = articlePlainChunks(article).join(' ');
+  const lower = plain.toLowerCase();
+  const brandLower = brand.toLowerCase();
+  const found = new Set<string>();
+  const add = (value: string) => {
+    const text = value.replace(/\s+/g, ' ').trim();
+    if (text.length >= 2 && text.length <= 48) found.add(text);
+  };
+  add(brand);
+  const first = brand.split(/\s+/)[0];
+  if (first && first.length >= 3) add(first);
+  const patterns = [
+    new RegExp(`${escapeRegExp(brand)}(?:\\s+[A-Za-z\\u00C0-\\u024F]{2,16}){0,3}`, 'gi'),
+    new RegExp(`(?:try|shop|visit|buy|check out|official)\\s+${escapeRegExp(brand)}`, 'gi'),
+  ];
+  for (const pattern of patterns) {
+    for (const match of plain.matchAll(pattern)) add(match[0]);
+  }
+  if (lower.includes(brandLower)) add(brand);
+  return [...found].sort((a, b) => b.length - a.length || a.localeCompare(b));
+}
+
+function wrapPhraseOnce(article: SampleArticle, phrase: string, maxRatio: number): SampleArticle {
+  const needle = phrase.trim();
+  if (!needle) return article;
+  let done = false;
+  const wrapText = (text: string): string => {
+    if (done) return text;
+    const density = affiliateKeywordDensity({
+      title: article.title,
+      intro: article.intro,
+      sections: article.sections,
+    });
+    // 用当前全文粗估：若已接近上限则不再包
+    if (density.ratio >= maxRatio) {
+      done = true;
+      return text;
+    }
+    const index = findUnmarkedIndex(text, needle);
+    if (index < 0) return text;
+    const nextAnchor = needle.length;
+    const nextRatio = (density.anchorChars + nextAnchor) / Math.max(density.plainChars, 1);
+    if (nextRatio > maxRatio + 0.005 && density.keywords.length > 0) {
+      done = true;
+      return text;
+    }
+    done = true;
+    return `${text.slice(0, index)}[[affiliate:${needle}]]${text.slice(index + needle.length)}`;
+  };
+  return mapArticleParagraphs(article, wrapText);
+}
+
+function wrapAllBrandMentions(article: SampleArticle, brand: string, maxRatio: number): SampleArticle {
+  let working = article;
+  for (let i = 0; i < 24; i += 1) {
+    const before = affiliateKeywordDensity(working);
+    if (before.ratio >= AFFILIATE_KEYWORD_DENSITY.min) break;
+    const next = wrapPhraseOnce(working, brand, maxRatio);
+    if (next === working || affiliateKeywordDensity(next).keywords.length === before.keywords.length) break;
+    working = next;
+  }
+  return working;
+}
+
+function findUnmarkedIndex(text: string, phrase: string): number {
+  const lower = text.toLowerCase();
+  const needle = phrase.toLowerCase();
+  let from = 0;
+  while (from < text.length) {
+    const index = lower.indexOf(needle, from);
+    if (index < 0) return -1;
+    if (!isInsideAffiliateMarker(text, index)) return index;
+    from = index + needle.length;
+  }
+  return -1;
+}
+
+function isInsideAffiliateMarker(text: string, index: number): boolean {
+  const open = text.lastIndexOf('[[affiliate:', index);
+  if (open < 0) return false;
+  const close = text.indexOf(']]', open);
+  return close >= index;
+}
+
+function mapArticleParagraphs(article: SampleArticle, mapText: (text: string) => string): SampleArticle {
+  return {
+    ...article,
+    intro: (article.intro ?? []).map(mapText),
+    sections: (article.sections ?? []).map((section) => ({
+      ...section,
+      paragraphs: (section.paragraphs ?? []).map(mapText),
+    })),
+  };
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
 /**
@@ -958,7 +1114,7 @@ export function sampleArticleHtml(
   trackUrl: string,
   imageUrls: string[] = [],
 ): string {
-  const prepared = ensureAffiliateMarkers(article, merchantName);
+  const prepared = annotateAffiliateKeywords(article, merchantName);
   const { body: figures } = pickArticleImages(imageUrls);
   const intro = (prepared.intro?.length ? prepared.intro : [])
     .map((text) => `<p>${renderAffiliateText(text, trackUrl)}</p>`)

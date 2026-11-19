@@ -22,10 +22,13 @@ const MAX_HTML_BYTES = 1_500_000;
 
 /**
  * 打开商家网页，抽出可放进文章的图片地址。不访问内网地址。
+ * 抽出后会探测可用性，尽量只返回能打开的图。
  */
 export async function crawlMerchantImages(pageUrl: string): Promise<{ pageUrl: string; images: MerchantPageImage[] }> {
   const { html, finalUrl } = await fetchMerchantHtml(pageUrl);
-  return { pageUrl: finalUrl, images: extractMerchantImages(html, finalUrl) };
+  const extracted = extractMerchantImages(html, finalUrl);
+  const images = await probeMerchantImages(extracted);
+  return { pageUrl: finalUrl, images };
 }
 
 /**
@@ -121,10 +124,12 @@ export function extractMerchantImages(html: string, baseUrl: string): MerchantPa
   const seen = new Set<string>();
 
   const push = (raw: string, alt: string) => {
+    if (looksLikeScriptNoise(raw) || looksLikeScriptNoise(alt)) return;
     const url = resolveImageUrl(raw, baseUrl);
     if (!url || seen.has(url) || !isUsableImage(url)) return;
     seen.add(url);
     const image = { url, alt: decodeHtml(alt).replace(/\s+/g, ' ').trim().slice(0, 120) };
+    if (looksLikeScriptNoise(image.alt)) image.alt = '';
     const bucket = isWeakImage(url, image.alt) ? weak : images;
     if (bucket.length < MAX_IMAGES) bucket.push(image);
   };
@@ -429,8 +434,93 @@ function isWeakImage(url: string, alt: string): boolean {
 
 function isUsableImage(url: string): boolean {
   const lower = url.toLowerCase();
-  if (/\.(svg|ico)(\?|$)/.test(lower)) return false;
+  if (looksLikeScriptNoise(url)) return false;
+  if (/\.(svg|ico|gif)(\?|$)/.test(lower)) return false;
+  if (!/\.(jpe?g|png|webp)(\?|$)/i.test(lower) && !/(cdn|images?|img|media|static|assets?|cloudinary|shopify|imgix)\//i.test(lower)) {
+    return false;
+  }
   return !/(sprite|spacer|pixel|1x1|blank\.gif|favicon|analytics|doubleclick|googletagmanager|facebook\.com\/tr|bat\.bing)/.test(lower);
+}
+
+/**
+ * 页面 JS/模板字符串误进 src/alt 时丢掉。
+ */
+export function looksLikeScriptNoise(value: string): boolean {
+  const text = (value || '').trim();
+  if (!text) return false;
+  if (/\$\{|`|\bvoid\s+0\b|\bnull\s*\?|=>|function\s*\(/.test(text)) return true;
+  if (/[{}]/.test(text) && /[=;]/.test(text)) return true;
+  return false;
+}
+
+/**
+ * 探测候选图是否真能打开。有验活成功的优先返回；
+ * 若 CDN 拦掉服务端请求导致全部失败，则回退到字符串过滤结果，交给前端再剔裂图。
+ */
+export async function probeMerchantImages(
+  candidates: MerchantPageImage[],
+  limit = MAX_IMAGES,
+): Promise<MerchantPageImage[]> {
+  const filtered = candidates.filter((item) => !looksLikeScriptNoise(item.url) && isUsableImage(item.url));
+  const alive: MerchantPageImage[] = [];
+  for (const item of filtered) {
+    if (alive.length >= limit) break;
+    try {
+      await assertPublicHttpUrl(item.url);
+      if (await imageUrlLooksAlive(item.url)) alive.push(item);
+    } catch {
+      // 单张失败不影响其它图
+    }
+  }
+  if (alive.length) return alive;
+  return filtered.slice(0, limit);
+}
+
+async function imageUrlLooksAlive(url: string): Promise<boolean> {
+  try {
+    const head = await axios.head(url, {
+      timeout: 8000,
+      maxRedirects: 3,
+      httpAgent: ipv4Http,
+      httpsAgent: ipv4Https,
+      headers: { ...PAGE_HEADERS, Accept: 'image/*,*/*;q=0.8' },
+      validateStatus: () => true,
+    });
+    if (head.status >= 200 && head.status < 400) {
+      const type = String(head.headers['content-type'] || '');
+      if (/^image\//i.test(type)) return true;
+      if (!type && /\.(jpe?g|png|webp)(\?|$)/i.test(url)) return true;
+    }
+  } catch {
+    // HEAD 常被拒，再试短 GET
+  }
+  try {
+    const get = await axios.get(url, {
+      timeout: 10000,
+      maxRedirects: 3,
+      responseType: 'arraybuffer',
+      maxContentLength: 2_000_000,
+      httpAgent: ipv4Http,
+      httpsAgent: ipv4Https,
+      headers: { ...PAGE_HEADERS, Accept: 'image/*,*/*;q=0.8', Range: 'bytes=0-2047' },
+      validateStatus: () => true,
+    });
+    if (get.status < 200 || get.status >= 400) return false;
+    const type = String(get.headers['content-type'] || '');
+    if (/^image\//i.test(type)) return true;
+    const buf = Buffer.isBuffer(get.data) ? get.data : Buffer.from(get.data);
+    return isImageMagic(buf);
+  } catch {
+    return false;
+  }
+}
+
+function isImageMagic(buf: Buffer): boolean {
+  if (buf.length < 4) return false;
+  if (buf[0] === 0xff && buf[1] === 0xd8 && buf[2] === 0xff) return true; // jpeg
+  if (buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4e && buf[3] === 0x47) return true; // png
+  if (buf.slice(0, 4).toString('ascii') === 'RIFF' && buf.slice(8, 12).toString('ascii') === 'WEBP') return true;
+  return false;
 }
 
 /**

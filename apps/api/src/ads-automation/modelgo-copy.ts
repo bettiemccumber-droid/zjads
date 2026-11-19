@@ -152,17 +152,16 @@ export async function writeArticle(input: {
   const brand = input.merchantName.trim() || 'the brand';
   const raw = await askJson(
     `Write a first-person product review blog post about ${brand} for readers in ${input.countryCode}. Language: ${language}.
-Match a medium-long personal blog style: specific, practical, a little conversational. Soft sell with natural keyword links.`,
+Match a medium-long personal blog style: specific, practical, a little conversational. Soft sell without stuffing links.`,
     `Return JSON only: {"title": string, "intro": string[2], "sections": [{"heading": string, "paragraphs": string[2 to 3]}]}.
 Requirements:
 - Title under 90 characters, natural for search readers in that country.
 - intro: exactly 2 opening paragraphs before the first heading.
 - sections: 4 or 5 sections. Each heading is concrete. Each section has 2 or 3 paragraphs of 2 to 4 sentences.
-- Include 4 to 8 affiliate keyword markers using exactly this syntax: [[affiliate:anchor text]].
-- Anchor text must be natural phrases readers would click, for example the brand name, product type, or "try ${brand}". Vary the wording. Place markers inside sentences, not as a bare list.
-- Put at least one marker in the intro and at least one near the end.
+- Mention "${brand}" naturally many times in varied wording (brand alone, with product type, "try ${brand}", "shop ${brand}", etc.). Aim for roughly 8% to 10% of the body text to be brand/product phrases that could later become links.
+- Do NOT insert affiliate markers, markdown links, or any [[...]] syntax. Plain prose only.
 - Do not invent prices, star ratings, medical claims, or limited-time discounts.
-- Never write real http/https URLs. Only [[affiliate:...]] markers are allowed for links.
+- Never write real http/https URLs.
 - Do not write generic filler like "in today's world" or "whether you are a beginner or expert".`,
     2800,
     input.personaPrompt,

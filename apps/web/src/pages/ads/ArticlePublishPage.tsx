@@ -41,10 +41,27 @@ interface ArticlePreview {
   sections: ArticleSection[];
   merchantUrl: string;
   trackUrl: string;
+  needsTrackUrl?: boolean;
+  affiliateKeywords?: string[];
+  affiliateDensity?: number;
   articleUrl?: string;
   siteName?: string;
   siteDomain?: string;
   accepted?: boolean;
+}
+
+function samePageUrl(left: string, right: string): boolean {
+  const norm = (value: string) => {
+    try {
+      const url = new URL(value);
+      url.hash = '';
+      const path = url.pathname.replace(/\/+$/, '') || '/';
+      return `${url.protocol}//${url.host.toLowerCase()}${path}${url.search}`.toLowerCase();
+    } catch {
+      return value.trim().toLowerCase().replace(/\/+$/, '');
+    }
+  };
+  return norm(left) === norm(right);
 }
 
 interface PublishForm {
@@ -294,9 +311,10 @@ export default function ArticlePublishPage() {
         }
         const found = res.data.data.images ?? [];
         setImages(found);
-        setSelectedImageUrls(found.map((item) => item.url));
+        // 不默认全选；等图片 onLoad 成功后再勾选，避免裂图进正文
+        setSelectedImageUrls([]);
         if (!found.length) {
-          setImageError('这个商家页面上没有找到可用图片');
+          setImageError('这个商家页面上没有找到可用图片，请上传或换 URL 重试');
           return;
         }
         setStep(3);
@@ -531,7 +549,9 @@ export default function ArticlePublishPage() {
         {step === 3 && (
           <Spin spinning={generating} tip="正在按投放国家生成文章，请稍候...">
             <Typography.Text strong>选择文章配图（已选 {selectedImageUrls.length} 条）</Typography.Text>
-            <Typography.Paragraph type="secondary">勾选要留在文章里的图片。没有抓到的话，可以从电脑上传。</Typography.Paragraph>
+            <Typography.Paragraph type="secondary">
+              只保留能打开的图；裂图会自动剔除。没有抓到的话，可以从电脑上传。
+            </Typography.Paragraph>
             <input
               ref={uploadRef}
               type="file"
@@ -569,12 +589,26 @@ export default function ArticlePublishPage() {
                       src={image.url}
                       alt={image.alt || '商家配图'}
                       referrerPolicy="no-referrer"
+                      onLoad={() => {
+                        setSelectedImageUrls((current) => (
+                          current.includes(image.url) ? current : [...current, image.url].slice(0, 8)
+                        ));
+                      }}
+                      onError={() => {
+                        setImages((current) => current.filter((item) => item.url !== image.url));
+                        setSelectedImageUrls((current) => current.filter((url) => url !== image.url));
+                      }}
                       style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }}
                     />
                   </button>
                 );
               })}
             </div>
+            {!images.length ? (
+              <Typography.Paragraph type="secondary" style={{ marginTop: 12 }}>
+                当前没有可用配图，请上传后再生成，或返回上一步换产品页重试。
+              </Typography.Paragraph>
+            ) : null}
             <Space style={{ marginTop: 16 }}>
               <Button onClick={() => setStep(1)}>上一步</Button>
               <Button
@@ -640,10 +674,11 @@ export default function ArticlePublishPage() {
               蓝色关键词会指向跟踪链接。配图插在各小节之间。卡片封面必须用商家页 https 图；只上传本地图时正文最多 1 张，且列表封面会空。
             </Typography.Paragraph>
             <div style={{ background: '#f6ffed', border: '1px solid #b7eb8f', borderRadius: 8, padding: 12, marginBottom: 8 }}>
-              <div style={{ marginBottom: 6 }}>跟踪链接</div>
+              <div style={{ marginBottom: 6 }}>跟踪链接（必填，须为联盟链接）</div>
               <Input
                 value={trackUrlEdit}
-                placeholder="https://..."
+                status={samePageUrl(trackUrlEdit.trim() || preview.trackUrl, preview.merchantUrl) ? 'error' : undefined}
+                placeholder="粘贴联盟跟踪链接 https://..."
                 onChange={(event) => setTrackUrlEdit(event.target.value)}
                 addonAfter={
                   /^https?:\/\//i.test(trackUrlEdit.trim()) ? (
@@ -651,9 +686,20 @@ export default function ArticlePublishPage() {
                   ) : undefined
                 }
               />
-              {(trackUrlEdit.trim() || preview.trackUrl) === preview.merchantUrl && (
+              {samePageUrl(trackUrlEdit.trim() || preview.trackUrl, preview.merchantUrl) ? (
+                <div style={{ marginTop: 6, color: '#cf1322' }}>
+                  还没有联盟跟踪链接。请粘贴后再发布；正文蓝色关键词都会指向这里。
+                </div>
+              ) : (
                 <div style={{ marginTop: 6, color: 'rgba(0,0,0,0.45)' }}>
-                  当前与商家网址相同。可粘贴联盟跟踪链接；发布时正文关键词会指向这里。
+                  发布后正文关键词会指向此链接。
+                </div>
+              )}
+              {(preview.affiliateKeywords?.length || preview.affiliateDensity != null) && (
+                <div style={{ marginTop: 8, color: 'rgba(0,0,0,0.65)' }}>
+                  已挂关键词 {preview.affiliateKeywords?.length ?? 0} 个
+                  {preview.affiliateDensity != null ? `，约占正文 ${preview.affiliateDensity}%` : ''}
+                  {preview.affiliateKeywords?.length ? `：${preview.affiliateKeywords.slice(0, 8).join('、')}` : ''}
                 </div>
               )}
             </div>
@@ -672,6 +718,10 @@ export default function ArticlePublishPage() {
                     const nextTrack = trackUrlEdit.trim() || preview.trackUrl;
                     if (!/^https?:\/\//i.test(nextTrack)) {
                       message.warning('跟踪链接需要以 http 或 https 开头');
+                      return;
+                    }
+                    if (samePageUrl(nextTrack, preview.merchantUrl)) {
+                      message.warning('请填写联盟跟踪链接，不能和商家网址相同');
                       return;
                     }
                     setPublishing(true);

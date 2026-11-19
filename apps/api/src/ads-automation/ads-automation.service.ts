@@ -19,6 +19,8 @@ import {
   buildSampleDraft,
   buildTrackUrl,
   acceptedArticleImage,
+  annotateAffiliateKeywords,
+  affiliateKeywordDensity,
   firstHttpsImageFromHtml,
   pickArticleImages,
   sampleArticleHtml,
@@ -566,12 +568,16 @@ export class AdsAutomationService implements OnModuleInit {
    */
   async previewComposedArticle(ownerUserId: number, input: ArticleComposeInput) {
     const prepared = await this.prepareComposedArticle(ownerUserId, input);
+    const density = affiliateKeywordDensity(prepared.sample);
     return {
       title: prepared.sample.title,
       intro: prepared.sample.intro,
       sections: prepared.sample.sections,
       merchantUrl: prepared.merchantUrl,
       trackUrl: prepared.trackUrl,
+      needsTrackUrl: samePageUrl(prepared.trackUrl, prepared.merchantUrl),
+      affiliateKeywords: density.keywords,
+      affiliateDensity: Math.round(density.ratio * 1000) / 10,
       siteId: prepared.account.siteId,
       siteName: prepared.account.site?.name ?? '',
       siteDomain: prepared.account.site?.domain ?? '',
@@ -583,6 +589,7 @@ export class AdsAutomationService implements OnModuleInit {
    */
   async publishComposedArticle(ownerUserId: number, input: ArticleComposeInput) {
     const prepared = await this.prepareComposedArticle(ownerUserId, input);
+    assertDistinctTrackUrl(prepared.trackUrl, prepared.merchantUrl);
     if (!prepared.account.siteId || !prepared.account.site) {
       throw new BadRequestException('请先在我的平台账号里绑定内容站');
     }
@@ -1388,8 +1395,7 @@ export class AdsAutomationService implements OnModuleInit {
     });
     if (duplicate) return this.getJob(ownerUserId, duplicate.id);
 
-    // 提交广告不再自动发内容站文章（旧逻辑只会发一行商家链接，正文不对）。
-    // 文章请走「快速发布文章」流程，生成完整正文后再发。
+    // 广告提交成功后会异步尝试正式发文（爬图 + AI + 联盟链）；失败不回滚广告。
     const payload = buildCreateCampaignPayload({
       customerId: customer.customerId,
       campaignName,
@@ -1458,7 +1464,95 @@ export class AdsAutomationService implements OnModuleInit {
     if (creds) {
       await this.submitCreate(ownerUserId, campaignId, creds);
     }
+    void this.tryPublishArticleAfterAd(ownerUserId, id).catch(async (error) => {
+      const message = error instanceof Error ? error.message : '自动发文失败';
+      await this.addEvent(id, 'COMPLETED', 'ARTICLE', `广告已提交，自动发文未完成：${message}`).catch(() => undefined);
+    });
     return this.getJob(ownerUserId, id);
+  }
+
+  /**
+   * 广告提交后正式发文：爬图、生成正文、成稿抽词挂链。无跟踪链接或未绑内容站时跳过。
+   */
+  private async tryPublishArticleAfterAd(ownerUserId: number, jobId: string) {
+    const job = await this.prisma.adJob.findFirst({
+      where: { id: jobId, ownerUserId },
+      include: { article: true },
+    });
+    if (!job || job.article) return;
+    const account = await this.prisma.channelAccount.findFirst({
+      where: { id: job.channelAccountId, ownerUserId },
+      include: { platform: true, site: true },
+    });
+    if (!account?.siteId || !account.site) {
+      await this.addEvent(jobId, 'COMPLETED', 'ARTICLE', '广告已提交；未绑定内容站，跳过自动发文');
+      return;
+    }
+    const draft = this.readDraft(job.draft);
+    const merchantUrl = (draft.merchantUrl || '').trim();
+    if (!/^https?:\/\//i.test(merchantUrl)) {
+      await this.addEvent(jobId, 'COMPLETED', 'ARTICLE', '广告已提交；草稿缺少商家网址，跳过自动发文');
+      return;
+    }
+    const trackUrl = buildTrackUrl(account.platform.code, merchantUrl, account.trackLinkPrefix);
+    if (samePageUrl(trackUrl, merchantUrl)) {
+      await this.addEvent(
+        jobId,
+        'COMPLETED',
+        'ARTICLE',
+        '广告已提交；联盟账号没有跟踪链接前缀，请到「快速发布文章」填写跟踪链接后再发文',
+      );
+      return;
+    }
+    const catalog = job.catalogMerchantId
+      ? await this.prisma.catalogMerchant.findFirst({ where: { id: job.catalogMerchantId, ownerUserId } })
+      : null;
+    const name = (catalog?.name || '').trim() || merchantNameFromUrl(merchantUrl);
+    let imageUrls: string[] = [];
+    try {
+      const crawled = await crawlMerchantImages(merchantUrl);
+      imageUrls = crawled.images.map((item) => item.url).slice(0, 8);
+    } catch {
+      imageUrls = [];
+    }
+    const languageCode = resolveAdLanguage(job.targetCountry || 'US', draft.languageCode);
+    const rawSample = modelGoConfig().enabled
+      ? await this.articleFromModel(ownerUserId, name, merchantUrl, job.targetCountry || 'US', languageCode)
+      : buildSampleArticle({ merchantName: name, merchantUrl, trackUrl, languageCode });
+    const sample = annotateAffiliateKeywords(rawSample, name);
+    const pickedImages = pickArticleImages(imageUrls);
+    const body = sampleArticleHtml(sample, name, trackUrl, imageUrls);
+    const httpsBodyImages = pickedImages.body.filter((url) => /^https?:\/\//i.test(url));
+    const cover = pickedImages.cover || firstHttpsImageFromHtml(body) || httpsBodyImages[0] || '';
+    const published = await this.publishToSite(account.site, {
+      title: sample.title,
+      bodyHtml: body,
+      trackUrl,
+      merchantUrl,
+      merchantName: name,
+      image: cover,
+      images: httpsBodyImages,
+    });
+    const articleUrl = published.articleUrl.trim();
+    await this.prisma.article.create({
+      data: {
+        ownerUserId,
+        siteId: account.siteId,
+        adJobId: job.id,
+        title: sample.title.slice(0, 255),
+        body,
+        trackUrl,
+        merchantUrl,
+        articleUrl,
+        publishStatus: articleUrl ? 'published' : 'pending_site',
+      },
+    });
+    await this.addEvent(
+      jobId,
+      'COMPLETED',
+      'ARTICLE',
+      articleUrl ? `已自动发布露出文：${articleUrl}` : '露出文已保存，等待内容站回写',
+    );
   }
 
   /**
@@ -2523,15 +2617,43 @@ export class AdsAutomationService implements OnModuleInit {
     }
     const trackUrl = overrideTrack
       || buildTrackUrl(account.platform.code, merchantUrl, account.trackLinkPrefix);
-    const sample = modelGoConfig().enabled
+    const rawSample = modelGoConfig().enabled
       ? await this.articleFromModel(ownerUserId, name, merchantUrl, countryCode, languageCode)
       : buildSampleArticle({ merchantName: name, merchantUrl, trackUrl, languageCode });
+    const sample = annotateAffiliateKeywords(rawSample, name);
     const imageUrls = (input.imageUrls ?? [])
       .map((url) => url.trim())
       .filter((url, index, all) => acceptedArticleImage(url) && all.indexOf(url) === index)
       .slice(0, 8);
     return { account, merchant, name, mid, countryCode, languageCode, trackUrl, merchantUrl, sample, imageUrls };
   }
+}
+
+/**
+ * 联盟跟踪链接必须可用，且不能和商家网址相同。
+ */
+function assertDistinctTrackUrl(trackUrl: string, merchantUrl: string) {
+  const track = trackUrl.trim();
+  if (!/^https?:\/\//i.test(track)) {
+    throw new BadRequestException('请填写联盟跟踪链接');
+  }
+  if (samePageUrl(track, merchantUrl)) {
+    throw new BadRequestException('请填写联盟跟踪链接，不能和商家网址相同');
+  }
+}
+
+function samePageUrl(left: string, right: string): boolean {
+  const norm = (value: string) => {
+    try {
+      const url = new URL(value);
+      url.hash = '';
+      const path = url.pathname.replace(/\/+$/, '') || '/';
+      return `${url.protocol}//${url.host.toLowerCase()}${path}${url.search}`.toLowerCase();
+    } catch {
+      return value.trim().toLowerCase().replace(/\/+$/, '');
+    }
+  };
+  return norm(left) === norm(right);
 }
 
 /**
@@ -2683,6 +2805,12 @@ function midFromUrl(url: string): string {
   } catch {
     return 'merchant';
   }
+}
+
+function merchantNameFromUrl(url: string): string {
+  const host = midFromUrl(url);
+  const base = host.split('.')[0] || host;
+  return base ? base.charAt(0).toUpperCase() + base.slice(1) : 'Merchant';
 }
 
 /**

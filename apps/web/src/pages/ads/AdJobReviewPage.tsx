@@ -861,11 +861,8 @@ export default function AdJobReviewPage() {
 
       {!editable ? null : (
         <Row gutter={[16, 16]} className="ad-review__layout">
-          <Col xs={24} lg={14} xl={15}>
-            <Card size="small">
-              <div className="ad-review__section-title">
-                <h4>广告标题（{draft.headlines.length}/15）</h4>
-              </div>
+          <Col xs={24} lg={14} xl={15} className="ad-review__main">
+            <Card size="small" className="ad-review__card" title={`广告标题（${draft.headlines.length}/15）`}>
               {draft.headlines.map((text, index) => (
                 <div className="ad-review__row" key={`h-${index}`}>
                   <div className="ad-review__row-index">{index + 1}</div>
@@ -903,15 +900,12 @@ export default function AdJobReviewPage() {
               ))}
               {draft.headlines.length < 15 ? (
                 <Button type="dashed" block onClick={() => setDraft({ ...draft, headlines: [...draft.headlines, ''] })}>
-                  添加标题
+                  + 添加标题
                 </Button>
               ) : null}
             </Card>
 
-            <Card size="small" style={{ marginTop: 16 }}>
-              <div className="ad-review__section-title">
-                <h4>广告描述（{draft.descriptions.length}/4）</h4>
-              </div>
+            <Card size="small" className="ad-review__card" title={`广告描述（${draft.descriptions.length}/4）`}>
               {draft.descriptions.map((text, index) => (
                 <div className="ad-review__row" key={`d-${index}`}>
                   <div className="ad-review__row-index">{index + 1}</div>
@@ -957,7 +951,7 @@ export default function AdJobReviewPage() {
 
             <Card
               size="small"
-              style={{ marginTop: 16 }}
+              className="ad-review__card"
               title="关键词"
               extra={(
                 <Button
@@ -1023,7 +1017,7 @@ export default function AdJobReviewPage() {
               </Space>
             </Card>
 
-            <Card size="small" style={{ marginTop: 16 }} title={`否定关键词（${draft.negativeKeywords.length} 条）`}>
+            <Card size="small" className="ad-review__card" title={`否定关键词（${draft.negativeKeywords.length} 条）`}>
               <div className="ad-review__negatives">
                 {draft.negativeKeywords.map((keyword, index) => (
                   <Tag
@@ -1076,7 +1070,7 @@ export default function AdJobReviewPage() {
               <div className="ad-review__hint">否定词默认广泛匹配，提交时一并写入系列，过滤非购买意图流量。</div>
             </Card>
 
-            <Card size="small" style={{ marginTop: 16 }} title={`站内链接（${draft.sitelinks.length}/6，最多 8）`}>
+            <Card size="small" className="ad-review__card" title={`站内链接（${draft.sitelinks.length}/6，最多 8）`}>
               <Alert
                 type="info"
                 showIcon
@@ -1185,7 +1179,7 @@ export default function AdJobReviewPage() {
 
             <Card
               size="small"
-              style={{ marginTop: 16 }}
+              className="ad-review__card"
               title={(
                 <Space>
                   <PictureOutlined />
@@ -1264,7 +1258,7 @@ export default function AdJobReviewPage() {
 
             <Card
               size="small"
-              style={{ marginTop: 16 }}
+              className="ad-review__card"
               title={(
                 <Space>
                   <PictureOutlined />
@@ -1337,7 +1331,7 @@ export default function AdJobReviewPage() {
               </Space.Compact>
             </Card>
 
-            <Card size="small" style={{ marginTop: 16 }} title={`宣传信息（${draft.callouts.length}/8）`}>
+            <Card size="small" className="ad-review__card" title={`宣传信息（${draft.callouts.length}/8）`}>
               {draft.callouts.map((text, index) => (
                 <div className="ad-review__row" key={`c-${index}`}>
                   <div className="ad-review__row-index">{index + 1}</div>
@@ -1379,7 +1373,7 @@ export default function AdJobReviewPage() {
 
             <Card
               size="small"
-              style={{ marginTop: 16 }}
+              className="ad-review__card"
               title={(
                 <Space>
                   <span>促销（可选）</span>
@@ -1482,7 +1476,7 @@ export default function AdJobReviewPage() {
               )}
             </Card>
 
-            <Card size="small" style={{ marginTop: 16 }} title="结构化摘要">
+            <Card size="small" className="ad-review__card" title="结构化摘要">
               <Space direction="vertical" style={{ width: '100%' }} size={8}>
                 {(draft.structuredSnippets.length ? draft.structuredSnippets : [{ header: 'Types', values: [] }]).map((snippet, index) => (
                   <Card key={`s-${index}`} size="small" type="inner">
@@ -1524,7 +1518,7 @@ export default function AdJobReviewPage() {
 
           <Col xs={24} lg={10} xl={9}>
             <div className="ad-review__aside">
-              <Card size="small" title="发布账户 (CID)">
+              <Card size="small" className="ad-review__card" title="发布账户 (CID)">
                 <Form layout="vertical">
                   <Form.Item
                     label="MCC 账户"
@@ -1632,7 +1626,7 @@ export default function AdJobReviewPage() {
                 </Form>
               </Card>
 
-              <Card size="small" title="广告设置" style={{ marginTop: 16 }}>
+              <Card size="small" className="ad-review__card" title="广告设置">
                 <Form layout="vertical">
                   <Form.Item label="每日预算 (USD)">
                     <Input
@@ -1676,7 +1670,7 @@ export default function AdJobReviewPage() {
                 </Form>
               </Card>
 
-              <Card size="small" title="商家信息" style={{ marginTop: 16 }}>
+              <Card size="small" className="ad-review__card" title="商家信息">
                 <div className="ad-review__meta" style={{ marginBottom: 12 }}>
                   <Tag>{merchantName}</Tag>
                   {job.input?.platformCode ? <Tag>{job.input.platformCode}</Tag> : null}

@@ -2405,34 +2405,55 @@ export class AdsAutomationService implements OnModuleInit {
           data: item.data,
         }))
       : [];
-    const rebuilt = draft
-      ? buildCreateCampaignPayload({
-          customerId: campaign.customerId,
-          campaignName: campaign.campaignName,
-          draft: {
-            ...draft,
-            bidding: campaign.bidding === 'MANUAL_CPC' ? 'MANUAL_CPC' : draft.bidding,
-            merchantUrl: campaign.merchantUrl || draft.merchantUrl,
-            finalUrlSuffix: campaign.finalUrlSuffix || draft.finalUrlSuffix,
-          },
-          imageAssets,
-          logoAssets,
-        })
-      : null;
-    const payload = rebuilt ?? outbox.payload;
-    if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
+    const buildPayload = (
+      images: Array<{ name: string; data: string }>,
+      logos: Array<{ name: string; data: string }>,
+    ) => {
+      if (!draft) return null;
+      return buildCreateCampaignPayload({
+        customerId: campaign.customerId,
+        campaignName: campaign.campaignName,
+        draft: {
+          ...draft,
+          bidding: campaign.bidding === 'MANUAL_CPC' ? 'MANUAL_CPC' : draft.bidding,
+          merchantUrl: campaign.merchantUrl || draft.merchantUrl,
+          finalUrlSuffix: campaign.finalUrlSuffix || draft.finalUrlSuffix,
+        },
+        imageAssets: images,
+        logoAssets: logos,
+      });
+    };
+    const withMedia = buildPayload(imageAssets, logoAssets);
+    const withoutMedia = buildPayload([], []);
+    const primary = withMedia ?? withoutMedia ?? outbox.payload;
+    if (!primary || typeof primary !== 'object' || Array.isArray(primary)) {
       throw new BadRequestException('创建请求无效');
     }
-    if (rebuilt) {
-      await this.prisma.adsOutbox.update({
-        where: { id: outbox.id },
-        data: { payload: rebuilt as Prisma.InputJsonValue },
-      });
-    }
+    await this.prisma.adsOutbox.update({
+      where: { id: outbox.id },
+      data: { payload: primary as Prisma.InputJsonValue },
+    });
     try {
-      const data = await this.googleAds.mutate(campaign.customerId, payload as Record<string, unknown>, creds);
+      let data: unknown;
+      let mediaSkipped = false;
+      try {
+        data = await this.googleAds.mutate(campaign.customerId, primary as Record<string, unknown>, creds);
+      } catch (mediaError) {
+        // 图片/商标可选：素材被拒时去掉后重试，不能拖垮整条上广告
+        const hasMedia = imageAssets.length > 0 || logoAssets.length > 0;
+        if (!hasMedia || !withoutMedia) throw mediaError;
+        data = await this.googleAds.mutate(campaign.customerId, withoutMedia as Record<string, unknown>, creds);
+        mediaSkipped = true;
+        await this.prisma.adsOutbox.update({
+          where: { id: outbox.id },
+          data: { payload: withoutMedia as Prisma.InputJsonValue },
+        });
+      }
       const resources = readCreatedResources(data);
       if (!resources.campaign) throw new Error('Google Ads 没有返回广告系列编号');
+      const doneMessage = mediaSkipped
+        ? `已在 Google Ads 创建系列 ${resources.campaign}（图片/商标未挂上，系列已正常创建）`
+        : `已在 Google Ads 创建系列 ${resources.campaign}`;
       await this.prisma.$transaction(async (tx) => {
         await tx.adAutomationCampaign.update({
           where: { id: campaign.id },
@@ -2444,18 +2465,27 @@ export class AdsAutomationService implements OnModuleInit {
         });
         await tx.adsOutbox.update({
           where: { id: outbox.id },
-          data: { status: 'SENT', sentAt: new Date(), errorMessage: null },
+          data: {
+            status: 'SENT',
+            sentAt: new Date(),
+            errorMessage: mediaSkipped ? '图片或商标素材被拒，已跳过素材后创建成功' : null,
+          },
         });
         await tx.adJob.update({
           where: { id: campaign.jobId },
-          data: { status: 'COMPLETED', progress: 100, progressMessage: '已提交到 Google Ads', errorMessage: null },
+          data: {
+            status: 'COMPLETED',
+            progress: 100,
+            progressMessage: mediaSkipped ? '已提交到 Google Ads（图片未挂上）' : '已提交到 Google Ads',
+            errorMessage: mediaSkipped ? '图片或商标素材被拒，系列已创建成功，可稍后补图' : null,
+          },
         });
         await tx.adJobEvent.create({
           data: {
             jobId: campaign.jobId,
             status: 'COMPLETED',
             step: 'READY_FOR_REVIEW',
-            message: `已在 Google Ads 创建系列 ${resources.campaign}`,
+            message: doneMessage,
           },
         });
         const customers = await tx.googleAdsCustomer.findMany({

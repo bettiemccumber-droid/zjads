@@ -12,6 +12,7 @@ import {
   Select,
   Space,
   Spin,
+  Progress,
   Steps,
   Switch,
   Tag,
@@ -394,6 +395,7 @@ export default function AdJobReviewPage() {
   // 用 ref 读脏标记，避免改系列名时重建 loadJob → 重新拉任务盖掉未保存的广告草稿
   const campaignNameDirtyRef = useRef(false);
   campaignNameDirtyRef.current = campaignNameDirty;
+  const imagesAutoFetchedRef = useRef(false);
 
   const selectedImageUrls = draft.imageUrls ?? [];
   const selectedLogoUrls = draft.logoUrls ?? [];
@@ -431,10 +433,10 @@ export default function AdJobReviewPage() {
     };
   }, [selectedImageUrls.join('|')]);
 
-  const loadAdImages = async () => {
-    const merchantUrl = draft.merchantUrl?.trim();
+  const loadAdImages = async (options: { silent?: boolean } = {}) => {
+    const merchantUrl = (draft.merchantUrl || job?.input?.merchantUrl || '').trim();
     if (!/^https?:\/\//i.test(merchantUrl || '')) {
-      message.warning('请先填写商家网址再拉图');
+      if (!options.silent) message.warning('请先填写商家网址再拉图');
       return;
     }
     setLoadingAdImages(true);
@@ -445,7 +447,7 @@ export default function AdJobReviewPage() {
         sources?: Array<{ kind: string; url: string; imageCount: number }>;
       }>>('/article-publish/images', { params: { merchantUrl } });
       if (!res.data.success) {
-        message.error(res.data.message || '抓取图片失败');
+        if (!options.silent) message.error(res.data.message || '抓取图片失败');
         return;
       }
       const rows = res.data.data.images ?? [];
@@ -490,20 +492,35 @@ export default function AdJobReviewPage() {
       const social = sources.filter((item) => item.kind === 'social').reduce((sum, item) => sum + item.imageCount, 0);
       const search = sources.filter((item) => item.kind === 'search').reduce((sum, item) => sum + item.imageCount, 0);
       const squareCount = measured.filter((item) => item.square).length;
-      if (!measured.length) message.warning('没有抓到可用图片，可拖入本地图或粘贴 URL');
-      else {
-        const parts = [`官网 ${site || measured.length}`];
-        if (social) parts.push(`社媒 ${social}`);
-        if (search) parts.push(`搜索 ${search}`);
-        message.success(`已加载 ${measured.length} 张可选（${parts.join(' / ')}，正方形 ${squareCount}）`);
+      if (!options.silent) {
+        if (!measured.length) message.warning('没有抓到可用图片，可拖入本地图或粘贴 URL');
+        else {
+          const parts = [`官网 ${site || measured.length}`];
+          if (social) parts.push(`社媒 ${social}`);
+          if (search) parts.push(`搜索 ${search}`);
+          message.success(`已加载 ${measured.length} 张可选（${parts.join(' / ')}，正方形 ${squareCount}）`);
+        }
       }
     } catch (err) {
-      const apiMessage = (err as { response?: { data?: { message?: string | string[] } } }).response?.data?.message;
-      message.error(Array.isArray(apiMessage) ? apiMessage.join('；') : apiMessage || '抓取图片失败');
+      if (!options.silent) {
+        const apiMessage = (err as { response?: { data?: { message?: string | string[] } } }).response?.data?.message;
+        message.error(Array.isArray(apiMessage) ? apiMessage.join('；') : apiMessage || '抓取图片失败');
+      }
     } finally {
       setLoadingAdImages(false);
     }
   };
+
+  useEffect(() => {
+    if (!job) return;
+    const url = (draft.merchantUrl || job.input?.merchantUrl || '').trim();
+    if (!/^https?:\/\//i.test(url)) return;
+    if (imagesAutoFetchedRef.current || adImages.length) return;
+    imagesAutoFetchedRef.current = true;
+    void loadAdImages({ silent: true });
+    // 仅在任务/网址就绪时自动拉一次
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [job?.id, draft.merchantUrl, job?.input?.merchantUrl]);
 
   const addMediaUrl = async (kind: 'image' | 'logo', raw: string) => {
     const url = raw.trim();
@@ -565,7 +582,16 @@ export default function AdJobReviewPage() {
     }
     const next = res.data.data;
     setJob(next);
-    if (next.draft) setDraft(hydrateDraft(next.draft));
+    if (next.draft) {
+      setDraft(hydrateDraft(next.draft));
+    } else if (next.input?.merchantUrl) {
+      // 生成中尚无完整草稿时，先带上商家网址，方便预览骨架与拉图
+      setDraft((prev) => ({
+        ...prev,
+        merchantUrl: prev.merchantUrl || next.input?.merchantUrl || '',
+        languageCode: prev.languageCode || next.languageCode || 'en',
+      }));
+    }
     if (next.suggestedCampaignName && !campaignNameDirtyRef.current) {
       setCampaignName(next.suggestedCampaignName);
     }
@@ -648,6 +674,14 @@ export default function AdJobReviewPage() {
   const merchantName = job?.input?.merchantName || draft.merchantUrl || '广告任务';
   const editable = job?.status === 'READY_FOR_REVIEW';
   const generating = Boolean(job && !['READY_FOR_REVIEW', 'COMPLETED', 'FAILED'].includes(job.status));
+  // 生成中也展示预览骨架，文案到位后填入对应位置
+  const showWorkspace = Boolean(job && (editable || generating || job.status === 'FAILED'));
+  const previewHeadlines = draft.headlines.length
+    ? draft.headlines
+    : (generating ? Array.from({ length: 15 }, () => '') : draft.headlines);
+  const previewDescriptions = draft.descriptions.length
+    ? draft.descriptions
+    : (generating ? Array.from({ length: 4 }, () => '') : draft.descriptions);
 
   const saveDraft = async () => {
     if (!id || !editable) return;
@@ -822,12 +856,17 @@ export default function AdJobReviewPage() {
       />
 
       {generating ? (
-        <Alert
-          type="info"
-          showIcon
-          message={`${job.progressMessage}（${job.progress}%）`}
-          description="正在分析商家网站并生成文案。生成完成后可在此编辑并确认发布。"
-        />
+        <div className="ad-review__progress">
+          <Progress
+            className="ad-review__progress-bar"
+            percent={Math.max(0, Math.min(100, job.progress || 0))}
+            size="small"
+            status="active"
+          />
+          <span className="ad-review__progress-text">
+            {job.progressMessage || '正在生成'}（{job.progress || 0}%）· 文案与图片到位后会填入下方预览
+          </span>
+        </div>
       ) : null}
 
       {job.status === 'FAILED' ? (
@@ -859,19 +898,21 @@ export default function AdJobReviewPage() {
         />
       ) : null}
 
-      {!editable ? null : (
+      {!showWorkspace ? null : (
         <Row gutter={[16, 16]} className="ad-review__layout">
-          <Col xs={24} lg={14} xl={15} className="ad-review__main">
-            <Card size="small" className="ad-review__card" title={`广告标题（${draft.headlines.length}/15）`}>
-              {draft.headlines.map((text, index) => (
+          <Col xs={24} lg={14} xl={15} className={`ad-review__main${generating ? ' is-locked' : ''}`}>
+            <Card size="small" className="ad-review__card" title={`广告标题（${draft.headlines.length || previewHeadlines.length}/15）`}>
+              {previewHeadlines.map((text, index) => (
                 <div className="ad-review__row" key={`h-${index}`}>
                   <div className="ad-review__row-index">{index + 1}</div>
                   <div className="ad-review__row-main">
                     <Input
                       value={text}
                       maxLength={40}
+                      disabled={!editable}
+                      placeholder={generating && !text ? '生成中…' : undefined}
                       onChange={(event) => {
-                        const headlines = [...draft.headlines];
+                        const headlines = [...(draft.headlines.length ? draft.headlines : previewHeadlines)];
                         headlines[index] = event.target.value;
                         setDraft({ ...draft, headlines });
                       }}
@@ -883,11 +924,12 @@ export default function AdJobReviewPage() {
                   <div className="ad-review__row-actions">
                     {charCount(text, HEADLINE_MAX)}
                     <Space size={4}>
-                      <Button type="text" size="small" icon={<CopyOutlined />} onClick={() => copyText(text)} />
+                      <Button type="text" size="small" icon={<CopyOutlined />} disabled={!text} onClick={() => copyText(text)} />
                       <Button
                         type="text"
                         size="small"
                         danger
+                        disabled={!editable}
                         icon={<DeleteOutlined />}
                         onClick={() => setDraft({
                           ...draft,
@@ -898,23 +940,25 @@ export default function AdJobReviewPage() {
                   </div>
                 </div>
               ))}
-              {draft.headlines.length < 15 ? (
+              {editable && draft.headlines.length < 15 ? (
                 <Button type="dashed" block onClick={() => setDraft({ ...draft, headlines: [...draft.headlines, ''] })}>
                   + 添加标题
                 </Button>
               ) : null}
             </Card>
 
-            <Card size="small" className="ad-review__card" title={`广告描述（${draft.descriptions.length}/4）`}>
-              {draft.descriptions.map((text, index) => (
+            <Card size="small" className="ad-review__card" title={`广告描述（${draft.descriptions.length || previewDescriptions.length}/4）`}>
+              {previewDescriptions.map((text, index) => (
                 <div className="ad-review__row" key={`d-${index}`}>
                   <div className="ad-review__row-index">{index + 1}</div>
                   <div className="ad-review__row-main">
                     <Input.TextArea
                       value={text}
                       autoSize={{ minRows: 1, maxRows: 3 }}
+                      disabled={!editable}
+                      placeholder={generating && !text ? '生成中…' : undefined}
                       onChange={(event) => {
-                        const descriptions = [...draft.descriptions];
+                        const descriptions = [...(draft.descriptions.length ? draft.descriptions : previewDescriptions)];
                         descriptions[index] = event.target.value;
                         setDraft({ ...draft, descriptions });
                       }}
@@ -926,11 +970,12 @@ export default function AdJobReviewPage() {
                   <div className="ad-review__row-actions">
                     {charCount(text, DESC_MAX)}
                     <Space size={4}>
-                      <Button type="text" size="small" icon={<CopyOutlined />} onClick={() => copyText(text)} />
+                      <Button type="text" size="small" icon={<CopyOutlined />} disabled={!text} onClick={() => copyText(text)} />
                       <Button
                         type="text"
                         size="small"
                         danger
+                        disabled={!editable}
                         icon={<DeleteOutlined />}
                         onClick={() => setDraft({
                           ...draft,
@@ -941,7 +986,7 @@ export default function AdJobReviewPage() {
                   </div>
                 </div>
               ))}
-              {draft.descriptions.length < 4 ? (
+              {editable && draft.descriptions.length < 4 ? (
                 <Button type="dashed" block onClick={() => setDraft({ ...draft, descriptions: [...draft.descriptions, ''] })}>
                   添加描述
                 </Button>

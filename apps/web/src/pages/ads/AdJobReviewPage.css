@@ -170,10 +170,45 @@
   margin-top: 12px;
   padding: 10px 12px;
   border-radius: 10px;
-  background: #f0f7ff;
-  border: 1px solid #cfe0ff;
-  color: #1d4fbf;
+  background: #f6ffed;
+  border: 1px solid #b7eb8f;
+  color: #389e0d;
   font-weight: 600;
+}
+
+.ad-review__progress {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 14px;
+  border-radius: 12px;
+  background: #fff;
+  border: 1px solid var(--ad-review-border);
+  box-shadow: 0 1px 2px rgba(16, 24, 40, 0.04);
+}
+
+.ad-review__progress-bar {
+  flex: 1;
+  min-width: 0;
+}
+
+.ad-review__progress-text {
+  flex: none;
+  color: var(--ad-review-muted);
+  font-size: 12px;
+  max-width: 46%;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.ad-review__main.is-locked {
+  pointer-events: none;
+  opacity: 0.96;
+}
+
+.ad-review__main.is-locked .ad-review__row {
+  background: #f3f6fa;
 }
 
 .ad-review__hint {

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { Alert, Button, Card, Checkbox, Form, Input, Modal, Popconfirm, Radio, Select, Space, Spin, Switch, Table, Tabs, Tag, Tooltip, Typography, message } from 'antd';
+import { Alert, Button, Card, Checkbox, Form, Input, Modal, Popconfirm, Select, Space, Spin, Switch, Table, Tabs, Tag, Tooltip, Typography, message } from 'antd';
 import {
   AlertOutlined,
   CalendarOutlined,
@@ -12,7 +12,6 @@ import {
   ShopOutlined,
   SmileOutlined,
   StarOutlined,
-  ThunderboltOutlined,
   WarningOutlined,
 } from '@ant-design/icons';
 import { api, type ApiResult } from '../../api/client';
@@ -918,8 +917,6 @@ export default function MyMerchantsPage() {
     enabledCount,
     platformCounts.length,
   ]);
-
-  const engineMode = engines.singleProduct ? 'singleProduct' : engines.landingProof ? 'landingProof' : 'none';
 
   return (
     <div className="merchant-page">

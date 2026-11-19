@@ -50,9 +50,12 @@ assert.deepStrictEqual(validateDraft(draft), []);
 assert.ok(draft.headlines.length >= 3);
 assert.strictEqual(draft.merchantUrl, 'https://example.com/');
 assert.strictEqual(draft.dailyBudgetUsd, '3.00');
+assert.strictEqual(draft.sitelinks.length, 6);
+assert.ok(draft.sitelinks.every((link) => link.linkText && link.description1 && link.description2 && link.finalUrl));
 const sitelinkKeys = new Set(draft.sitelinks.map((link) => normalizePageKey(link.finalUrl)));
 assert.strictEqual(sitelinkKeys.size, draft.sitelinks.length);
-assert.ok(!sitelinkKeys.has(normalizePageKey(draft.merchantUrl)));
+assert.ok(sitelinkKeys.has(normalizePageKey(draft.merchantUrl)), '至少一条站内链接指向官网');
+assert.strictEqual(normalizePageKey(draft.sitelinks[0].finalUrl), normalizePageKey(draft.merchantUrl));
 
 const longDesc = `Discover travel deals and experiences with Klook across Australia including tours activities and attractions you can book today with flexible options for every traveler.`;
 assert.ok(longDesc.length > 90);
@@ -97,6 +100,7 @@ assert.deepStrictEqual(campaignOp?.campaignOperation.create.targetSpend, {});
 assert.ok(sitelinkPageScore('https://x.com/shop', 'shop') > sitelinkPageScore('https://x.com/contact-us', 'Contact Us'));
 const purchaseFirst = assignUniqueSitelinkUrls(
   [
+    { linkText: 'Official website', description1: 'a', description2: 'b', finalUrl: '', verified: false },
     { linkText: 'Contact Us', description1: 'a', description2: 'b', finalUrl: 'https://example.com/pages/contact-us', verified: false },
     { linkText: 'Shop now', description1: 'a', description2: 'b', finalUrl: '', verified: false },
   ],
@@ -107,5 +111,6 @@ const purchaseFirst = assignUniqueSitelinkUrls(
     { url: 'https://example.com/products/bag', label: 'Bag' },
   ],
 );
-assert.ok(!/contact/i.test(purchaseFirst[0].finalUrl));
-assert.ok(/collections|products|shop/i.test(purchaseFirst[0].finalUrl));
+assert.strictEqual(normalizePageKey(purchaseFirst[0].finalUrl), normalizePageKey('https://example.com/'));
+assert.ok(!/contact/i.test(purchaseFirst[1].finalUrl));
+assert.ok(/collections|products|shop/i.test(purchaseFirst[1].finalUrl));

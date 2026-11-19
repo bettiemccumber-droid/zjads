@@ -1120,7 +1120,7 @@ export default function AdJobReviewPage() {
                 type="info"
                 showIcon
                 style={{ marginBottom: 12 }}
-                message="默认生成 6 条站内链接，每条使用不同落地页。"
+                message="默认 6 条站内链接：第 1 条为官网首页，其余为不同内页；文案、两条描述和落地页都需填满。"
               />
               {draft.sitelinks.map((link, index) => (
                 <Card

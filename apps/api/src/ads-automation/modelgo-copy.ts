@@ -4,8 +4,8 @@ import {
   AdPromotionAsset,
   AdStructuredSnippet,
   STRUCTURED_SNIPPET_HEADERS,
-  assignUniqueSitelinkUrls,
   buildSampleDraft,
+  ensureCompleteSitelinks,
   normalizeStructuredSnippetHeader,
   SampleArticle,
   sanitizeDraftForReview,
@@ -119,13 +119,14 @@ Hard character limits (spaces/punctuation count):
 - headline <= ${AD_COPY_LIMITS.headline}
 - description <= ${AD_COPY_LIMITS.description}
 - callout <= ${AD_COPY_LIMITS.callout}
-- sitelink linkText <= ${AD_COPY_LIMITS.sitelinkText}
-- each sitelink description <= ${AD_COPY_LIMITS.sitelinkDescription}, both filled
+- sitelink linkText <= ${AD_COPY_LIMITS.sitelinkText}; every sitelink must fill linkText, description1, description2, and finalUrl
+- each sitelink description <= ${AD_COPY_LIMITS.sitelinkDescription}, both filled (never leave description blank)
+- Exactly one sitelink must use the merchant homepage as finalUrl (official website). Other sitelinks must use different on-site pages.
 - each structured snippet value <= ${AD_COPY_LIMITS.structuredValue}
 - promotionTarget <= 20
 
 Content rules:
-- Exactly ${AD_COPY_LIMITS.headlineCount.prefer} unique headlines, ${AD_COPY_LIMITS.descriptionCount.prefer} descriptions, ${AD_COPY_LIMITS.calloutCount.prefer} callouts, exactly ${AD_COPY_LIMITS.sitelinkCount.prefer} sitelinks.
+- Exactly ${AD_COPY_LIMITS.headlineCount.prefer} unique headlines, ${AD_COPY_LIMITS.descriptionCount.prefer} descriptions, ${AD_COPY_LIMITS.calloutCount.prefer} callouts, exactly ${AD_COPY_LIMITS.sitelinkCount.prefer} fully filled sitelinks.
 - Strong purchase verbs; low repetition; language must match the audience.
 - Include several headlines/descriptions about discounts, logistics, and nearby real holidays/shopping seasons when relevant (Black Friday, Cyber Monday, Christmas, New Year, Singles Day, Valentine, Mother's Day, back-to-school, etc.). Prefer real merchant offers; if unknown, use soft seasonal or logistics lines without inventing fake coupon codes or fake % off.
 - Forbidden: free trial/gift wording, placeholders like $X or [link], Google risk words (gun/firearm/tactical/combat/military/prescription/Rx/wine/vodka/etc), medical cure claims.
@@ -136,7 +137,7 @@ Content rules:
 - structuredSnippets: pick exactly 2 headers from [${headers}] that best fit this merchant (e.g. travel: Types + Destinations; multi-brand: Types + Brands; own-brand: Types + Styles, avoid Brands). Use these exact English strings. Each needs at least ${AD_COPY_LIMITS.structuredValuesMin} short values.
 - Always include useful negativeKeywords (careers, login, free pdf, etc.).
 - Ad final URL (RSA) stays ${merchantUrl}. No URLs inside headline/description/callout text.
-- Each sitelink MUST include its own finalUrl. finalUrl values must be distinct https pages on the same merchant host, not all ${merchantUrl}. Prefer purchase pages: shop, collections, products, best sellers, new arrivals, sale/deals, cart/checkout. Avoid Contact Us / About / Support / Careers / Login unless no purchase pages exist. Absolute paths or full URLs are both ok.
+- Each sitelink MUST include its own finalUrl, linkText, description1, and description2 (all required). finalUrl values must be distinct https pages on the same merchant host. Use ${merchantUrl} for exactly ONE official-website sitelink; the other ${AD_COPY_LIMITS.sitelinkCount.prefer - 1} must NOT all be the homepage. Prefer purchase pages: shop, collections, products, best sellers, new arrivals, sale/deals. Avoid Contact Us / About / Support / Careers / Login unless no purchase pages exist.
 ${knownPages ? `Known on-site pages to prefer for sitelink finalUrl (purchase pages first):\n${knownPages}` : ''}`;
 }
 
@@ -255,12 +256,13 @@ export function applyAdCopy(
     ...textList(raw.callouts).map((text) => fitAdText(text, limits.callout)),
     ...base.callouts,
   ]).slice(0, limits.calloutCount.max);
-  const sitelinks = assignUniqueSitelinkUrls(
+  const sitelinks = ensureCompleteSitelinks(
     [
       ...sitelinkList(raw.sitelinks),
       ...base.sitelinks,
     ].slice(0, limits.sitelinkCount.prefer),
     base.merchantUrl,
+    base.sitelinks,
     pageLinks,
   );
   const structuredSnippets = structuredSnippetList(raw.structuredSnippets, base.structuredSnippets);
@@ -269,13 +271,7 @@ export function applyAdCopy(
   const nextKeywords = keywords.length ? keywords : base.keywords;
   const nextCallouts = callouts.length ? callouts : base.callouts;
   const nextSnippets = structuredSnippets.length ? structuredSnippets : base.structuredSnippets;
-  const nextSitelinks = sitelinks.length
-    ? sitelinks
-    : assignUniqueSitelinkUrls(
-      base.sitelinks.slice(0, limits.sitelinkCount.prefer),
-      base.merchantUrl,
-      pageLinks,
-    );
+  const nextSitelinks = sitelinks;
   const translations = parseTranslations(raw.translations, {
     headlines,
     descriptions,
@@ -463,7 +459,7 @@ function textList(value: unknown): string[] {
 }
 
 /**
- * 读出合格的站内链接。两条描述必须同时有或同时没有；finalUrl 可后置分配。
+ * 读出合格的站内链接。文案与两条描述都必须有；finalUrl 可后置分配。
  */
 function sitelinkList(value: unknown): AdDraft['sitelinks'] {
   if (!Array.isArray(value)) return [];
@@ -482,8 +478,7 @@ function sitelinkList(value: unknown): AdDraft['sitelinks'] {
       const finalUrl = typeof (item as { finalUrl?: unknown }).finalUrl === 'string'
         ? (item as { finalUrl: string }).finalUrl.trim()
         : '';
-      if (!linkText) return null;
-      if ((description1 && !description2) || (!description1 && description2)) return null;
+      if (!linkText || !description1 || !description2) return null;
       return { linkText, description1, description2, finalUrl, verified: false };
     })
     .filter((item): item is AdDraft['sitelinks'][number] => item != null)

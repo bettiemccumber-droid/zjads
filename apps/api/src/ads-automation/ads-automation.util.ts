@@ -11,7 +11,8 @@ export const AD_COPY_LIMITS = {
   headlineCount: { min: 3, max: 15, prefer: 15 },
   descriptionCount: { min: 2, max: 4, prefer: 4 },
   calloutCount: { min: 0, max: 8, prefer: 8 },
-  sitelinkCount: { min: 0, max: 8, prefer: 6 },
+  /** 自动化默认正好 6 条；发布时至少 6，最多 8。 */
+  sitelinkCount: { min: 6, max: 8, prefer: 6 },
   structuredCategories: 2,
   structuredValuesMin: 4,
 } as const;
@@ -361,8 +362,15 @@ export function buildSampleDraft(input: {
       text,
       matchType: 'BROAD' as const,
     })),
-    sitelinks: assignUniqueSitelinkUrls(
+    sitelinks: ensureCompleteSitelinks(
       [
+        {
+          linkText: 'Official website'.slice(0, AD_COPY_LIMITS.sitelinkText),
+          description1: 'Visit our site'.slice(0, AD_COPY_LIMITS.sitelinkDescription),
+          description2: 'Explore online'.slice(0, AD_COPY_LIMITS.sitelinkDescription),
+          finalUrl: input.merchantUrl,
+          verified: false,
+        },
         {
           linkText: 'Shop now'.slice(0, AD_COPY_LIMITS.sitelinkText),
           description1: 'Current styles'.slice(0, AD_COPY_LIMITS.sitelinkDescription),
@@ -398,15 +406,9 @@ export function buildSampleDraft(input: {
           finalUrl: '',
           verified: false,
         },
-        {
-          linkText: 'Start shopping'.slice(0, AD_COPY_LIMITS.sitelinkText),
-          description1: 'Ready to buy'.slice(0, AD_COPY_LIMITS.sitelinkDescription),
-          description2: 'Checkout online'.slice(0, AD_COPY_LIMITS.sitelinkDescription),
-          finalUrl: '',
-          verified: false,
-        },
       ],
       input.merchantUrl,
+      [],
       [
         { url: joinMerchantPath(input.merchantUrl, '/shop'), label: 'Shop now' },
         { url: joinMerchantPath(input.merchantUrl, '/new-arrivals'), label: 'New arrivals' },
@@ -475,15 +477,20 @@ export function validateDraft(draft: AdDraft): string[] {
     if (!keyword.text.trim()) errors.push('关键词不能为空');
   });
   if (!draft.negativeKeywords.length) errors.push('至少需要一条否定关键词');
+  if (draft.sitelinks.length < limits.sitelinkCount.min || draft.sitelinks.length > limits.sitelinkCount.max) {
+    errors.push(`站内链接需要 ${limits.sitelinkCount.min} 到 ${limits.sitelinkCount.max} 条（默认 ${limits.sitelinkCount.prefer} 条）`);
+  }
   const sitelinkUrlKeys = new Set<string>();
+  const homeKey = normalizePageKey(draft.merchantUrl);
+  let hasOfficialHome = false;
   draft.sitelinks.forEach((link, index) => {
+    if (!link.linkText.trim()) errors.push(`站内链接 ${index + 1} 需要填写文案`);
     if (!link.verified) errors.push(`站内链接 ${index + 1} 尚未验证`);
     if (link.linkText.length > limits.sitelinkText) {
       errors.push(`站内链接 ${index + 1} 文案超过 ${limits.sitelinkText} 个字符`);
     }
-    const hasDescription = Boolean(link.description1 || link.description2);
-    if (hasDescription && (!link.description1 || !link.description2)) {
-      errors.push(`站内链接 ${index + 1} 的两条描述需要同时填写`);
+    if (!link.description1.trim() || !link.description2.trim()) {
+      errors.push(`站内链接 ${index + 1} 的两条描述都要填写`);
     }
     if (link.description1.length > limits.sitelinkDescription || link.description2.length > limits.sitelinkDescription) {
       errors.push(`站内链接 ${index + 1} 说明行超过 ${limits.sitelinkDescription} 个字符`);
@@ -492,6 +499,7 @@ export function validateDraft(draft: AdDraft): string[] {
       errors.push(`站内链接 ${index + 1} 需要有效落地页网址`);
     } else {
       const key = normalizePageKey(link.finalUrl);
+      if (homeKey && key === homeKey) hasOfficialHome = true;
       if (key && sitelinkUrlKeys.has(key)) {
         errors.push(`站内链接 ${index + 1} 的落地页与其它站内链接重复，请换成不同页面`);
       } else if (key) {
@@ -500,6 +508,9 @@ export function validateDraft(draft: AdDraft): string[] {
     }
     errors.push(...policyHits(`${link.linkText} ${link.description1} ${link.description2}`, `站内链接 ${index + 1}`));
   });
+  if (draft.sitelinks.length && homeKey && !hasOfficialHome) {
+    errors.push('站内链接里至少要有一条指向商家官网首页');
+  }
   if (draft.callouts.length > limits.calloutCount.max) {
     errors.push(`宣传信息最多 ${limits.calloutCount.max} 条`);
   }
@@ -759,28 +770,38 @@ export function sanitizeDraftForReview(draft: AdDraft, fallback: AdDraft): AdDra
     'callout',
   ).map((text) => text.slice(0, limits.callout));
 
-  const sitelinks = assignUniqueSitelinkUrls(
-    (draft.sitelinks.length ? draft.sitelinks : fallback.sitelinks).map((link) => {
-      const softenedLink = softenExcessiveUppercase(link.linkText);
-      const softenedDesc1 = softenExcessiveUppercase(link.description1);
-      const softenedDesc2 = softenExcessiveUppercase(link.description2);
-      const linkText = isUnsafeAdText(softenedLink, 'general')
-        ? (fallback.sitelinks[0]?.linkText || 'Shop now')
-        : softenedLink;
-      const description1 = isUnsafeAdText(softenedDesc1, 'general') ? '' : softenedDesc1;
-      const description2 = isUnsafeAdText(softenedDesc2, 'general') ? '' : softenedDesc2;
-      const bothOrNeither = description1 && description2
-        ? { description1, description2 }
-        : { description1: '', description2: '' };
-      return {
-        ...link,
-        linkText: linkText.slice(0, limits.sitelinkText),
-        ...bothOrNeither,
-        description1: bothOrNeither.description1.slice(0, limits.sitelinkDescription),
-        description2: bothOrNeither.description2.slice(0, limits.sitelinkDescription),
-      };
-    }),
-    draft.merchantUrl || fallback.merchantUrl,
+  const merchantHome = draft.merchantUrl || fallback.merchantUrl;
+  const sitelinkSource = (draft.sitelinks.length >= limits.sitelinkCount.prefer
+    ? draft.sitelinks
+    : [...draft.sitelinks, ...fallback.sitelinks]
+  ).slice(0, limits.sitelinkCount.prefer);
+  const sitelinks = ensureCompleteSitelinks(
+    assignUniqueSitelinkUrls(
+      sitelinkSource.map((link, index) => {
+        const fallbackLink = fallback.sitelinks[index] || fallback.sitelinks[0];
+        const softenedLink = softenExcessiveUppercase(link.linkText);
+        const softenedDesc1 = softenExcessiveUppercase(link.description1);
+        const softenedDesc2 = softenExcessiveUppercase(link.description2);
+        const linkText = isUnsafeAdText(softenedLink, 'general')
+          ? (fallbackLink?.linkText || 'Shop now')
+          : softenedLink;
+        const description1 = isUnsafeAdText(softenedDesc1, 'general')
+          ? (fallbackLink?.description1 || 'Browse online')
+          : (softenedDesc1 || fallbackLink?.description1 || 'Browse online');
+        const description2 = isUnsafeAdText(softenedDesc2, 'general')
+          ? (fallbackLink?.description2 || 'See more details')
+          : (softenedDesc2 || fallbackLink?.description2 || 'See more details');
+        return {
+          ...link,
+          linkText: linkText.slice(0, limits.sitelinkText),
+          description1: description1.slice(0, limits.sitelinkDescription),
+          description2: description2.slice(0, limits.sitelinkDescription),
+        };
+      }),
+      merchantHome,
+    ),
+    merchantHome,
+    fallback.sitelinks,
   );
 
   const structuredSnippets = (draft.structuredSnippets?.length
@@ -815,7 +836,7 @@ export function sanitizeDraftForReview(draft: AdDraft, fallback: AdDraft): AdDra
     keywords: draft.keywords.length ? draft.keywords : fallback.keywords,
     negativeKeywords: draft.negativeKeywords.length ? draft.negativeKeywords : fallback.negativeKeywords,
     callouts,
-    sitelinks: (sitelinks.length ? sitelinks : fallback.sitelinks).slice(0, limits.sitelinkCount.max),
+    sitelinks: sitelinks.slice(0, limits.sitelinkCount.max),
     structuredSnippets: snippets,
     promotion,
     promotionAsset,
@@ -1245,15 +1266,29 @@ export function sitelinkPageScore(url: string, label = ''): number {
 }
 
 /**
- * 给站内链接分配互不相同的同站落地页：优先购买页，其次模型 URL / 文案匹配，最后造路径。
+ * 给站内链接分配互不相同的同站落地页。
+ * 第 1 条固定商家官网首页；其余优先购买页，避免再用首页。
  */
 export function assignUniqueSitelinkUrls(
   sitelinks: AdSitelink[],
   merchantUrl: string,
   pageLinks: Array<{ url: string; label?: string }> = [],
 ): AdSitelink[] {
-  const homeKey = normalizePageKey(merchantUrl);
+  const homeUrl = (() => {
+    try {
+      const url = new URL(merchantUrl);
+      url.hash = '';
+      url.pathname = url.pathname.replace(/\/+$/, '') || '/';
+      if (url.pathname !== '/') url.pathname = '/';
+      url.search = '';
+      return url.toString();
+    } catch {
+      return merchantUrl;
+    }
+  })();
+  const homeKey = normalizePageKey(homeUrl);
   const used = new Set<string>();
+  if (homeKey) used.add(homeKey);
   const pool = pageLinks
     .map((item) => ({
       url: sameHostUrl(item.url, merchantUrl),
@@ -1268,7 +1303,19 @@ export function assignUniqueSitelinkUrls(
     return key && !used.has(key);
   });
 
-  return sitelinks.map((link) => {
+  return sitelinks.map((link, index) => {
+    // 第一条固定官网，满足「至少一条站内链接是官网」
+    if (index === 0) {
+      return {
+        ...link,
+        linkText: (link.linkText.trim() || 'Official website').slice(0, AD_COPY_LIMITS.sitelinkText),
+        description1: (link.description1.trim() || 'Visit our site').slice(0, AD_COPY_LIMITS.sitelinkDescription),
+        description2: (link.description2.trim() || 'Explore online').slice(0, AD_COPY_LIMITS.sitelinkDescription),
+        finalUrl: homeUrl,
+        verified: Boolean(homeUrl && /^https?:\/\//i.test(homeUrl)),
+      };
+    }
+
     const fromModel = sameHostUrl(link.finalUrl, merchantUrl);
     let chosen = '';
     if (fromModel) {
@@ -1302,6 +1349,39 @@ export function assignUniqueSitelinkUrls(
       verified: Boolean(chosen && /^https?:\/\//i.test(chosen)),
     };
   });
+}
+
+/**
+ * 保证默认 6 条站内链接且字段填满；第 1 条指向官网。
+ */
+export function ensureCompleteSitelinks(
+  sitelinks: AdSitelink[],
+  merchantUrl: string,
+  fallback: AdSitelink[] = [],
+  pageLinks: Array<{ url: string; label?: string }> = [],
+): AdSitelink[] {
+  const prefer = AD_COPY_LIMITS.sitelinkCount.prefer;
+  const padded = [...sitelinks];
+  while (padded.length < prefer) {
+    const seed = fallback[padded.length] || fallback[0] || {
+      linkText: 'Shop now',
+      description1: 'Browse online',
+      description2: 'See more details',
+      finalUrl: '',
+      verified: false,
+    };
+    padded.push({ ...seed, verified: false });
+  }
+  const filled = padded.slice(0, prefer).map((link, index) => {
+    const seed = fallback[index] || fallback[0];
+    return {
+      ...link,
+      linkText: (link.linkText.trim() || seed?.linkText || 'Shop now').slice(0, AD_COPY_LIMITS.sitelinkText),
+      description1: (link.description1.trim() || seed?.description1 || 'Browse online').slice(0, AD_COPY_LIMITS.sitelinkDescription),
+      description2: (link.description2.trim() || seed?.description2 || 'See more details').slice(0, AD_COPY_LIMITS.sitelinkDescription),
+    };
+  });
+  return assignUniqueSitelinkUrls(filled, merchantUrl, pageLinks);
 }
 
 function sameHostUrl(candidate: string, merchantUrl: string): string {

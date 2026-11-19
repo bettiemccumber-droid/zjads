@@ -569,11 +569,7 @@ export default function MyMerchantsPage() {
   }, [claimForm, settings, connections]);
 
   useEffect(() => {
-    if (discoverAccountId === undefined && accounts[0]) setDiscoverAccountId(accounts[0].id);
-  }, [accounts, discoverAccountId]);
-
-  useEffect(() => {
-    if (tab !== 'pick' || discoverAccountId === undefined) return;
+    if (tab !== 'pick') return;
     void searchDiscover(1);
   }, [tab, discoverAccountId]);
 
@@ -1237,11 +1233,20 @@ export default function MyMerchantsPage() {
                 <Space direction="vertical" size={12} style={{ width: '100%' }}>
                   <div className="merchant-toolbar">
                     <Select
-                      placeholder="平台"
+                      placeholder="全平台"
                       style={{ width: 140 }}
-                      value={discoverAccountId}
-                      onChange={(value) => { setPickTag(''); setDiscoverAccountId(value); }}
-                      options={accounts.map((item) => ({ value: item.id, label: PLATFORM_SHORT[item.platformCode] || item.platformCode }))}
+                      value={discoverAccountId ?? 'all'}
+                      onChange={(value: number | 'all') => {
+                        setPickTag('');
+                        setDiscoverAccountId(typeof value === 'number' ? value : undefined);
+                      }}
+                      options={[
+                        { value: 'all', label: '全平台' },
+                        ...accounts.map((item) => ({
+                          value: item.id,
+                          label: PLATFORM_SHORT[item.platformCode] || item.platformCode,
+                        })),
+                      ]}
                     />
                     <Select
                       allowClear
@@ -1260,7 +1265,19 @@ export default function MyMerchantsPage() {
                       onPressEnter={() => void searchDiscover(1)}
                     />
                     <Button type="primary" loading={discoverLoading} onClick={() => void searchDiscover(1)}>查询</Button>
-                    <Button onClick={() => { setDiscoverQuery(''); setPickTag(''); void searchDiscover(1, ''); }}>重置</Button>
+                    <Button
+                      onClick={() => {
+                        setDiscoverQuery('');
+                        setPickTag('');
+                        if (discoverAccountId !== undefined) {
+                          setDiscoverAccountId(undefined);
+                          return;
+                        }
+                        void searchDiscover(1, '');
+                      }}
+                    >
+                      重置
+                    </Button>
                     <Button style={{ marginLeft: 'auto' }} loading={discoverLoading} onClick={() => { void searchDiscover(discover?.page ?? 1); void load(); }}>同步商家库</Button>
                   </div>
                   {discover?.hint ? <Alert type="info" showIcon message={discover.hint} /> : null}

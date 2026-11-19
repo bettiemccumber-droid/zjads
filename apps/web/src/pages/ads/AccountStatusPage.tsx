@@ -3,7 +3,7 @@ import { Alert, Button, Card, Col, Form, Input, Popconfirm, Row, Select, Space, 
 import { DeleteOutlined, PlusOutlined, ReloadOutlined, SyncOutlined } from '@ant-design/icons';
 import { api, type ApiResult } from '../../api/client';
 import { useAuth } from '../../hooks/useAuth';
-import { formatCustomerId } from './ad-launch-settings';
+import { formatCustomerId, isGoogleMccId } from './ad-launch-settings';
 
 interface AccountRow {
   id: string;
@@ -118,16 +118,21 @@ export default function AccountStatusPage() {
     void load().catch(() => message.error('加载账户状态失败'));
   }, [load]);
 
+  const googleConnections = useMemo(
+    () => (setup?.connections ?? []).filter((row) => isGoogleMccId(row.mccCustomerId)),
+    [setup?.connections],
+  );
+
   const mccOptions = useMemo(() => {
     const ids = new Set<string>();
-    for (const connection of setup?.connections ?? []) {
+    for (const connection of googleConnections) {
       if (connection.mccCustomerId) ids.add(connection.mccCustomerId);
     }
     for (const row of board.rows) {
-      if (row.mccCustomerId) ids.add(row.mccCustomerId);
+      if (row.mccCustomerId && isGoogleMccId(row.mccCustomerId)) ids.add(row.mccCustomerId);
     }
     return [...ids].sort();
-  }, [board.rows, setup?.connections]);
+  }, [board.rows, googleConnections]);
 
   const filteredRows = useMemo(() => {
     const query = keyword.trim().toLowerCase();
@@ -221,7 +226,7 @@ export default function AccountStatusPage() {
           pagination={false}
           style={{ marginBottom: 16 }}
           locale={{ emptyText: '还没有 MCC。在下方添加 10 位经理账号客户号后同步。' }}
-          dataSource={setup?.connections ?? []}
+          dataSource={googleConnections}
           columns={[
             {
               title: 'MCC',
@@ -285,7 +290,7 @@ export default function AccountStatusPage() {
           <Button
             icon={<SyncOutlined />}
             loading={syncingAll}
-            disabled={!setup?.connections?.length || (setup != null && !setup.appReady)}
+            disabled={!googleConnections.length || (setup != null && !setup.appReady)}
             onClick={() => {
               setSyncingAll(true);
               void syncConnections()

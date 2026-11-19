@@ -265,7 +265,12 @@ export class AdsAutomationService implements OnModuleInit {
       include: { customers: { orderBy: { id: 'desc' } } },
       orderBy: { id: 'desc' },
     });
-    const liveConnections = connections.filter((row) => this.credentialsFor(row));
+    const invalidIds = connections.filter((row) => !isGoogleMccId(row.mccCustomerId)).map((row) => row.id);
+    if (invalidIds.length) {
+      await this.prisma.googleAdsConnection.deleteMany({ where: { id: { in: invalidIds } } });
+    }
+    const googleConnections = connections.filter((row) => isGoogleMccId(row.mccCustomerId));
+    const liveConnections = googleConnections.filter((row) => this.credentialsFor(row));
     if (liveConnections.length) return this.liveAccountBoard(liveConnections);
     const registered = new Map<string, {
       mccCustomerId: string;
@@ -274,7 +279,7 @@ export class AdsAutomationService implements OnModuleInit {
       activeCampaignCount: number;
       updatedAt: Date;
     }>();
-    for (const connection of connections) {
+    for (const connection of googleConnections) {
       for (const customer of connection.customers) {
         registered.set(digits(customer.customerId), {
           mccCustomerId: connection.mccCustomerId,
@@ -1068,13 +1073,19 @@ export class AdsAutomationService implements OnModuleInit {
       orderBy: { id: 'desc' },
       include: { _count: { select: { customers: true } } },
     });
+    // 清掉历史误登记的数据源占位（如 s23），只保留真实 Google MCC。
+    const invalidIds = connections.filter((row) => !isGoogleMccId(row.mccCustomerId)).map((row) => row.id);
+    if (invalidIds.length) {
+      await this.prisma.googleAdsConnection.deleteMany({ where: { id: { in: invalidIds } } });
+    }
+    const valid = connections.filter((row) => isGoogleMccId(row.mccCustomerId));
     return {
       appReady: googleAdsAppReady(app),
       hasEnvRefreshToken: Boolean(app.refreshToken),
       hasEnvLoginCustomerId: Boolean(app.loginCustomerId),
       apiVersion: app.apiVersion,
       missing,
-      connections: connections.map((row) => ({
+      connections: valid.map((row) => ({
         id: row.id,
         mccCustomerId: row.mccCustomerId,
         loginCustomerId: row.loginCustomerId,

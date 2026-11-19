@@ -16,19 +16,51 @@ export interface MerchantNavLink {
   label: string;
 }
 
-const MAX_IMAGES = 12;
+const MAX_IMAGES = 24;
+const MAX_DEEP_PAGES = 4;
 const MAX_NAV_LINKS = 40;
 const MAX_HTML_BYTES = 1_500_000;
 
 /**
  * 打开商家网页，抽出可放进文章的图片地址。不访问内网地址。
  * 抽出后会探测可用性，尽量只返回能打开的图。
+ * deep=true 时再抓若干同站内页，补更多商品图。
  */
-export async function crawlMerchantImages(pageUrl: string): Promise<{ pageUrl: string; images: MerchantPageImage[] }> {
+export async function crawlMerchantImages(
+  pageUrl: string,
+  options: { deep?: boolean } = {},
+): Promise<{ pageUrl: string; images: MerchantPageImage[] }> {
   const { html, finalUrl } = await fetchMerchantHtml(pageUrl);
   const extracted = extractMerchantImages(html, finalUrl);
-  const images = await probeMerchantImages(extracted);
+  const seen = new Set(extracted.map((item) => item.url));
+  if (options.deep !== false) {
+    const links = extractMerchantNavLinks(html, finalUrl)
+      .filter((link) => !isNoiseNavPath(safePathname(link.url)))
+      .slice(0, MAX_DEEP_PAGES);
+    for (const link of links) {
+      if (extracted.length >= MAX_IMAGES) break;
+      try {
+        const nested = await fetchMerchantHtml(link.url);
+        for (const image of extractMerchantImages(nested.html, nested.finalUrl)) {
+          if (seen.has(image.url) || extracted.length >= MAX_IMAGES) continue;
+          seen.add(image.url);
+          extracted.push(image);
+        }
+      } catch {
+        // 内页失败不影响首页图
+      }
+    }
+  }
+  const images = await probeMerchantImages(extracted, MAX_IMAGES);
   return { pageUrl: finalUrl, images };
+}
+
+function safePathname(url: string): string {
+  try {
+    return new URL(url).pathname;
+  } catch {
+    return '';
+  }
 }
 
 /**
@@ -429,7 +461,8 @@ function resolveImageUrl(raw: string, baseUrl: string): string {
  */
 function isWeakImage(url: string, alt: string): boolean {
   const text = `${url} ${alt}`.toLowerCase();
-  return /(apple-pay|google-pay|visa|mastercard|klarna|adyen|paypal|payment|badge|icon|logo|sprite|placeholder|blank)/.test(text);
+  // logo 不一定弱：og/hero 常带 brand，只有明显支付/图标类才后置
+  return /(apple-pay|google-pay|visa|mastercard|klarna|adyen|paypal|payment|badge|icon|sprite|placeholder|blank|favicon)/.test(text);
 }
 
 function isUsableImage(url: string): boolean {

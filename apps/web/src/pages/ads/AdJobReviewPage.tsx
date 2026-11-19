@@ -121,6 +121,39 @@ function measureImage(url: string): Promise<{ width: number; height: number }> {
   });
 }
 
+/**
+ * 从横/竖图中心裁成正方形 JPEG，供广告 AD_IMAGE 使用。
+ */
+function cropSquareDataUrl(url: string, target = 1200): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const image = new Image();
+    image.crossOrigin = 'anonymous';
+    image.onload = () => {
+      const side = Math.min(image.naturalWidth, image.naturalHeight);
+      if (side < 300) {
+        reject(new Error('too small'));
+        return;
+      }
+      const sx = Math.floor((image.naturalWidth - side) / 2);
+      const sy = Math.floor((image.naturalHeight - side) / 2);
+      const canvas = document.createElement('canvas');
+      const out = Math.min(target, side);
+      canvas.width = out;
+      canvas.height = out;
+      const ctx = canvas.getContext('2d');
+      if (!ctx) {
+        reject(new Error('no canvas'));
+        return;
+      }
+      ctx.drawImage(image, sx, sy, side, side, 0, 0, out, out);
+      resolve(canvas.toDataURL('image/jpeg', 0.9));
+    };
+    image.onerror = () => reject(new Error('load failed'));
+    image.referrerPolicy = 'no-referrer';
+    image.src = url;
+  });
+}
+
 interface AdJob {
   id: string;
   status: string;
@@ -225,7 +258,9 @@ function emptyDraft(): AdDraft {
 function hydrateDraft(raw?: Partial<AdDraft> | null): AdDraft {
   const draft = { ...emptyDraft(), ...(raw || {}) };
   if (draft.bidding !== 'MANUAL_CPC') draft.cpcBidCeilingUsd = '';
-  draft.imageUrls = Array.isArray(draft.imageUrls) ? draft.imageUrls.filter((url) => /^https?:\/\//i.test(url)) : [];
+  draft.imageUrls = Array.isArray(draft.imageUrls)
+    ? draft.imageUrls.filter((url) => /^https?:\/\//i.test(url) || /^data:image\/(?:jpeg|png);base64,/i.test(url))
+    : [];
   return draft;
 }
 
@@ -372,13 +407,30 @@ export default function AdJobReviewPage() {
           // 浏览器打不开的图丢掉
         }
       }
+      // 商家站常只有横图：自动从最大图裁一张正方形，方便过 Google 要求
+      if (measured.length && !measured.some((item) => item.square)) {
+        const source = [...measured].sort((a, b) => (b.width * b.height) - (a.width * a.height))[0];
+        try {
+          const squareUrl = await cropSquareDataUrl(source.url);
+          measured.unshift({
+            url: squareUrl,
+            alt: '裁成正方形',
+            width: 1200,
+            height: 1200,
+            square: true,
+          });
+        } catch {
+          // 跨域 canvas 失败时仍展示原图，提示人工换图
+        }
+      }
       setAdImages(measured);
       const squares = measured.filter((item) => item.square).map((item) => item.url);
-      const picked = [...new Set([...(draft.imageUrls ?? []), ...squares])].slice(0, 20);
+      const extras = measured.filter((item) => !item.square).slice(0, 6).map((item) => item.url);
+      const picked = [...new Set([...(draft.imageUrls ?? []), ...squares, ...extras])].slice(0, 20);
       if (picked.length) setDraft((current) => ({ ...current, imageUrls: picked }));
       if (!measured.length) message.warning('没有抓到可用图片，可换商家网址或稍后重试');
-      else if (!squares.length) message.warning('抓到了图，但没有接近正方形的；请勾选后尽量补一张 1:1');
-      else message.success(`已加载 ${measured.length} 张，其中正方形 ${squares.length} 张`);
+      else if (!squares.length) message.warning(`已加载 ${measured.length} 张，但裁正方形失败（可能跨域）。可换图或手动上传。`);
+      else message.success(`已加载 ${measured.length} 张（含正方形 ${squares.length}）；首页图少时会再扫内页`);
     } catch (err) {
       const apiMessage = (err as { response?: { data?: { message?: string | string[] } } }).response?.data?.message;
       message.error(Array.isArray(apiMessage) ? apiMessage.join('；') : apiMessage || '抓取图片失败');
@@ -1187,10 +1239,10 @@ export default function AdJobReviewPage() {
               )}
             >
               <div className="ad-review__hint" style={{ marginBottom: 8 }}>
-                搜索广告建议带图；必须至少勾选 1 张接近正方形（约 1:1，边长 ≥300）。可多选横向/纵向，系统提交时会上传为 AD_IMAGE。
+                搜索广告建议带图；必须至少勾选 1 张接近正方形（约 1:1，边长 ≥300）。商家首页图少时会再扫内页；没有方图时会自动从最大图裁一张。
               </div>
               {!adImages.length ? (
-                <div className="ad-review__hint">点「从商家站拉图」扫描商家页；加载成功后会优先勾选正方形图。</div>
+                <div className="ad-review__hint">点「从商家站拉图」扫描商家页与内页；加载成功后会优先勾选正方形图。</div>
               ) : (
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, minmax(0, 1fr))', gap: 8 }}>
                   {adImages.map((image) => {

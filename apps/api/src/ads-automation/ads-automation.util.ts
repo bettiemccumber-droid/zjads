@@ -563,16 +563,13 @@ export function validateDraft(draft: AdDraft): string[] {
 }
 
 /** 提交 Google 前校验广告图（生成阶段可不选图）。 */
-export function validateAdImages(draft: AdDraft, opts?: { requireSquare?: boolean }): string[] {
-  const images = (draft.imageUrls ?? []).map((url) => url.trim()).filter((url) => /^https?:\/\//i.test(url));
+export function validateAdImages(draft: AdDraft): string[] {
+  const images = (draft.imageUrls ?? []).map((url) => url.trim()).filter((url) => acceptedAdImage(url));
   const errors: string[] = [];
   if (!images.length) {
     errors.push('请至少添加 1 张广告图片，且其中至少 1 张为正方形（约 1:1）');
   } else if (images.length > 20) {
     errors.push('广告图片最多 20 张');
-  }
-  if (opts?.requireSquare === false) {
-    // 仅数量校验
   }
   return errors;
 }
@@ -829,7 +826,7 @@ export function sanitizeDraftForReview(draft: AdDraft, fallback: AdDraft): AdDra
       : '',
     imageUrls: (draft.imageUrls?.length ? draft.imageUrls : fallback.imageUrls ?? [])
       .map((url) => url.trim())
-      .filter((url, index, all) => /^https?:\/\//i.test(url) && all.indexOf(url) === index)
+      .filter((url, index, all) => acceptedAdImage(url) && all.indexOf(url) === index)
       .slice(0, 20),
   };
 }
@@ -1169,6 +1166,12 @@ export function sampleArticleHtml(
 export function acceptedArticleImage(url: string): boolean {
   if (/^https?:\/\//i.test(url)) return url.length <= 2048;
   return /^data:image\/(?:jpeg|png|webp);base64,[a-z0-9+/=\s]+$/i.test(url) && url.length <= 1_500_000;
+}
+
+/** 广告图允许 https 或裁切后的 jpeg/png data URL。 */
+export function acceptedAdImage(url: string): boolean {
+  if (/^https?:\/\//i.test(url)) return url.length <= 2048;
+  return /^data:image\/(?:jpeg|png);base64,[a-z0-9+/=\s]+$/i.test(url) && url.length <= 1_500_000;
 }
 
 /**

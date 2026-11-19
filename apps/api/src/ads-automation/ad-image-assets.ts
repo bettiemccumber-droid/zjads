@@ -18,11 +18,15 @@ export interface PreparedAdImage {
  * 优先保留正方形；最多 20 张；单张 ≤ 5MB。
  */
 export async function prepareAdImageAssets(urls: string[]): Promise<PreparedAdImage[]> {
-  const unique = [...new Set(urls.map((url) => url.trim()).filter((url) => /^https?:\/\//i.test(url)))].slice(0, 20);
+  const unique = [...new Set(
+    urls.map((url) => url.trim()).filter((url) => /^https?:\/\//i.test(url) || /^data:image\/(?:jpeg|png);base64,/i.test(url)),
+  )].slice(0, 20);
   const prepared: PreparedAdImage[] = [];
   for (const [index, url] of unique.entries()) {
     try {
-      const row = await downloadAdImage(url, index);
+      const row = url.startsWith('data:image/')
+        ? fromDataUrl(url, index)
+        : await downloadAdImage(url, index);
       if (row) prepared.push(row);
     } catch {
       // 单张失败不阻断其它图
@@ -31,6 +35,23 @@ export async function prepareAdImageAssets(urls: string[]): Promise<PreparedAdIm
   const squares = prepared.filter((item) => item.square);
   const rest = prepared.filter((item) => !item.square);
   return [...squares, ...rest].slice(0, 20);
+}
+
+function fromDataUrl(dataUrl: string, index: number): PreparedAdImage | null {
+  const match = dataUrl.match(/^data:image\/(jpeg|png);base64,([a-z0-9+/=\s]+)$/i);
+  if (!match) return null;
+  const buf = Buffer.from(match[2].replace(/\s+/g, ''), 'base64');
+  if (buf.length < 100 || buf.length > 5_242_880) return null;
+  const dims = readImageSize(buf);
+  if (!dims || dims.width < 300 || dims.height < 300) return null;
+  const ratio = dims.width / dims.height;
+  return {
+    name: `ad-image-square-${index + 1}`,
+    data: buf.toString('base64'),
+    width: dims.width,
+    height: dims.height,
+    square: ratio >= 0.9 && ratio <= 1.11,
+  };
 }
 
 async function downloadAdImage(url: string, index: number): Promise<PreparedAdImage | null> {

@@ -1397,7 +1397,6 @@ export class AdsAutomationService implements OnModuleInit {
     });
     if (duplicate) return this.getJob(ownerUserId, duplicate.id);
 
-    // 广告提交成功后会异步尝试正式发文（爬图 + AI + 联盟链）；失败不回滚广告。
     const payload = buildCreateCampaignPayload({
       customerId: customer.customerId,
       campaignName,
@@ -1466,90 +1465,8 @@ export class AdsAutomationService implements OnModuleInit {
     if (creds) {
       await this.submitCreate(ownerUserId, campaignId, creds);
     }
-    void this.tryPublishArticleAfterAd(ownerUserId, id).catch(async (error) => {
-      const message = error instanceof Error ? error.message : '自动发文失败';
-      await this.addEvent(id, 'COMPLETED', 'ARTICLE', `广告已提交，自动发文未完成：${message}`).catch(() => undefined);
-    });
+    // 露出文改由前端跳到「快速发布文章」，人工选图并确认联盟跟踪链接后再发。
     return this.getJob(ownerUserId, id);
-  }
-
-  /**
-   * 广告提交后正式发文：爬图、生成正文、成稿抽词挂链。无跟踪链接或未绑内容站时跳过。
-   */
-  private async tryPublishArticleAfterAd(ownerUserId: number, jobId: string) {
-    const job = await this.prisma.adJob.findFirst({
-      where: { id: jobId, ownerUserId },
-      include: { article: true },
-    });
-    if (!job || job.article) return;
-    const account = await this.prisma.channelAccount.findFirst({
-      where: { id: job.channelAccountId, ownerUserId },
-      include: { platform: true, site: true },
-    });
-    if (!account?.siteId || !account.site) {
-      await this.addEvent(jobId, 'COMPLETED', 'ARTICLE', '广告已提交；未绑定内容站，跳过自动发文');
-      return;
-    }
-    const draft = this.readDraft(job.draft);
-    const merchantUrl = (draft.merchantUrl || '').trim();
-    if (!/^https?:\/\//i.test(merchantUrl)) {
-      await this.addEvent(jobId, 'COMPLETED', 'ARTICLE', '广告已提交；草稿缺少商家网址，跳过自动发文');
-      return;
-    }
-    const trackUrl = buildTrackUrl(account.platform.code, merchantUrl, account.trackLinkPrefix);
-    const usingMerchantFallback = samePageUrl(trackUrl, merchantUrl);
-    const catalog = job.catalogMerchantId
-      ? await this.prisma.catalogMerchant.findFirst({ where: { id: job.catalogMerchantId, ownerUserId } })
-      : null;
-    const name = (catalog?.name || '').trim() || merchantNameFromUrl(merchantUrl);
-    let imageUrls: string[] = [];
-    try {
-      const crawled = await crawlMerchantImages(merchantUrl);
-      imageUrls = crawled.images.map((item) => item.url).slice(0, 8);
-    } catch {
-      imageUrls = [];
-    }
-    const languageCode = resolveAdLanguage(job.targetCountry || 'US', draft.languageCode);
-    const rawSample = modelGoConfig().enabled
-      ? await this.articleFromModel(ownerUserId, name, merchantUrl, job.targetCountry || 'US', languageCode)
-      : buildSampleArticle({ merchantName: name, merchantUrl, trackUrl, languageCode });
-    const sample = annotateAffiliateKeywords(rawSample, name);
-    const pickedImages = pickArticleImages(imageUrls);
-    const body = sampleArticleHtml(sample, name, trackUrl, imageUrls);
-    const httpsBodyImages = pickedImages.body.filter((url) => /^https?:\/\//i.test(url));
-    const cover = pickedImages.cover || firstHttpsImageFromHtml(body) || httpsBodyImages[0] || '';
-    const published = await this.publishToSite(account.site, {
-      title: sample.title,
-      bodyHtml: body,
-      trackUrl,
-      merchantUrl,
-      merchantName: name,
-      image: cover,
-      images: httpsBodyImages,
-    });
-    const articleUrl = published.articleUrl.trim();
-    await this.prisma.article.create({
-      data: {
-        ownerUserId,
-        siteId: account.siteId,
-        adJobId: job.id,
-        title: sample.title.slice(0, 255),
-        body,
-        trackUrl,
-        merchantUrl,
-        articleUrl,
-        publishStatus: articleUrl ? 'published' : 'pending_site',
-      },
-    });
-    await this.addEvent(
-      jobId,
-      'COMPLETED',
-      'ARTICLE',
-      [
-        articleUrl ? `已自动发布露出文：${articleUrl}` : '露出文已保存，等待内容站回写',
-        usingMerchantFallback ? '（无联盟前缀，正文暂用商家官网链接；可在快速发布里改成联盟链）' : '',
-      ].filter(Boolean).join(''),
-    );
   }
 
   /**
@@ -2789,12 +2706,6 @@ function midFromUrl(url: string): string {
   } catch {
     return 'merchant';
   }
-}
-
-function merchantNameFromUrl(url: string): string {
-  const host = midFromUrl(url);
-  const base = host.split('.')[0] || host;
-  return base ? base.charAt(0).toUpperCase() + base.slice(1) : 'Merchant';
 }
 
 /**

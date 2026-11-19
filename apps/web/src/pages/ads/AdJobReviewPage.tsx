@@ -102,6 +102,7 @@ interface AdJob {
   progressMessage: string;
   errorMessage: string | null;
   mccCustomerId: string;
+  channelAccountId?: number;
   targetCountry: string;
   languageCode: string;
   draft: AdDraft | null;
@@ -116,6 +117,22 @@ interface AdJob {
     affiliateAlias?: string;
   } | null;
   campaign?: { status: string; customerId?: string } | null;
+}
+
+function buildArticlePublishPath(job: AdJob, draft: AdDraft): string {
+  const params = new URLSearchParams();
+  params.set('fromAd', '1');
+  if (job.id) params.set('jobId', job.id);
+  if (job.channelAccountId) params.set('channelAccountId', String(job.channelAccountId));
+  const merchantUrl = (draft.merchantUrl || job.input?.merchantUrl || '').trim();
+  if (merchantUrl) params.set('merchantUrl', merchantUrl);
+  const name = (job.input?.merchantName || '').trim();
+  if (name) params.set('name', name);
+  const mid = (job.input?.mid || '').trim();
+  if (mid) params.set('mid', mid);
+  const country = (job.targetCountry || 'US').trim();
+  if (country) params.set('countryCode', country);
+  return `/ads/articles/publish?${params.toString()}`;
 }
 
 interface AdsCustomer {
@@ -410,13 +427,11 @@ export default function AdJobReviewPage() {
             throw new Error('publish failed');
           }
           setJob(res.data.data);
-          if (res.data.data.draft) setDraft(hydrateDraft(res.data.data.draft));
+          const nextDraft = res.data.data.draft ? hydrateDraft(res.data.data.draft) : draft;
+          if (res.data.data.draft) setDraft(nextDraft);
           const submitted = res.data.data.campaign?.status === 'ENABLED';
-          message.success(
-            submitted
-              ? '已提交到 Google Ads；已绑内容站时会尝试自动发露出文（无联盟链则用官网兜底）'
-              : '已写入待提交队列；配置 API 后提交时会尝试自动发露出文',
-          );
+          message.success(submitted ? '已提交到 Google Ads，请继续发露出文' : '已写入待提交队列，请继续发露出文');
+          navigate(buildArticlePublishPath(res.data.data, nextDraft));
         } catch (err) {
           if (err instanceof Error && (err.message === 'save failed' || err.message === 'publish failed')) {
             await loadJob().catch(() => undefined);

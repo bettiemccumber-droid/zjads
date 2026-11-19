@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
-import { Button, Card, Divider, Form, Input, Result, Select, Space, Spin, Steps, Tag, Typography, message } from 'antd';
+import { useNavigate, useSearchParams } from 'react-router-dom';
+import { Alert, Button, Card, Divider, Form, Input, Result, Select, Space, Spin, Steps, Tag, Typography, message } from 'antd';
 import { FileTextOutlined, LinkOutlined, UserOutlined, WarningOutlined } from '@ant-design/icons';
 import { api, type ApiResult } from '../../api/client';
 import PersonaLibraryModal from './PersonaLibraryModal';
@@ -188,6 +188,9 @@ function errorText(error: unknown, fallback: string): string {
  */
 export default function ArticlePublishPage() {
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const fromAd = searchParams.get('fromAd') === '1';
+  const bootstrapped = useRef(false);
   const [form] = Form.useForm<PublishForm>();
   const [step, setStep] = useState(0);
   const [accounts, setAccounts] = useState<ChannelAccount[]>([]);
@@ -214,6 +217,30 @@ export default function ArticlePublishPage() {
   const channelAccountId = Form.useWatch('channelAccountId', form);
   const language = languageOf(countryCode);
   const account = accounts.find((item) => item.id === (draft.channelAccountId ?? channelAccountId)) ?? null;
+
+  useEffect(() => {
+    if (bootstrapped.current) return;
+    const merchantUrl = (searchParams.get('merchantUrl') || '').trim();
+    const accountIdRaw = searchParams.get('channelAccountId');
+    const accountId = accountIdRaw ? Number(accountIdRaw) : undefined;
+    if (!merchantUrl && !accountId) return;
+    bootstrapped.current = true;
+    const next: PublishForm = {
+      channelAccountId: Number.isFinite(accountId) ? accountId : undefined,
+      merchantUrl: merchantUrl || undefined,
+      name: (searchParams.get('name') || '').trim() || undefined,
+      mid: (searchParams.get('mid') || '').trim() || undefined,
+      countryCode: (searchParams.get('countryCode') || 'US').trim().toUpperCase() || 'US',
+    };
+    setDraft(next);
+    form.setFieldsValue(next);
+    // 从广告提交跳来：有账号和网址就直接进爬图，人工选图并补联盟链
+    if (next.merchantUrl && next.channelAccountId) {
+      setStep(2);
+    } else if (next.merchantUrl || next.channelAccountId) {
+      setStep(0);
+    }
+  }, [searchParams, form]);
 
   /**
    * 表单卸掉后字段会被清掉，所以离开每一步时把值记在 draft 里。
@@ -342,6 +369,15 @@ export default function ArticlePublishPage() {
       <Typography.Paragraph type="secondary" style={{ marginBottom: 16 }}>
         配图插在各小节之间。正文按投放国家生成第一人称中长文，并在相关关键词上挂跟踪链接。文章地址、商家网址、跟踪链接分开保存。生成时会使用当前激活的人设提示词。
       </Typography.Paragraph>
+      {fromAd ? (
+        <Alert
+          type="info"
+          showIcon
+          style={{ marginBottom: 16 }}
+          message="广告已提交，请继续发布露出文"
+          description="请确认配图；预览页优先填写联盟跟踪链接（没有时可手填或暂用官网）。正文关键词会指向该链接。"
+        />
+      ) : null}
       <PersonaLibraryModal open={personaOpen} onClose={() => setPersonaOpen(false)} />
       <Steps current={step} size="small" items={STEPS.map((title) => ({ title }))} style={{ marginBottom: 20 }} />
       <Card>

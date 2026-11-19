@@ -1057,45 +1057,7 @@ export default function MyMerchantsPage() {
           </Form>
         </section>
 
-        <section className="merchant-panel merchant-panel--engine">
-          <div className="merchant-panel__title"><ThunderboltOutlined /> 上广告引擎</div>
-          <Radio.Group
-            className="merchant-engine-group"
-            value={engineMode}
-            onChange={(event) => {
-              const value = event.target.value as 'none' | 'landingProof' | 'singleProduct';
-              persistEngines({
-                ...engines,
-                landingProof: value === 'landingProof',
-                singleProduct: value === 'singleProduct',
-              });
-            }}
-          >
-            <label className={`merchant-engine-card${engineMode === 'landingProof' ? ' is-active' : ''}`}>
-              <Radio value="landingProof" />
-              <span>
-                <span className="merchant-engine__name"><SearchOutlined /> 落地页证明引导</span>
-                <span className="merchant-engine__text">只记在这台电脑。新建广告时还不会读取。</span>
-              </span>
-            </label>
-            <label className={`merchant-engine-card${engineMode === 'singleProduct' ? ' is-active' : ''}`}>
-              <Radio value="singleProduct" />
-              <span>
-                <span className="merchant-engine__name"><ThunderboltOutlined className="merchant-engine__bolt" /> 单品同投引擎</span>
-                <span className="merchant-engine__text">只记在这台电脑。新建广告时还不会读取。</span>
-              </span>
-            </label>
-            <Button
-              type="link"
-              size="small"
-              className="merchant-engine-clear"
-              disabled={engineMode === 'none'}
-              onClick={() => persistEngines({ ...engines, landingProof: false, singleProduct: false })}
-            >
-              清除选择
-            </Button>
-          </Radio.Group>
-        </section>
+        {/* 上广告引擎（落地页证明 / 单品同投）尚未接入领取与发布链路，先不展示，避免误选。 */}
 
         <section className="merchant-panel merchant-panel--ai">
           <div className="merchant-ai__title">

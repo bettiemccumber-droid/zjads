@@ -74,6 +74,9 @@ export interface AdCopyTranslations {
   descriptions?: string[];
   callouts?: string[];
   sitelinks?: string[];
+  keywords?: string[];
+  /** 与 structuredSnippets 对齐：每条摘要 values 的中文，逗号分隔。 */
+  structuredSnippets?: string[];
   promotion?: string;
 }
 
@@ -119,6 +122,8 @@ export interface AdDraft {
   cpcBidCeilingUsd: string;
   languageCode: string;
   geoTargetId: string;
+  /** 搜索广告图片素材 URL（至少一张接近正方形）。 */
+  imageUrls?: string[];
 }
 
 /** 结构化摘要：从 13 类里按商家特点选 2 类。 */
@@ -344,8 +349,11 @@ export function buildSampleDraft(input: {
         '在线购买',
       ],
       sitelinks: ['立即选购', '新品上市', '热销榜', '系列合集', '优惠专区', '开始购物'],
+      keywords: [`${brand} 相关词`],
+      structuredSnippets: ['类型一, 类型二, 类型三, 类型四', '风格一, 风格二, 风格三, 风格四'],
     },
     keywords: [{ text: brand.toLowerCase().slice(0, 80), matchType: 'PHRASE' }],
+    imageUrls: [],
     negativeKeywords: ['careers', 'jobs', 'login', 'wiki', 'free', 'pdf', 'manual'].map((text) => ({
       text,
       matchType: 'BROAD' as const,
@@ -550,6 +558,21 @@ export function validateDraft(draft: AdDraft): string[] {
   }
   if (draft.bidding !== 'MAXIMIZE_CLICKS' && draft.bidding !== 'MANUAL_CPC') {
     errors.push('出价只支持尽可能争取更多点击次数或手动 CPC');
+  }
+  return errors;
+}
+
+/** 提交 Google 前校验广告图（生成阶段可不选图）。 */
+export function validateAdImages(draft: AdDraft, opts?: { requireSquare?: boolean }): string[] {
+  const images = (draft.imageUrls ?? []).map((url) => url.trim()).filter((url) => /^https?:\/\//i.test(url));
+  const errors: string[] = [];
+  if (!images.length) {
+    errors.push('请至少添加 1 张广告图片，且其中至少 1 张为正方形（约 1:1）');
+  } else if (images.length > 20) {
+    errors.push('广告图片最多 20 张');
+  }
+  if (opts?.requireSquare === false) {
+    // 仅数量校验
   }
   return errors;
 }
@@ -804,6 +827,10 @@ export function sanitizeDraftForReview(draft: AdDraft, fallback: AdDraft): AdDra
     cpcBidCeilingUsd: (draft.bidding || fallback.bidding) === 'MANUAL_CPC'
       ? (draft.cpcBidCeilingUsd || fallback.cpcBidCeilingUsd || '')
       : '',
+    imageUrls: (draft.imageUrls?.length ? draft.imageUrls : fallback.imageUrls ?? [])
+      .map((url) => url.trim())
+      .filter((url, index, all) => /^https?:\/\//i.test(url) && all.indexOf(url) === index)
+      .slice(0, 20),
   };
 }
 

@@ -15,6 +15,8 @@ export function buildCreateCampaignPayload(input: {
   customerId: string;
   campaignName: string;
   draft: AdDraft;
+  /** 已下载的图片 base64；有则挂到系列 AD_IMAGE。 */
+  imageAssets?: Array<{ name: string; data: string }>;
 }): Record<string, unknown> {
   const customerId = input.customerId.replace(/-/g, '');
   const budget = `customers/${customerId}/campaignBudgets/-1`;
@@ -188,6 +190,11 @@ export function buildCreateCampaignPayload(input: {
     draft: input.draft,
   });
   operations.push(...promotionOps);
+  operations.push(...buildAdImageAssetOperations({
+    customerId,
+    campaign,
+    images: input.imageAssets ?? [],
+  }));
 
   operations.push({
     adGroupAdOperation: {
@@ -210,6 +217,37 @@ export function buildCreateCampaignPayload(input: {
     validateOnly: false,
     mutateOperations: operations,
   };
+}
+
+/**
+ * 搜索广告图片素材（AD_IMAGE）。需至少一张接近正方形的图更易通过审核。
+ */
+function buildAdImageAssetOperations(input: {
+  customerId: string;
+  campaign: string;
+  images: Array<{ name: string; data: string }>;
+}): Record<string, unknown>[] {
+  const ops: Record<string, unknown>[] = [];
+  input.images.slice(0, 20).forEach((image, index) => {
+    if (!image.data) return;
+    const asset = `customers/${input.customerId}/assets/-${100 + index}`;
+    ops.push({
+      assetOperation: {
+        create: {
+          resourceName: asset,
+          name: (image.name || `Ad image ${index + 1}`).slice(0, 128),
+          type: 'IMAGE',
+          imageAsset: { data: image.data },
+        },
+      },
+    });
+    ops.push({
+      campaignAssetOperation: {
+        create: { asset, campaign: input.campaign, fieldType: 'AD_IMAGE' },
+      },
+    });
+  });
+  return ops;
 }
 
 /**

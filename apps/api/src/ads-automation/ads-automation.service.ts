@@ -28,6 +28,7 @@ import {
   sanitizeDraftForReview,
   stripKeywordDecorations,
   usdToMicros,
+  validateAdImages,
   validateDraft,
 } from './ads-automation.util';
 import { crawlMerchantImages, crawlMerchantNavLinks } from './merchant-page-images';
@@ -35,6 +36,7 @@ import { AiPersonaService } from './ai-persona.service';
 import { resolveAdLanguage } from './market-language';
 import { writeAdCopy, writeArticle } from './modelgo-copy';
 import { modelGoConfig } from './modelgo.client';
+import { prepareAdImageAssets } from './ad-image-assets';
 import { buildCreateCampaignPayload } from './mutate-payload';
 import {
   GoogleAdsClient,
@@ -1368,7 +1370,7 @@ export class AdsAutomationService implements OnModuleInit {
       throw new BadRequestException('文案尚未生成完成');
     }
     const draft = this.readDraft(job.draft);
-    const errors = validateDraft(draft);
+    const errors = [...validateDraft(draft), ...validateAdImages(draft)];
     if (errors.length) throw new BadRequestException(errors.join('；'));
 
     const account = await this.prisma.channelAccount.findFirst({
@@ -2330,6 +2332,12 @@ export class AdsAutomationService implements OnModuleInit {
       select: { draft: true },
     });
     const draft = job ? this.readDraft(job.draft) : null;
+    const imageAssets = draft
+      ? (await prepareAdImageAssets(draft.imageUrls ?? [])).map((item) => ({
+          name: item.name,
+          data: item.data,
+        }))
+      : [];
     const rebuilt = draft
       ? buildCreateCampaignPayload({
           customerId: campaign.customerId,
@@ -2340,6 +2348,7 @@ export class AdsAutomationService implements OnModuleInit {
             merchantUrl: campaign.merchantUrl || draft.merchantUrl,
             finalUrlSuffix: campaign.finalUrlSuffix || draft.finalUrlSuffix,
           },
+          imageAssets,
         })
       : null;
     const payload = rebuilt ?? outbox.payload;

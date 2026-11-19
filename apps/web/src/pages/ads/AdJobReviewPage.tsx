@@ -55,6 +55,8 @@ interface AdCopyTranslations {
   descriptions?: string[];
   callouts?: string[];
   sitelinks?: string[];
+  keywords?: string[];
+  structuredSnippets?: string[];
   promotion?: string;
 }
 
@@ -92,6 +94,31 @@ interface AdDraft {
   cpcBidCeilingUsd: string;
   languageCode: string;
   geoTargetId: string;
+  imageUrls?: string[];
+}
+
+interface AdImageCandidate {
+  url: string;
+  alt: string;
+  width: number;
+  height: number;
+  square: boolean;
+}
+
+function isNearSquare(width: number, height: number): boolean {
+  if (width < 300 || height < 300) return false;
+  const ratio = width / height;
+  return ratio >= 0.9 && ratio <= 1.11;
+}
+
+function measureImage(url: string): Promise<{ width: number; height: number }> {
+  return new Promise((resolve, reject) => {
+    const image = new Image();
+    image.onload = () => resolve({ width: image.naturalWidth, height: image.naturalHeight });
+    image.onerror = () => reject(new Error('load failed'));
+    image.referrerPolicy = 'no-referrer';
+    image.src = url;
+  });
 }
 
 interface AdJob {
@@ -190,6 +217,7 @@ function emptyDraft(): AdDraft {
     cpcBidCeilingUsd: '',
     languageCode: 'en',
     geoTargetId: '',
+    imageUrls: [],
   };
 }
 
@@ -197,6 +225,7 @@ function emptyDraft(): AdDraft {
 function hydrateDraft(raw?: Partial<AdDraft> | null): AdDraft {
   const draft = { ...emptyDraft(), ...(raw || {}) };
   if (draft.bidding !== 'MANUAL_CPC') draft.cpcBidCeilingUsd = '';
+  draft.imageUrls = Array.isArray(draft.imageUrls) ? draft.imageUrls.filter((url) => /^https?:\/\//i.test(url)) : [];
   return draft;
 }
 
@@ -270,9 +299,93 @@ export default function AdJobReviewPage() {
   const [negInput, setNegInput] = useState('');
   const [campaignName, setCampaignName] = useState('');
   const [campaignNameDirty, setCampaignNameDirty] = useState(false);
+  const [adImages, setAdImages] = useState<AdImageCandidate[]>([]);
+  const [loadingAdImages, setLoadingAdImages] = useState(false);
   // 用 ref 读脏标记，避免改系列名时重建 loadJob → 重新拉任务盖掉未保存的广告草稿
   const campaignNameDirtyRef = useRef(false);
   campaignNameDirtyRef.current = campaignNameDirty;
+
+  const selectedImageUrls = draft.imageUrls ?? [];
+  const selectedSquareCount = adImages.filter((item) => selectedImageUrls.includes(item.url) && item.square).length;
+
+  useEffect(() => {
+    const urls = [...selectedImageUrls];
+    if (!urls.length) return;
+    let cancelled = false;
+    void (async () => {
+      const measured: AdImageCandidate[] = [];
+      for (const url of urls) {
+        try {
+          const size = await measureImage(url);
+          measured.push({
+            url,
+            alt: '',
+            width: size.width,
+            height: size.height,
+            square: isNearSquare(size.width, size.height),
+          });
+        } catch {
+          // ignore
+        }
+      }
+      if (cancelled || !measured.length) return;
+      setAdImages((current) => {
+        const map = new Map(current.map((item) => [item.url, item]));
+        measured.forEach((item) => map.set(item.url, item));
+        return [...map.values()];
+      });
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedImageUrls.join('|')]);
+
+  const loadAdImages = async () => {
+    const merchantUrl = draft.merchantUrl?.trim();
+    if (!/^https?:\/\//i.test(merchantUrl || '')) {
+      message.warning('请先填写商家网址再拉图');
+      return;
+    }
+    setLoadingAdImages(true);
+    try {
+      const res = await api.get<ApiResult<{ pageUrl: string; images: Array<{ url: string; alt: string }> }>>(
+        '/article-publish/images',
+        { params: { merchantUrl } },
+      );
+      if (!res.data.success) {
+        message.error(res.data.message || '抓取图片失败');
+        return;
+      }
+      const rows = res.data.data.images ?? [];
+      const measured: AdImageCandidate[] = [];
+      for (const row of rows) {
+        try {
+          const size = await measureImage(row.url);
+          measured.push({
+            url: row.url,
+            alt: row.alt || '',
+            width: size.width,
+            height: size.height,
+            square: isNearSquare(size.width, size.height),
+          });
+        } catch {
+          // 浏览器打不开的图丢掉
+        }
+      }
+      setAdImages(measured);
+      const squares = measured.filter((item) => item.square).map((item) => item.url);
+      const picked = [...new Set([...(draft.imageUrls ?? []), ...squares])].slice(0, 20);
+      if (picked.length) setDraft((current) => ({ ...current, imageUrls: picked }));
+      if (!measured.length) message.warning('没有抓到可用图片，可换商家网址或稍后重试');
+      else if (!squares.length) message.warning('抓到了图，但没有接近正方形的；请勾选后尽量补一张 1:1');
+      else message.success(`已加载 ${measured.length} 张，其中正方形 ${squares.length} 张`);
+    } catch (err) {
+      const apiMessage = (err as { response?: { data?: { message?: string | string[] } } }).response?.data?.message;
+      message.error(Array.isArray(apiMessage) ? apiMessage.join('；') : apiMessage || '抓取图片失败');
+    } finally {
+      setLoadingAdImages(false);
+    }
+  };
 
   const loadJob = useCallback(async () => {
     if (!id) return;
@@ -403,6 +516,14 @@ export default function AdJobReviewPage() {
     if (!id || !editable) return;
     if (!customerId) {
       message.warning('请先选择可投放的 CID');
+      return;
+    }
+    if (!selectedImageUrls.length) {
+      message.warning('请至少选择 1 张广告图片');
+      return;
+    }
+    if (selectedSquareCount < 1) {
+      message.warning('广告图片里至少需要 1 张正方形（约 1:1）');
       return;
     }
     Modal.confirm({
@@ -652,33 +773,38 @@ export default function AdJobReviewPage() {
             >
               <Space direction="vertical" style={{ width: '100%' }} size={8}>
                 {draft.keywords.map((keyword, index) => (
-                  <Space.Compact key={`k-${index}`} style={{ width: '100%' }}>
-                    <Input
-                      value={keyword.text}
-                      onChange={(event) => {
-                        const keywords = [...draft.keywords];
-                        keywords[index] = { ...keyword, text: event.target.value };
-                        setDraft({ ...draft, keywords });
-                      }}
-                    />
-                    <Select
-                      style={{ width: 112 }}
-                      value={keyword.matchType}
-                      options={MATCH_OPTIONS}
-                      onChange={(matchType) => {
-                        const keywords = [...draft.keywords];
-                        keywords[index] = { ...keyword, matchType };
-                        setDraft({ ...draft, keywords });
-                      }}
-                    />
-                    <Button
-                      icon={<DeleteOutlined />}
-                      onClick={() => setDraft({
-                        ...draft,
-                        keywords: draft.keywords.filter((_, i) => i !== index),
-                      })}
-                    />
-                  </Space.Compact>
+                  <div key={`k-${index}`}>
+                    <Space.Compact style={{ width: '100%' }}>
+                      <Input
+                        value={keyword.text}
+                        onChange={(event) => {
+                          const keywords = [...draft.keywords];
+                          keywords[index] = { ...keyword, text: event.target.value };
+                          setDraft({ ...draft, keywords });
+                        }}
+                      />
+                      <Select
+                        style={{ width: 112 }}
+                        value={keyword.matchType}
+                        options={MATCH_OPTIONS}
+                        onChange={(matchType) => {
+                          const keywords = [...draft.keywords];
+                          keywords[index] = { ...keyword, matchType };
+                          setDraft({ ...draft, keywords });
+                        }}
+                      />
+                      <Button
+                        icon={<DeleteOutlined />}
+                        onClick={() => setDraft({
+                          ...draft,
+                          keywords: draft.keywords.filter((_, i) => i !== index),
+                        })}
+                      />
+                    </Space.Compact>
+                    {zhHint(draft.translations, 'keywords', index) ? (
+                      <div className="ad-review__zh">{zhHint(draft.translations, 'keywords', index)}</div>
+                    ) : null}
+                  </div>
                 ))}
                 <Button
                   type="dashed"
@@ -1038,11 +1164,75 @@ export default function AdJobReviewPage() {
                             setDraft({ ...draft, structuredSnippets });
                           }}
                         />
+                        {zhHint(draft.translations, 'structuredSnippets', index) ? (
+                          <div className="ad-review__zh" style={{ marginTop: 6 }}>
+                            {zhHint(draft.translations, 'structuredSnippets', index)}
+                          </div>
+                        ) : null}
                       </Card>
                     ))}
                   </Space>
                 </Form.Item>
               </Form>
+            </Card>
+
+            <Card
+              size="small"
+              style={{ marginTop: 16 }}
+              title={`广告图片（已选 ${selectedImageUrls.length}/20，正方形 ${selectedSquareCount}）`}
+              extra={(
+                <Button size="small" loading={loadingAdImages} onClick={() => void loadAdImages()} disabled={!editable}>
+                  从商家站拉图
+                </Button>
+              )}
+            >
+              <div className="ad-review__hint" style={{ marginBottom: 8 }}>
+                搜索广告建议带图；必须至少勾选 1 张接近正方形（约 1:1，边长 ≥300）。可多选横向/纵向，系统提交时会上传为 AD_IMAGE。
+              </div>
+              {!adImages.length ? (
+                <div className="ad-review__hint">点「从商家站拉图」扫描商家页；加载成功后会优先勾选正方形图。</div>
+              ) : (
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, minmax(0, 1fr))', gap: 8 }}>
+                  {adImages.map((image) => {
+                    const selected = selectedImageUrls.includes(image.url);
+                    return (
+                      <button
+                        key={image.url}
+                        type="button"
+                        disabled={!editable}
+                        title={`${image.width}x${image.height}${image.square ? ' · 正方形' : ''}`}
+                        onClick={() => {
+                          setDraft((current) => {
+                            const urls = current.imageUrls ?? [];
+                            const next = selected
+                              ? urls.filter((url) => url !== image.url)
+                              : [...urls, image.url].slice(0, 20);
+                            return { ...current, imageUrls: next };
+                          });
+                        }}
+                        style={{
+                          padding: 0,
+                          borderRadius: 8,
+                          overflow: 'hidden',
+                          border: selected ? '2px solid #1677ff' : '1px solid #f0f0f0',
+                          background: '#fafafa',
+                          cursor: editable ? 'pointer' : 'default',
+                        }}
+                      >
+                        <img
+                          src={image.url}
+                          alt={image.alt || '广告图'}
+                          referrerPolicy="no-referrer"
+                          style={{ width: '100%', height: 88, objectFit: 'cover', display: 'block' }}
+                        />
+                        <div style={{ fontSize: 11, padding: '2px 4px', color: image.square ? '#1677ff' : 'rgba(0,0,0,0.45)' }}>
+                          {image.square ? '正方形' : `${image.width}×${image.height}`}
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
             </Card>
           </Col>
 

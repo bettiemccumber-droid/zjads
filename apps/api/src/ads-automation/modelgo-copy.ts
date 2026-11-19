@@ -81,10 +81,12 @@ export async function writeAdCopy(input: {
   const base = buildSampleDraft(input);
   const language = audienceLanguage(input.countryCode, input.languageCode);
   const shape = adCopyJsonShape(input.merchantUrl, pageLinks);
+  const seasonHint = nearbySeasonCopyHint(new Date(), input.countryCode);
   const raw = await askJson(
-    `Write Google search ads for ${input.merchantName}. Audience language: ${language}. Country: ${input.countryCode}. Use real brand tone; strong click and purchase intent.`,
+    `Write Google search ads for ${input.merchantName}. Audience language: ${language}. Country: ${input.countryCode}. Use real brand tone; strong click and purchase intent.
+${seasonHint}`,
     shape,
-    2200,
+    2400,
     input.personaPrompt,
   );
   let draft = sanitizeDraftForReview(applyAdCopy(base, raw, pageLinks), base);
@@ -111,7 +113,7 @@ function adCopyJsonShape(merchantUrl: string, pageLinks: Array<{ url: string; la
     .map((item) => `- ${item.url}${item.label ? ` (${item.label})` : ''}`)
     .join('\n');
   return `Return JSON only:
-{"headlines": string[${AD_COPY_LIMITS.headlineCount.prefer}], "descriptions": string[${AD_COPY_LIMITS.descriptionCount.prefer}], "keywords": string[1 to 8], "negativeKeywords": string[4 to 12], "sitelinks": [{"linkText": string, "description1": string, "description2": string, "finalUrl": string}], "callouts": string[${AD_COPY_LIMITS.calloutCount.prefer}], "structuredSnippets": [{"header": string, "values": string[${AD_COPY_LIMITS.structuredValuesMin}+]}], "promotionAsset": {"enabled": boolean, "promotionTarget": string, "discountType": "PERCENT"|"MONETARY", "percentOff": number, "moneyAmountOff": string, "currencyCode": string, "languageCode": string, "finalUrl": string, "promotionCode": string, "ordersOverAmount": string, "occasion": string, "startDate": string, "endDate": string} | null, "translations": {"headlines": string[${AD_COPY_LIMITS.headlineCount.prefer}], "descriptions": string[${AD_COPY_LIMITS.descriptionCount.prefer}], "callouts": string[${AD_COPY_LIMITS.calloutCount.prefer}], "sitelinks": string[${AD_COPY_LIMITS.sitelinkCount.prefer}], "promotion": string}}
+{"headlines": string[${AD_COPY_LIMITS.headlineCount.prefer}], "descriptions": string[${AD_COPY_LIMITS.descriptionCount.prefer}], "keywords": string[1 to 8], "negativeKeywords": string[4 to 12], "sitelinks": [{"linkText": string, "description1": string, "description2": string, "finalUrl": string}], "callouts": string[${AD_COPY_LIMITS.calloutCount.prefer}], "structuredSnippets": [{"header": string, "values": string[${AD_COPY_LIMITS.structuredValuesMin}+]}], "promotionAsset": {"enabled": boolean, "promotionTarget": string, "discountType": "PERCENT"|"MONETARY", "percentOff": number, "moneyAmountOff": string, "currencyCode": string, "languageCode": string, "finalUrl": string, "promotionCode": string, "ordersOverAmount": string, "occasion": string, "startDate": string, "endDate": string} | null, "translations": {"headlines": string[${AD_COPY_LIMITS.headlineCount.prefer}], "descriptions": string[${AD_COPY_LIMITS.descriptionCount.prefer}], "callouts": string[${AD_COPY_LIMITS.calloutCount.prefer}], "sitelinks": string[${AD_COPY_LIMITS.sitelinkCount.prefer}], "keywords": string[1 to 8], "structuredSnippets": string[2], "promotion": string}}
 
 Hard character limits (spaces/punctuation count):
 - headline <= ${AD_COPY_LIMITS.headline}
@@ -125,17 +127,52 @@ Hard character limits (spaces/punctuation count):
 Content rules:
 - Exactly ${AD_COPY_LIMITS.headlineCount.prefer} unique headlines, ${AD_COPY_LIMITS.descriptionCount.prefer} descriptions, ${AD_COPY_LIMITS.calloutCount.prefer} callouts, exactly ${AD_COPY_LIMITS.sitelinkCount.prefer} sitelinks.
 - Strong purchase verbs; low repetition; language must match the audience.
-- Include several headlines about discounts and logistics when plausible (e.g. "20% Off Today", "Free Shipping", "Fast Delivery", "Easy Returns"). Prefer real merchant offers; if unknown, use soft logistics lines without inventing fake coupon codes.
+- Include several headlines/descriptions about discounts, logistics, and nearby real holidays/shopping seasons when relevant (Black Friday, Cyber Monday, Christmas, New Year, Singles Day, Valentine, Mother's Day, back-to-school, etc.). Prefer real merchant offers; if unknown, use soft seasonal or logistics lines without inventing fake coupon codes or fake % off.
 - Forbidden: free trial/gift wording, placeholders like $X or [link], Google risk words (gun/firearm/tactical/combat/military/prescription/Rx/wine/vodka/etc), medical cure claims.
 - Never use more than 4 consecutive uppercase Latin letters (SHOPNOW is bad; Shop Now / FREE is ok). Avoid ALL-CAPS words longer than 4 letters.
 - Callouts must NOT mention free shipping, discounts, coupons, returns, or sale numbers. Put real promos in promotionAsset (optional) instead.
-- promotionAsset: optional. Set enabled=true only when a concrete discount is known or strongly typical for this merchant; otherwise enabled=false or null. Use percentOff as whole percent (20 means 20%). moneyAmountOff is a decimal string. languageCode should match the ad language. finalUrl defaults to merchant URL if omitted. occasion may be empty.
-- translations: required Simplified Chinese glosses aligned by index with headlines/descriptions/callouts/sitelinks (and promotion if any). These are for human review only, not for Google Ads.
+- promotionAsset: optional. Set enabled=true only when a concrete discount is known or strongly typical for this merchant; otherwise enabled=false or null. Use percentOff as whole percent (20 means 20%). moneyAmountOff is a decimal string. languageCode should match the ad language. finalUrl defaults to merchant URL if omitted. occasion may be empty or a real holiday occasion when applicable.
+- translations: required Simplified Chinese glosses for human review only (not sent to Google). Must include: headlines, descriptions, callouts, sitelinks, keywords (aligned to keywords[]), structuredSnippets (2 strings; each is comma-separated Chinese glosses for that snippet's values), and promotion if any.
 - structuredSnippets: pick exactly 2 headers from [${headers}] that best fit this merchant (e.g. travel: Types + Destinations; multi-brand: Types + Brands; own-brand: Types + Styles, avoid Brands). Use these exact English strings. Each needs at least ${AD_COPY_LIMITS.structuredValuesMin} short values.
 - Always include useful negativeKeywords (careers, login, free pdf, etc.).
 - Ad final URL (RSA) stays ${merchantUrl}. No URLs inside headline/description/callout text.
 - Each sitelink MUST include its own finalUrl. finalUrl values must be distinct https pages on the same merchant host, not all ${merchantUrl}. Prefer purchase pages: shop, collections, products, best sellers, new arrivals, sale/deals, cart/checkout. Avoid Contact Us / About / Support / Careers / Login unless no purchase pages exist. Absolute paths or full URLs are both ok.
 ${knownPages ? `Known on-site pages to prefer for sitelink finalUrl (purchase pages first):\n${knownPages}` : ''}`;
+}
+
+/**
+ * 生成时提示临近节日/购物季，避免编造虚假促销码。
+ */
+export function nearbySeasonCopyHint(now = new Date(), countryCode = 'US'): string {
+  const month = now.getUTCMonth() + 1;
+  const day = now.getUTCDate();
+  const hints: string[] = [`Today (UTC) is ${now.toISOString().slice(0, 10)}.`];
+  if ((month === 10 && day >= 20) || (month === 11 && day <= 5)) {
+    hints.push('Near Halloween / early holiday shopping; soft seasonal lines OK if natural.');
+  }
+  if (month === 11 && day >= 15 && day <= 30) {
+    hints.push('Near Black Friday / Thanksgiving / Cyber week — real shopping-season headlines welcome; do not invent fake coupon codes.');
+  }
+  if (month === 12) {
+    hints.push('December holiday / Christmas / year-end — seasonal gift or holiday shopping lines OK when natural.');
+  }
+  if (month === 1 && day <= 15) {
+    hints.push('Near New Year — new year / fresh start shopping lines OK when natural.');
+  }
+  if (month === 2 && day <= 20) {
+    hints.push('Near Valentine\'s Day — soft seasonal lines OK when natural for this merchant.');
+  }
+  if (month === 5 && day <= 15) {
+    hints.push('Near Mother\'s Day (many markets) — soft seasonal lines OK when natural.');
+  }
+  if (month === 8 || (month === 9 && day <= 10)) {
+    hints.push('Back-to-school season — seasonal lines OK when natural for this merchant.');
+  }
+  if (countryCode === 'CN' || countryCode === 'HK' || countryCode === 'TW' || countryCode === 'SG') {
+    if (month === 11 && day <= 15) hints.push('Near Singles Day (11.11) shopping season for some Asia markets.');
+  }
+  hints.push('Only mention discounts/promos that are plausible; never invent fake % off or coupon codes.');
+  return hints.join(' ');
 }
 
 /**
@@ -229,11 +266,23 @@ export function applyAdCopy(
   const structuredSnippets = structuredSnippetList(raw.structuredSnippets, base.structuredSnippets);
   const promotion = typeof raw.promotion === 'string' ? raw.promotion.trim().slice(0, 120) : base.promotion;
   const promotionAsset = parsePromotionAsset(raw.promotionAsset, base);
+  const nextKeywords = keywords.length ? keywords : base.keywords;
+  const nextCallouts = callouts.length ? callouts : base.callouts;
+  const nextSnippets = structuredSnippets.length ? structuredSnippets : base.structuredSnippets;
+  const nextSitelinks = sitelinks.length
+    ? sitelinks
+    : assignUniqueSitelinkUrls(
+      base.sitelinks.slice(0, limits.sitelinkCount.prefer),
+      base.merchantUrl,
+      pageLinks,
+    );
   const translations = parseTranslations(raw.translations, {
     headlines,
     descriptions,
-    callouts: callouts.length ? callouts : base.callouts,
-    sitelinks,
+    callouts: nextCallouts,
+    sitelinks: nextSitelinks,
+    keywords: nextKeywords,
+    structuredSnippets: nextSnippets,
     promotion,
   });
 
@@ -244,20 +293,15 @@ export function applyAdCopy(
     ...base,
     headlines,
     descriptions,
-    keywords: keywords.length ? keywords : base.keywords,
+    keywords: nextKeywords,
     negativeKeywords: negativeKeywords.length ? negativeKeywords : base.negativeKeywords,
-    callouts: callouts.length ? callouts : base.callouts,
-    sitelinks: sitelinks.length
-      ? sitelinks
-      : assignUniqueSitelinkUrls(
-        base.sitelinks.slice(0, limits.sitelinkCount.prefer),
-        base.merchantUrl,
-        pageLinks,
-      ),
-    structuredSnippets: structuredSnippets.length ? structuredSnippets : base.structuredSnippets,
+    callouts: nextCallouts,
+    sitelinks: nextSitelinks,
+    structuredSnippets: nextSnippets,
     promotion,
     promotionAsset,
     translations,
+    imageUrls: base.imageUrls ?? [],
   };
 }
 
@@ -268,17 +312,21 @@ function parseTranslations(
     descriptions: string[];
     callouts: string[];
     sitelinks: AdDraft['sitelinks'];
+    keywords: AdDraft['keywords'];
+    structuredSnippets: AdDraft['structuredSnippets'];
     promotion: string;
   },
 ): AdDraft['translations'] {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
   const row = value as Record<string, unknown>;
-  const list = (key: string, max: number) => textList(row[key]).map((text) => text.slice(0, 80)).slice(0, max);
+  const list = (key: string, max: number) => textList(row[key]).map((text) => text.slice(0, 120)).slice(0, max);
   return {
     headlines: list('headlines', sizes.headlines.length),
     descriptions: list('descriptions', sizes.descriptions.length),
     callouts: list('callouts', sizes.callouts.length),
     sitelinks: list('sitelinks', sizes.sitelinks.length),
+    keywords: list('keywords', sizes.keywords.length),
+    structuredSnippets: list('structuredSnippets', sizes.structuredSnippets.length),
     promotion: typeof row.promotion === 'string' ? row.promotion.trim().slice(0, 120) : undefined,
   };
 }

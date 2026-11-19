@@ -29,7 +29,7 @@ import {
   SendOutlined,
 } from '@ant-design/icons';
 import { api, type ApiResult } from '../../api/client';
-import { AD_LANGUAGE_OPTIONS, formatCustomerId } from './ad-launch-settings';
+import { AD_LANGUAGE_OPTIONS, formatCustomerId, isGoogleMccId } from './ad-launch-settings';
 import './AdJobReviewPage.css';
 
 interface AdKeyword {
@@ -206,6 +206,14 @@ interface AdsCustomer {
   verificationStatus?: string;
 }
 
+interface AdsConnection {
+  id: number;
+  mccCustomerId: string;
+  loginCustomerId: string;
+  hasRefreshToken: boolean;
+  customerCount: number;
+}
+
 interface SemrushSuggestion {
   keyword: string;
   position: number | null;
@@ -323,6 +331,8 @@ export default function AdJobReviewPage() {
   const navigate = useNavigate();
   const [job, setJob] = useState<AdJob | null>(null);
   const [draft, setDraft] = useState<AdDraft>(emptyDraft());
+  const [mccConnections, setMccConnections] = useState<AdsConnection[]>([]);
+  const [selectedMcc, setSelectedMcc] = useState<string>();
   const [customers, setCustomers] = useState<AdsCustomer[]>([]);
   const [customerId, setCustomerId] = useState<string>();
   const [loading, setLoading] = useState(true);
@@ -455,8 +465,9 @@ export default function AdJobReviewPage() {
   }, [id]);
 
   const loadCustomers = useCallback(async (mccCustomerId: string) => {
-    if (!mccCustomerId || /^[A-Za-z]/.test(mccCustomerId)) {
+    if (!mccCustomerId || !isGoogleMccId(mccCustomerId)) {
       setCustomers([]);
+      setCustomerId(undefined);
       return;
     }
     try {
@@ -473,20 +484,49 @@ export default function AdJobReviewPage() {
       });
     } catch {
       setCustomers([]);
+      setCustomerId(undefined);
+    }
+  }, []);
+
+  const loadMccConnections = useCallback(async () => {
+    try {
+      const res = await api.get<ApiResult<{ connections: AdsConnection[] }>>('/google-ads/setup');
+      if (!res.data.success) return;
+      const rows = (res.data.data.connections ?? []).filter((row) => isGoogleMccId(row.mccCustomerId));
+      setMccConnections(rows);
+    } catch {
+      setMccConnections([]);
     }
   }, []);
 
   useEffect(() => {
     setLoading(true);
-    void loadJob()
+    void Promise.all([loadJob(), loadMccConnections()])
       .catch(() => message.error('加载任务失败'))
       .finally(() => setLoading(false));
-  }, [loadJob]);
+  }, [loadJob, loadMccConnections]);
 
   useEffect(() => {
-    if (!job?.mccCustomerId) return;
-    void loadCustomers(job.mccCustomerId);
-  }, [job?.mccCustomerId, loadCustomers]);
+    if (!job) return;
+    setSelectedMcc((prev) => {
+      if (prev && isGoogleMccId(prev) && mccConnections.some((row) => row.mccCustomerId === prev)) {
+        return prev;
+      }
+      if (isGoogleMccId(job.mccCustomerId) && mccConnections.some((row) => row.mccCustomerId === job.mccCustomerId)) {
+        return job.mccCustomerId;
+      }
+      return mccConnections[0]?.mccCustomerId;
+    });
+  }, [job, mccConnections]);
+
+  useEffect(() => {
+    if (!selectedMcc) {
+      setCustomers([]);
+      setCustomerId(undefined);
+      return;
+    }
+    void loadCustomers(selectedMcc);
+  }, [selectedMcc, loadCustomers]);
 
   useEffect(() => {
     if (!job) return;
@@ -523,11 +563,14 @@ export default function AdJobReviewPage() {
   };
 
   const syncCidList = async () => {
-    if (!job?.mccCustomerId) return;
+    if (!selectedMcc || !isGoogleMccId(selectedMcc)) {
+      message.warning('请先选择已绑定的 Google MCC');
+      return;
+    }
     setSyncingCid(true);
     try {
-      await api.post('/google-ads/sync', { mccCustomerId: job.mccCustomerId });
-      await loadCustomers(job.mccCustomerId);
+      await api.post('/google-ads/sync', { mccCustomerId: selectedMcc });
+      await loadCustomers(selectedMcc);
       message.success('已同步 CID 列表');
     } catch (err) {
       const apiMessage = (err as { response?: { data?: { message?: string | string[] } } }).response?.data?.message;
@@ -566,6 +609,10 @@ export default function AdJobReviewPage() {
 
   const confirmPublish = () => {
     if (!id || !editable) return;
+    if (!selectedMcc || !isGoogleMccId(selectedMcc)) {
+      message.warning('请先选择已绑定的 Google MCC');
+      return;
+    }
     if (!customerId) {
       message.warning('请先选择可投放的 CID');
       return;
@@ -592,6 +639,7 @@ export default function AdJobReviewPage() {
             throw new Error('save failed');
           }
           const res = await api.post<ApiResult<AdJob>>(`/ad-jobs/${id}/publish`, {
+            mccCustomerId: selectedMcc,
             customerId,
             campaignName: campaignName.trim() || undefined,
           });
@@ -650,7 +698,7 @@ export default function AdJobReviewPage() {
               {job.input?.platformCode ? <Tag>{job.input.platformCode}</Tag> : null}
               <Tag color="blue">{job.targetCountry}</Tag>
               <Tag color="orange">{draft.languageCode || job.languageCode || 'en'}</Tag>
-              <Tag>MCC {formatCustomerId(job.mccCustomerId)}</Tag>
+              <Tag>MCC {formatCustomerId(selectedMcc || job.mccCustomerId)}</Tag>
             </div>
           </div>
         </Space>
@@ -1292,8 +1340,34 @@ export default function AdJobReviewPage() {
             <div className="ad-review__aside">
               <Card size="small" title="发布账户 (CID)">
                 <Form layout="vertical">
-                  <Form.Item label="MCC 账户">
-                    <Input value={formatCustomerId(job.mccCustomerId)} disabled />
+                  <Form.Item
+                    label="MCC 账户"
+                    required
+                    extra={mccConnections.length ? '以账户状态页已绑定的 MCC 为准' : undefined}
+                  >
+                    <Select
+                      showSearch
+                      optionFilterProp="label"
+                      value={selectedMcc}
+                      placeholder={mccConnections.length ? '选择已绑定的 MCC' : '请先在账户状态页绑定 MCC'}
+                      options={mccConnections.map((row) => ({
+                        value: row.mccCustomerId,
+                        label: `${formatCustomerId(row.mccCustomerId)}${row.customerCount ? ` · ${row.customerCount} 个子账号` : ''}`,
+                      }))}
+                      onChange={(value) => {
+                        setSelectedMcc(value);
+                        setCustomerId(undefined);
+                      }}
+                      notFoundContent="没有已绑定的 Google MCC"
+                    />
+                    {!mccConnections.length ? (
+                      <Alert
+                        type="warning"
+                        showIcon
+                        style={{ marginTop: 8 }}
+                        message="还没有绑定 Google MCC。请到账户状态页添加 10 位经理账号客户号后再同步。"
+                      />
+                    ) : null}
                   </Form.Item>
                   <Form.Item
                     label={(
@@ -1310,7 +1384,14 @@ export default function AdJobReviewPage() {
                       showSearch
                       optionFilterProp="label"
                       value={customerId}
-                      placeholder={eligibleCustomers.length ? '选择空闲子账号' : '没有可用 CID'}
+                      disabled={!selectedMcc}
+                      placeholder={
+                        !selectedMcc
+                          ? '请先选择 MCC'
+                          : eligibleCustomers.length
+                            ? '选择空闲子账号'
+                            : '没有可用 CID'
+                      }
                       options={eligibleCustomers.map((row) => ({
                         value: row.customerId,
                         label: `${formatCustomerId(row.customerId)} - ${row.activeCampaignCount}`,

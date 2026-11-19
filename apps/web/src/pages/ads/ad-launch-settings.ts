@@ -47,13 +47,24 @@ export function saveAdSettings(userId: number, value: AdLaunchSettings) {
 
 /**
  * 把客户号排成 750-357-9184。十位数字按 3-3-4。
+ * 数据源占位键（如 s23）原样返回，避免被剥成「23」。
  */
 export function formatCustomerId(raw: string) {
-  const digits = raw.replace(/\D/g, '');
+  const trimmed = String(raw || '').trim();
+  if (!trimmed) return '';
+  if (/^[A-Za-z]/.test(trimmed)) return trimmed;
+  const digits = trimmed.replace(/\D/g, '');
   if (digits.length === 10) {
     return `${digits.slice(0, 3)}-${digits.slice(3, 6)}-${digits.slice(6)}`;
   }
   return digits.replace(/(\d{3})(?=\d)/g, '$1-');
+}
+
+/** 已绑定的 Google 经理账号客户号（纯数字，至少 6 位）；排除 s23 这类数据源占位。 */
+export function isGoogleMccId(raw: string) {
+  const trimmed = String(raw || '').trim();
+  if (!trimmed || /^[A-Za-z]/.test(trimmed)) return false;
+  return /^\d{6,16}$/.test(trimmed.replace(/\D/g, ''));
 }
 
 /** 全球目标国家（与 API geoTargetConstants 对齐）。 */

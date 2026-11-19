@@ -1203,11 +1203,15 @@ export class AdsAutomationService implements OnModuleInit {
       throw new BadRequestException('该商家禁止投放');
     }
     const mcc = normalizeMccKey(input.mccCustomerId);
-    await this.prisma.googleAdsConnection.upsert({
+    if (!isGoogleMccId(mcc)) {
+      throw new BadRequestException('请选择已绑定的 Google MCC 账户，不要选广告数据源');
+    }
+    const existingMcc = await this.prisma.googleAdsConnection.findUnique({
       where: { ownerUserId_mccCustomerId: { ownerUserId, mccCustomerId: mcc } },
-      create: { ownerUserId, mccCustomerId: mcc },
-      update: {},
     });
+    if (!existingMcc) {
+      throw new BadRequestException('请先在账户状态页绑定 MCC，再领取商家');
+    }
     const country = input.targetCountry.trim().toUpperCase();
     const languageCode = resolveAdLanguage(country, input.languageCode);
     const channelAccount = await this.prisma.channelAccount.findFirst({
@@ -1350,9 +1354,32 @@ export class AdsAutomationService implements OnModuleInit {
 
   /**
    * 确认发布。Google Ads 已配置时直接创建搜索广告；否则仍只写入待提交队列。
+   * mccCustomerId 可选：任务上若是数据源占位（如 s23），用已绑定的真实 MCC 覆盖。
    */
-  async publish(ownerUserId: number, id: string, customerId?: string, campaignNameInput?: string) {
-    const job = await this.mustJob(ownerUserId, id);
+  async publish(
+    ownerUserId: number,
+    id: string,
+    customerId?: string,
+    campaignNameInput?: string,
+    mccCustomerId?: string,
+  ) {
+    let job = await this.mustJob(ownerUserId, id);
+    const requestedMcc = mccCustomerId?.trim() ? normalizeMccKey(mccCustomerId) : '';
+    if (requestedMcc) {
+      if (!isGoogleMccId(requestedMcc)) {
+        throw new BadRequestException('请选择已绑定的 Google MCC 账户');
+      }
+      await this.mustConnection(ownerUserId, requestedMcc);
+      if (job.mccCustomerId !== requestedMcc) {
+        job = await this.prisma.adJob.update({
+          where: { id: job.id },
+          data: { mccCustomerId: requestedMcc },
+          include: { article: true, campaign: true },
+        });
+      }
+    } else if (!isGoogleMccId(job.mccCustomerId)) {
+      throw new BadRequestException('请选择已绑定的 Google MCC 账户后再发布');
+    }
     const connection = await this.prisma.googleAdsConnection.findUnique({
       where: { ownerUserId_mccCustomerId: { ownerUserId, mccCustomerId: job.mccCustomerId } },
     });
@@ -2607,6 +2634,13 @@ function normalizeMccKey(value: string): string {
   const numeric = digits(trimmed).slice(0, 16);
   if (!numeric) throw new BadRequestException('请选择 MCC');
   return numeric;
+}
+
+/** 已绑定的 Google 经理账号客户号（纯数字，至少 6 位），排除 s23 这类数据源占位。 */
+function isGoogleMccId(value: string): boolean {
+  const trimmed = value.trim();
+  if (!trimmed || /^[A-Za-z]/.test(trimmed)) return false;
+  return /^\d{6,16}$/.test(digits(trimmed));
 }
 
 /**

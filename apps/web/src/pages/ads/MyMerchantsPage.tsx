@@ -25,6 +25,7 @@ import {
   AD_LANGUAGE_OPTIONS,
   defaultLanguageForCountry,
   formatCustomerId,
+  isGoogleMccId,
   loadAdSettings,
   saveAdSettings,
   type AdLaunchSettings,
@@ -530,7 +531,9 @@ export default function MyMerchantsPage() {
     if (accountRes?.data.success) {
       setAccounts(accountRes.data.data.flatMap((group) => group.accounts.map((account) => ({ ...account, platformCode: group.platformCode }))));
     }
-    if (setupRes?.data.success) setConnections(setupRes.data.data.connections ?? []);
+    if (setupRes?.data.success) {
+      setConnections((setupRes.data.data.connections ?? []).filter((row) => isGoogleMccId(row.mccCustomerId)));
+    }
   }, [viewUserId]);
 
   const searchDiscover = useCallback(async (page = 1, query = discoverQuery) => {

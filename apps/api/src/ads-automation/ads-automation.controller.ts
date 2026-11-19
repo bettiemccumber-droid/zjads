@@ -658,10 +658,13 @@ export class AdsAutomationController {
   async publish(
     @CurrentUser() user: AuthUser,
     @Param('id') id: string,
-    @Body() body: { customerId?: string; campaignName?: string },
+    @Body() body: { customerId?: string; campaignName?: string; mccCustomerId?: string },
   ) {
     this.assertWriter(user);
-    return ok(await this.ads.publish(user.id, id, body.customerId, body.campaignName), '已写入待提交队列');
+    return ok(
+      await this.ads.publish(user.id, id, body.customerId, body.campaignName, body.mccCustomerId),
+      '已写入待提交队列',
+    );
   }
 
   @Get('ad-campaigns')

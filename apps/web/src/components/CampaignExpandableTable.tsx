@@ -577,7 +577,13 @@ export default function CampaignExpandableTable({
             : {}),
         },
       }));
-      message.success(res.data.message || '已更新 Google Ads');
+      message.success(
+        body.status === 'PAUSED'
+          ? '已暂停，报表状态已同步（刷新后「仅活跃」不再显示）'
+          : body.status === 'ENABLED'
+            ? '已启用，报表状态已同步'
+            : (res.data.message || '已更新 Google Ads'),
+      );
     } catch (error) {
       const raw = (error as { response?: { data?: { message?: string | string[] } } }).response?.data?.message;
       message.error(Array.isArray(raw) ? raw.join('；') : raw || '操作失败');

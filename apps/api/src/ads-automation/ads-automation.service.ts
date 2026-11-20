@@ -1651,7 +1651,7 @@ export class AdsAutomationService implements OnModuleInit {
       );
     }
 
-    // 可选：只同步本系统自动化系列元数据，绝不碰日报表。
+    // 可选：只同步本系统自动化系列元数据，绝不碰日报表花费/点击/佣金。
     const local = await this.prisma.adAutomationCampaign.findFirst({
       where: {
         ownerUserId,
@@ -1666,6 +1666,14 @@ export class AdsAutomationService implements OnModuleInit {
           ...(nextStatus ? { status: nextStatus } : {}),
           ...(nextBudgetMicros ? { dailyBudgetMicros: BigInt(nextBudgetMicros) } : {}),
         },
+      });
+    }
+
+    // 状态字段写入日报，刷新后「仅活跃/已暂停」才能跟上；不改 cost/clicks 等指标列。
+    if (nextStatus) {
+      await this.prisma.adCampaignDaily.updateMany({
+        where: { ownerUserId, customerId, campaignId },
+        data: { campaignStatus: nextStatus },
       });
     }
 

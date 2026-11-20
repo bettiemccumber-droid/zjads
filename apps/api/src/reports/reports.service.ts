@@ -494,6 +494,8 @@ export class ReportsService {
       });
 
     summary = this.dedupeAffiliateAttributionOnCampaigns(summary);
+    // 状态用该系列全库最新一天，避免查询区间停在暂停前一天时仍显示「启用中」
+    summary = await this.applyLatestCampaignStatuses_(ownerId, summary);
     summary.sort((a, b) => b.roi - a.roi || b.commission - a.commission || b.clicks - a.clicks);
 
     const countBeforeStatusFilter = summary.length;
@@ -1286,6 +1288,45 @@ export class ReportsService {
       cur.setUTCDate(cur.getUTCDate() + 1);
     }
     return out;
+  }
+
+  /**
+   * 用全库该系列最新一天的 campaignStatus 覆盖区间内汇总，避免暂停后刷新仍显示「启用中」。
+   */
+  private async applyLatestCampaignStatuses_<
+    T extends { customerId: string; campaignId: string; campaignStatus: string },
+  >(ownerId: number, rows: T[]): Promise<T[]> {
+    if (!rows.length) return rows;
+    const customerIds = [...new Set(rows.map((row) => row.customerId).filter(Boolean))];
+    const campaignIds = [...new Set(rows.map((row) => row.campaignId).filter(Boolean))];
+    if (!customerIds.length || !campaignIds.length) return rows;
+
+    const latestRows = await this.prisma.adCampaignDaily.findMany({
+      where: {
+        ownerUserId: ownerId,
+        customerId: { in: customerIds },
+        campaignId: { in: campaignIds },
+      },
+      orderBy: { date: 'desc' },
+      select: {
+        customerId: true,
+        campaignId: true,
+        campaignStatus: true,
+      },
+    });
+
+    const latest = new Map<string, string>();
+    for (const row of latestRows) {
+      const key = `${row.customerId}|${row.campaignId}`;
+      if (latest.has(key)) continue;
+      const status = (row.campaignStatus || '').trim();
+      if (status) latest.set(key, status);
+    }
+
+    return rows.map((row) => {
+      const status = latest.get(`${row.customerId}|${row.campaignId}`);
+      return status ? { ...row, campaignStatus: status } : row;
+    });
   }
 
   /** 按自然日分别做联盟订单归因去重 */

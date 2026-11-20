@@ -7,7 +7,7 @@ import { isEnabledCampaignStatus } from '../utils/campaign-status';
 import './CampaignExpandableTable.css';
 
 /** 主表横向滚动宽度（紧凑布局，配合固定列） */
-export const CAMPAIGN_MAIN_SCROLL_X = 1280;
+export const CAMPAIGN_MAIN_SCROLL_X = 1360;
 
 /** 按天子表列宽合计 */
 export const CAMPAIGN_DAILY_SCROLL_X = 1040;
@@ -733,11 +733,9 @@ export default function CampaignExpandableTable({
         render: (name: string, r) => {
           const linked = r.linkedCustomerIds?.filter(Boolean) ?? [];
           const multiAccount = linked.length > 1;
+          const enabled = isEnabledCampaignStatus(r.campaignStatus ?? '');
           return (
-            <div className="campaign-name-cell">
-              <span
-                className={`campaign-status-dot ${isEnabledCampaignStatus(r.campaignStatus ?? '') ? 'on' : 'off'}`}
-              />
+            <div className={`campaign-name-cell${enabled ? '' : ' is-paused'}`}>
               <span className="campaign-name-text" title={name}>
                 {name}
               </span>
@@ -753,6 +751,26 @@ export default function CampaignExpandableTable({
                 <span className="campaign-day-badge">{r.daily.length}天</span>
               ) : null}
             </div>
+          );
+        },
+      },
+      {
+        title: '状态',
+        dataIndex: 'campaignStatus',
+        width: 88,
+        align: 'center',
+        sorter: (a, b) => {
+          const ae = isEnabledCampaignStatus(a.campaignStatus ?? '') ? 1 : 0;
+          const be = isEnabledCampaignStatus(b.campaignStatus ?? '') ? 1 : 0;
+          return be - ae;
+        },
+        sortDirections: SORT_DIRS,
+        render: (status: string) => {
+          const enabled = isEnabledCampaignStatus(status ?? '');
+          return (
+            <span className={`campaign-status-tag ${enabled ? 'is-on' : 'is-off'}`}>
+              {enabled ? '启用中' : '已暂停'}
+            </span>
           );
         },
       },
@@ -850,9 +868,9 @@ export default function CampaignExpandableTable({
       },
       ...(manageEnabled
         ? [{
-            title: '管理',
+            title: '操作',
             key: 'manage',
-            width: 88,
+            width: 100,
             align: 'center' as const,
             render: (_: unknown, r: CampaignSummaryRow) => {
               if (!canManageRow(r)) return <span className="merchant-blank">—</span>;
@@ -869,10 +887,11 @@ export default function CampaignExpandableTable({
                         type="link"
                         size="small"
                         danger
+                        className="campaign-action-btn"
                         icon={<PauseCircleOutlined />}
                         loading={busyKey === key}
                       >
-                        暂停
+                        点此暂停
                       </Button>
                     </Popconfirm>
                   ) : (
@@ -883,10 +902,11 @@ export default function CampaignExpandableTable({
                       <Button
                         type="link"
                         size="small"
+                        className="campaign-action-btn"
                         icon={<PlayCircleOutlined />}
                         loading={busyKey === key}
                       >
-                        启用
+                        点此启用
                       </Button>
                     </Popconfirm>
                   )}
@@ -1107,8 +1127,13 @@ export default function CampaignExpandableTable({
         rowClassName={(r) => {
           const key = campaignKey(r);
           const expanded = expandedKeys.includes(key);
+          const paused = !isEnabledCampaignStatus(r.campaignStatus ?? '');
           const extra = rowClassName?.(r) ?? '';
-          return [expanded ? 'campaign-row-expanded' : '', extra].filter(Boolean).join(' ');
+          return [
+            expanded ? 'campaign-row-expanded' : '',
+            paused ? 'campaign-row-paused' : '',
+            extra,
+          ].filter(Boolean).join(' ');
         }}
         expandable={{
           expandedRowKeys: expandedKeys,
@@ -1117,6 +1142,7 @@ export default function CampaignExpandableTable({
           expandRowByClick: false,
           expandedRowRender: (r) => {
             const tot = sumDailyRows(r.daily);
+            const paused = !isEnabledCampaignStatus(r.campaignStatus ?? '');
             const dailyCostGap =
               r.cost > 0 && tot.cost + 0.05 < r.cost
                 ? Math.round((r.cost - tot.cost) * 100) / 100
@@ -1128,9 +1154,11 @@ export default function CampaignExpandableTable({
               r.daily.length < queryDayCount &&
               (r.orderCount > 0 || r.cost > 0);
             return (
-              <div className="campaign-daily-panel">
+              <div className={`campaign-daily-panel${paused ? ' is-paused' : ''}`}>
                 <div className="campaign-daily-panel-title">
-                  按天详细数据（共 {r.daily.length} 天）
+                  {paused
+                    ? `历史数据（系列已暂停，非当前投放）· 共 ${r.daily.length} 天`
+                    : `按天详细数据（共 ${r.daily.length} 天）`}
                 </div>
                 {likelyIncompleteMcc && (
                   <Typography.Paragraph type="warning" style={{ margin: '0 0 8px', fontSize: 12 }}>

@@ -673,6 +673,16 @@ export class AdsAutomationController {
     return ok(await this.ads.importSemrushKeywords(user.id, id, body.limit ?? 30), '已导入 Semrush 关键词');
   }
 
+  /** 探测站内链接落地页是否真的能打开（服务端 HTTP 请求）。 */
+  @Post('ad-jobs/sitelinks/verify')
+  async verifySitelinks(
+    @CurrentUser() user: AuthUser,
+    @Body() body: { urls?: string[] },
+  ) {
+    this.assertWriter(user);
+    return ok(await this.ads.verifySitelinkUrls(body.urls ?? []));
+  }
+
   @Post('ad-jobs/:id/publish')
   async publish(
     @CurrentUser() user: AuthUser,

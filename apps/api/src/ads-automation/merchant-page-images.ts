@@ -397,6 +397,80 @@ async function fetchMerchantHtml(pageUrl: string): Promise<{ html: string; final
   throw new Error('商家页面跳转次数过多');
 }
 
+export interface LandingPageProbeResult {
+  ok: boolean;
+  url: string;
+  finalUrl: string;
+  status: number;
+  message: string;
+}
+
+/**
+ * 探测站内链接落地页是否真的能打开（公网 http/https）。
+ * 跟随有限次跳转；200 成功；常见人机验证页按可达处理。
+ */
+export async function probeLandingPageUrl(pageUrl: string): Promise<LandingPageProbeResult> {
+  const url = pageUrl.trim();
+  if (!url) {
+    return { ok: false, url, finalUrl: '', status: 0, message: '网址为空' };
+  }
+  let current = url;
+  try {
+    for (let hop = 0; hop < 5; hop += 1) {
+      await assertPublicHttpUrl(current);
+      const response = await requestMerchantPage(current);
+      if (response.status >= 300 && response.status < 400) {
+        const location = response.headers.location;
+        if (!location || Array.isArray(location)) {
+          return {
+            ok: false,
+            url,
+            finalUrl: current,
+            status: response.status,
+            message: '跳转没有目标地址',
+          };
+        }
+        current = new URL(location, current).toString();
+        continue;
+      }
+      if (response.status >= 200 && response.status < 300) {
+        return {
+          ok: true,
+          url,
+          finalUrl: current,
+          status: response.status,
+          message: '落地页可打开',
+        };
+      }
+      if (isBotChallenge(response.status, response.data)) {
+        return {
+          ok: true,
+          url,
+          finalUrl: current,
+          status: response.status,
+          message: '页面有人机验证，已按可达处理',
+        };
+      }
+      return {
+        ok: false,
+        url,
+        finalUrl: current,
+        status: response.status,
+        message: `打不开（HTTP ${response.status || '无响应'}）`,
+      };
+    }
+    return { ok: false, url, finalUrl: current, status: 0, message: '跳转次数过多' };
+  } catch (error) {
+    return {
+      ok: false,
+      url,
+      finalUrl: current,
+      status: 0,
+      message: error instanceof Error ? error.message : '探测失败',
+    };
+  }
+}
+
 interface PageResponse {
   status: number;
   headers: Record<string, string | string[] | undefined>;

@@ -392,6 +392,8 @@ export default function AdJobReviewPage() {
   const [loadingAdImages, setLoadingAdImages] = useState(false);
   const [pasteImageUrl, setPasteImageUrl] = useState('');
   const [pasteLogoUrl, setPasteLogoUrl] = useState('');
+  const [verifyingSitelinkIndex, setVerifyingSitelinkIndex] = useState<number | null>(null);
+  const [verifyingAllSitelinks, setVerifyingAllSitelinks] = useState(false);
   // 用 ref 读脏标记，避免改系列名时重建 loadJob → 重新拉任务盖掉未保存的广告草稿
   const campaignNameDirtyRef = useRef(false);
   campaignNameDirtyRef.current = campaignNameDirty;
@@ -718,6 +720,96 @@ export default function AdJobReviewPage() {
       message.error(Array.isArray(apiMessage) ? apiMessage.join('；') : apiMessage || '同步失败');
     } finally {
       setSyncingCid(false);
+    }
+  };
+
+  const probeSitelinkUrls = async (urls: string[]) => {
+    const res = await api.post<ApiResult<{
+      results: Array<{ ok: boolean; url: string; finalUrl: string; status: number; message: string }>;
+    }>>('/ad-jobs/sitelinks/verify', { urls });
+    if (!res.data.success) {
+      throw new Error(res.data.message || '验证失败');
+    }
+    return res.data.data.results;
+  };
+
+  const verifySitelinkAt = async (index: number) => {
+    const link = draft.sitelinks[index];
+    if (!link) return;
+    const url = link.finalUrl.trim();
+    if (!/^https?:\/\//i.test(url)) {
+      message.warning('请先填写有效的落地页 URL');
+      return;
+    }
+    setVerifyingSitelinkIndex(index);
+    try {
+      const [result] = await probeSitelinkUrls([url]);
+      setDraft((prev) => {
+        const sitelinks = [...prev.sitelinks];
+        const current = sitelinks[index];
+        if (!current) return prev;
+        sitelinks[index] = {
+          ...current,
+          finalUrl: result?.ok ? (result.finalUrl || current.finalUrl) : current.finalUrl,
+          verified: Boolean(result?.ok),
+        };
+        return { ...prev, sitelinks };
+      });
+      if (!result?.ok) {
+        message.error(result?.message || `站内链接 ${index + 1} 打不开`);
+        return;
+      }
+      message.success(result.message || `站内链接 ${index + 1} 已验证可打开`);
+    } catch (err) {
+      const apiMessage = (err as { response?: { data?: { message?: string | string[] } }; message?: string }).response?.data?.message
+        || (err as { message?: string }).message;
+      message.error(Array.isArray(apiMessage) ? apiMessage.join('；') : apiMessage || '验证失败');
+    } finally {
+      setVerifyingSitelinkIndex(null);
+    }
+  };
+
+  const verifyAllSitelinks = async () => {
+    const pending = draft.sitelinks
+      .map((item, index) => ({ item, index }))
+      .filter(({ item }) => !item.verified && /^https?:\/\//i.test(item.finalUrl.trim()));
+    if (!pending.length) {
+      message.warning('没有待验证的落地页');
+      return;
+    }
+    setVerifyingAllSitelinks(true);
+    try {
+      const results = await probeSitelinkUrls(pending.map(({ item }) => item.finalUrl.trim()));
+      const byUrl = new Map(results.map((item) => [item.url, item]));
+      let okCount = 0;
+      const failMessages: string[] = [];
+      setDraft((prev) => {
+        const sitelinks = prev.sitelinks.map((link, index) => {
+          const pendingItem = pending.find((row) => row.index === index);
+          if (!pendingItem) return link;
+          const result = byUrl.get(pendingItem.item.finalUrl.trim());
+          if (!result?.ok) {
+            if (result?.message) failMessages.push(`第 ${index + 1} 条：${result.message}`);
+            return link;
+          }
+          okCount += 1;
+          return {
+            ...link,
+            finalUrl: result.finalUrl || link.finalUrl,
+            verified: true,
+          };
+        });
+        return { ...prev, sitelinks };
+      });
+      if (okCount) message.success(`已验证 ${okCount} 条可打开`);
+      if (failMessages.length) message.warning(failMessages.slice(0, 3).join('；'));
+      if (!okCount && !failMessages.length) message.error('验证失败');
+    } catch (err) {
+      const apiMessage = (err as { response?: { data?: { message?: string | string[] } }; message?: string }).response?.data?.message
+        || (err as { message?: string }).message;
+      message.error(Array.isArray(apiMessage) ? apiMessage.join('；') : apiMessage || '验证失败');
+    } finally {
+      setVerifyingAllSitelinks(false);
     }
   };
 
@@ -1123,25 +1215,15 @@ export default function AdJobReviewPage() {
                 <Button
                   size="small"
                   type="link"
-                  disabled={!draft.sitelinks.length || draft.sitelinks.every((item) => item.verified)}
-                  onClick={() => {
-                    const pending = draft.sitelinks.filter((item) => !item.verified && /^https?:\/\//i.test(item.finalUrl.trim()));
-                    if (!pending.length) {
-                      message.warning('请先填写有效的 http(s) 落地页');
-                      return;
-                    }
-                    setDraft({
-                      ...draft,
-                      sitelinks: draft.sitelinks.map((item) => (
-                        /^https?:\/\//i.test(item.finalUrl.trim())
-                          ? { ...item, verified: true }
-                          : item
-                      )),
-                    });
-                    message.success(`已标记 ${pending.length} 条为已验证`);
-                  }}
+                  loading={verifyingAllSitelinks}
+                  disabled={
+                    verifyingSitelinkIndex != null
+                    || !draft.sitelinks.length
+                    || draft.sitelinks.every((item) => item.verified)
+                  }
+                  onClick={() => void verifyAllSitelinks()}
                 >
-                  全部标记已验证
+                  全部验证
                 </Button>
               )}
             >
@@ -1149,7 +1231,7 @@ export default function AdJobReviewPage() {
                 type="info"
                 showIcon
                 style={{ marginBottom: 12 }}
-                message="默认 6 条：有商家网址时第 1 条优先用它，其余用不同内页。官网有更好，没有也可发布。发布前请确认落地页并点「标记已验证」。"
+                message="默认 6 条：有商家网址时第 1 条优先用它，其余用不同内页。官网有更好，没有也可发布。发布前需点「验证」，由系统实际请求落地页，确认能打开。"
               />
               {draft.sitelinks.map((link, index) => (
                 <Card
@@ -1161,37 +1243,19 @@ export default function AdJobReviewPage() {
                   extra={(
                     <Space>
                       {link.verified ? <Tag color="success">已验证</Tag> : <Tag color="warning">未验证</Tag>}
-                      {link.verified ? (
-                        <Button
-                          type="link"
-                          size="small"
-                          onClick={() => {
-                            const sitelinks = [...draft.sitelinks];
-                            sitelinks[index] = { ...link, verified: false };
-                            setDraft({ ...draft, sitelinks });
-                          }}
-                        >
-                          取消验证
-                        </Button>
-                      ) : (
-                        <Button
-                          type="link"
-                          size="small"
-                          disabled={!/^https?:\/\//i.test(link.finalUrl.trim())}
-                          onClick={() => {
-                            if (!/^https?:\/\//i.test(link.finalUrl.trim())) {
-                              message.warning('请先填写有效的落地页 URL');
-                              return;
-                            }
-                            const sitelinks = [...draft.sitelinks];
-                            sitelinks[index] = { ...link, verified: true };
-                            setDraft({ ...draft, sitelinks });
-                            message.success(`站内链接 ${index + 1} 已标记验证`);
-                          }}
-                        >
-                          标记已验证
-                        </Button>
-                      )}
+                      <Button
+                        type="link"
+                        size="small"
+                        loading={verifyingSitelinkIndex === index || verifyingAllSitelinks}
+                        disabled={
+                          !/^https?:\/\//i.test(link.finalUrl.trim())
+                          || (verifyingSitelinkIndex != null && verifyingSitelinkIndex !== index)
+                          || verifyingAllSitelinks
+                        }
+                        onClick={() => void verifySitelinkAt(index)}
+                      >
+                        {link.verified ? '重新验证' : '验证'}
+                      </Button>
                       <Button
                         type="text"
                         size="small"

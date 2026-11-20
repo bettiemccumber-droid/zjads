@@ -484,7 +484,7 @@ export function validateDraft(draft: AdDraft): string[] {
   draft.sitelinks.forEach((link, index) => {
     if (!link.linkText.trim()) errors.push(`站内链接 ${index + 1} 需要填写文案`);
     if (!link.verified) {
-      errors.push(`站内链接 ${index + 1} 尚未验证，请点「标记已验证」确认落地页可用`);
+      errors.push(`站内链接 ${index + 1} 尚未验证，请点「验证」确认落地页能打开`);
     }
     if (link.linkText.length > limits.sitelinkText) {
       errors.push(`站内链接 ${index + 1} 文案超过 ${limits.sitelinkText} 个字符`);

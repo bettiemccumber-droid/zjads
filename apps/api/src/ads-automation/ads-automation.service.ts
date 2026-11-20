@@ -31,7 +31,7 @@ import {
   validateAdImages,
   validateDraft,
 } from './ads-automation.util';
-import { crawlMerchantImages, crawlMerchantNavLinks } from './merchant-page-images';
+import { crawlMerchantImages, crawlMerchantNavLinks, probeLandingPageUrl } from './merchant-page-images';
 import { AiPersonaService } from './ai-persona.service';
 import { resolveAdLanguage } from './market-language';
 import { writeAdCopy, writeArticle } from './modelgo-copy';
@@ -562,6 +562,18 @@ export class AdsAutomationService implements OnModuleInit {
       const message = error instanceof Error ? error.message : '抓取商家页面失败';
       throw new BadRequestException(message);
     }
+  }
+
+  /**
+   * 批量探测站内链接落地页是否可打开。最多 8 条并行。
+   */
+  async verifySitelinkUrls(urls: string[]) {
+    const unique = [...new Set((urls ?? []).map((item) => item.trim()).filter(Boolean))].slice(0, 8);
+    if (!unique.length) {
+      throw new BadRequestException('请至少提供一个落地页网址');
+    }
+    const results = await Promise.all(unique.map((url) => probeLandingPageUrl(url)));
+    return { results };
   }
 
   /**

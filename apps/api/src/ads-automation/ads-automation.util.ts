@@ -279,7 +279,7 @@ export function buildTrackUrl(platformCode: string, merchantUrl: string, prefix 
 }
 
 /** 样板站内链接文案：优先带品牌，超长则用短备选。 */
-function fitBrandSitelink_(preferred: string, shortFallback: string, maxLen = AD_COPY_LIMITS.sitelinkText): string {
+function fitBrandSitelink_(preferred: string, shortFallback: string, maxLen: number = AD_COPY_LIMITS.sitelinkText): string {
   const text = preferred.trim();
   if (text && text.length <= maxLen) return text;
   return shortFallback.slice(0, maxLen);

@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   Body,
   Controller,
   Delete,
@@ -661,6 +662,27 @@ export class AdsAutomationController {
   ) {
     this.assertWriter(user);
     return ok(await this.ads.patchDraft(user.id, id, body));
+  }
+
+  /** 审核页单条重写：标题 / 描述 / 宣传信息 / 站内链接。 */
+  @Post('ad-jobs/:id/regenerate-field')
+  async regenerateField(
+    @CurrentUser() user: AuthUser,
+    @Param('id') id: string,
+    @Body() body: { kind?: 'headline' | 'description' | 'callout' | 'sitelink'; index?: number },
+  ) {
+    this.assertWriter(user);
+    const kind = body.kind;
+    if (kind !== 'headline' && kind !== 'description' && kind !== 'callout' && kind !== 'sitelink') {
+      throw new BadRequestException('请指定要重写的字段');
+    }
+    return ok(
+      await this.ads.regenerateField(user.id, id, {
+        kind,
+        index: Number(body.index),
+      }),
+      '已重新生成',
+    );
   }
 
   @Post('ad-jobs/:id/keywords/semrush')

@@ -16,6 +16,7 @@ import {
   Steps,
   Switch,
   Tag,
+  Tooltip,
   Typography,
   Upload,
   message,
@@ -31,6 +32,7 @@ import {
   RocketOutlined,
   SaveOutlined,
   SendOutlined,
+  SyncOutlined,
 } from '@ant-design/icons';
 import { api, type ApiResult } from '../../api/client';
 import { AD_LANGUAGE_OPTIONS, formatCustomerId, isGoogleMccId } from './ad-launch-settings';
@@ -394,6 +396,7 @@ export default function AdJobReviewPage() {
   const [pasteLogoUrl, setPasteLogoUrl] = useState('');
   const [verifyingSitelinkIndex, setVerifyingSitelinkIndex] = useState<number | null>(null);
   const [verifyingAllSitelinks, setVerifyingAllSitelinks] = useState(false);
+  const [regeneratingKey, setRegeneratingKey] = useState<string | null>(null);
   // 用 ref 读脏标记，避免改系列名时重建 loadJob → 重新拉任务盖掉未保存的广告草稿
   const campaignNameDirtyRef = useRef(false);
   campaignNameDirtyRef.current = campaignNameDirty;
@@ -684,6 +687,30 @@ export default function AdJobReviewPage() {
   const previewDescriptions = draft.descriptions.length
     ? draft.descriptions
     : (generating ? Array.from({ length: 4 }, () => '') : draft.descriptions);
+
+  const regenerateField = async (kind: 'headline' | 'description' | 'callout' | 'sitelink', index: number) => {
+    if (!id || !editable || regeneratingKey) return;
+    const key = `${kind}:${index}`;
+    setRegeneratingKey(key);
+    try {
+      // 先把当前编辑存到服务端，避免单条重写盖掉未保存的其它改动
+      await api.patch<ApiResult<AdJob>>(`/ad-jobs/${id}/draft`, draft);
+      const res = await api.post<ApiResult<AdJob>>(`/ad-jobs/${id}/regenerate-field`, { kind, index });
+      if (!res.data.success) {
+        message.error(res.data.message || '重新生成失败');
+        return;
+      }
+      const next = res.data.data;
+      setJob(next);
+      if (next.draft) setDraft(hydrateDraft(next.draft));
+      message.success('已重新生成');
+    } catch (err) {
+      const apiMessage = (err as { response?: { data?: { message?: string | string[] } } }).response?.data?.message;
+      message.error(Array.isArray(apiMessage) ? apiMessage.join('；') : apiMessage || '重新生成失败');
+    } finally {
+      setRegeneratingKey(null);
+    }
+  };
 
   const saveDraft = async () => {
     if (!id || !editable) return;
@@ -1016,6 +1043,17 @@ export default function AdJobReviewPage() {
                   <div className="ad-review__row-actions">
                     {charCount(text, HEADLINE_MAX)}
                     <Space size={4}>
+                      <Tooltip title="AI 重新生成这条标题">
+                        <Button
+                          type="text"
+                          size="small"
+                          icon={<SyncOutlined />}
+                          loading={regeneratingKey === `headline:${index}`}
+                          disabled={!editable || (regeneratingKey != null && regeneratingKey !== `headline:${index}`)}
+                          onClick={() => void regenerateField('headline', index)}
+                          aria-label="重新生成标题"
+                        />
+                      </Tooltip>
                       <Button type="text" size="small" icon={<CopyOutlined />} disabled={!text} onClick={() => copyText(text)} />
                       <Button
                         type="text"
@@ -1062,6 +1100,17 @@ export default function AdJobReviewPage() {
                   <div className="ad-review__row-actions">
                     {charCount(text, DESC_MAX)}
                     <Space size={4}>
+                      <Tooltip title="AI 重新生成这条描述">
+                        <Button
+                          type="text"
+                          size="small"
+                          icon={<SyncOutlined />}
+                          loading={regeneratingKey === `description:${index}`}
+                          disabled={!editable || (regeneratingKey != null && regeneratingKey !== `description:${index}`)}
+                          onClick={() => void regenerateField('description', index)}
+                          aria-label="重新生成描述"
+                        />
+                      </Tooltip>
                       <Button type="text" size="small" icon={<CopyOutlined />} disabled={!text} onClick={() => copyText(text)} />
                       <Button
                         type="text"
@@ -1243,6 +1292,17 @@ export default function AdJobReviewPage() {
                   extra={(
                     <Space>
                       {link.verified ? <Tag color="success">已验证</Tag> : <Tag color="warning">未验证</Tag>}
+                      <Tooltip title="AI 重新生成这条站内链接文案">
+                        <Button
+                          type="text"
+                          size="small"
+                          icon={<SyncOutlined />}
+                          loading={regeneratingKey === `sitelink:${index}`}
+                          disabled={!editable || (regeneratingKey != null && regeneratingKey !== `sitelink:${index}`)}
+                          onClick={() => void regenerateField('sitelink', index)}
+                          aria-label="重新生成站内链接"
+                        />
+                      </Tooltip>
                       <Button
                         type="link"
                         size="small"
@@ -1523,16 +1583,30 @@ export default function AdJobReviewPage() {
                   </div>
                   <div className="ad-review__row-actions">
                     {charCount(text, 25)}
-                    <Button
-                      type="text"
-                      size="small"
-                      danger
-                      icon={<DeleteOutlined />}
-                      onClick={() => setDraft({
-                        ...draft,
-                        callouts: draft.callouts.filter((_, i) => i !== index),
-                      })}
-                    />
+                    <Space size={4}>
+                      <Tooltip title="AI 重新生成这条宣传信息">
+                        <Button
+                          type="text"
+                          size="small"
+                          icon={<SyncOutlined />}
+                          loading={regeneratingKey === `callout:${index}`}
+                          disabled={!editable || (regeneratingKey != null && regeneratingKey !== `callout:${index}`)}
+                          onClick={() => void regenerateField('callout', index)}
+                          aria-label="重新生成宣传信息"
+                        />
+                      </Tooltip>
+                      <Button
+                        type="text"
+                        size="small"
+                        danger
+                        disabled={!editable}
+                        icon={<DeleteOutlined />}
+                        onClick={() => setDraft({
+                          ...draft,
+                          callouts: draft.callouts.filter((_, i) => i !== index),
+                        })}
+                      />
+                    </Space>
                   </div>
                 </div>
               ))}

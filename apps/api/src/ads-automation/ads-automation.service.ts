@@ -12,6 +12,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { MerchantsService } from '../merchants/merchants.service';
 import { parseCampaignName } from '../common/campaign-name.util';
 import {
+  AdCopyTranslations,
   AdDraft,
   assertCampaignNameCountry,
   buildCampaignName,
@@ -34,7 +35,7 @@ import {
 import { crawlMerchantImages, crawlMerchantNavLinks, probeLandingPageUrl } from './merchant-page-images';
 import { AiPersonaService } from './ai-persona.service';
 import { resolveAdLanguage } from './market-language';
-import { writeAdCopy, writeArticle } from './modelgo-copy';
+import { AdCopyFieldKind, rewriteAdField, writeAdCopy, writeArticle } from './modelgo-copy';
 import { modelGoConfig } from './modelgo.client';
 import { fetchPublicImageBuffer, prepareAdImageAssets } from './ad-image-assets';
 import { buildCreateCampaignPayload } from './mutate-payload';
@@ -1815,21 +1816,181 @@ export class AdsAutomationService implements OnModuleInit {
   }
 
   /**
-   * 配了 ModelGo 就按投放国家写文案，否则仍用示例草稿。
+   * 审核页单条重写：只让 AI 重生成某一条标题/描述/宣传信息/站内链接。
    */
-  private async generate(jobId: string) {
+  async regenerateField(
+    ownerUserId: number,
+    jobId: string,
+    input: { kind: AdCopyFieldKind; index: number },
+  ) {
+    if (!modelGoConfig().enabled) {
+      throw new BadRequestException('未配置文案模型，无法重新生成');
+    }
+    const job = await this.prisma.adJob.findFirst({
+      where: { id: jobId, ownerUserId },
+      include: { campaign: true },
+    });
+    if (!job) throw new NotFoundException('任务不存在');
+    if (job.campaign || job.status === 'COMPLETED') {
+      throw new BadRequestException('已发布的任务不能重新生成');
+    }
+    if (job.status !== 'READY_FOR_REVIEW') {
+      throw new BadRequestException('请等文案生成完成后再单条重写');
+    }
+    const draft = this.readDraft(job.draft);
+    const kind = input.kind;
+    const index = Math.floor(Number(input.index));
+    if (!Number.isFinite(index) || index < 0) {
+      throw new BadRequestException('请指定要重写的条目');
+    }
+    const jobInput = (job.input ?? {}) as {
+      merchantName?: string;
+      merchantUrl?: string;
+      countryCode?: string;
+      languageCode?: string;
+    };
+    const merchantName = jobInput.merchantName || 'Merchant';
+    const merchantUrl = draft.merchantUrl || jobInput.merchantUrl || '';
+    const countryCode = jobInput.countryCode || job.targetCountry || 'US';
+    const languageCode = draft.languageCode || jobInput.languageCode || job.languageCode || 'en';
+    const personaPrompt = await this.personas.activePrompt(ownerUserId, 'ads');
+
+    try {
+      let next = { ...draft };
+      if (kind === 'headline') {
+        if (index >= draft.headlines.length) throw new BadRequestException('标题索引无效');
+        const rewritten = await rewriteAdField({
+          kind: 'headline',
+          merchantName,
+          merchantUrl,
+          countryCode,
+          languageCode,
+          personaPrompt,
+          siblings: draft.headlines.filter((_, i) => i !== index),
+          currentText: draft.headlines[index],
+        });
+        if (!('text' in rewritten)) throw new BadRequestException('生成结果格式不对');
+        const headlines = [...draft.headlines];
+        headlines[index] = rewritten.text;
+        next = {
+          ...next,
+          headlines,
+          translations: patchTranslationList_(draft.translations, 'headlines', index, rewritten.zh),
+        };
+      } else if (kind === 'description') {
+        if (index >= draft.descriptions.length) throw new BadRequestException('描述索引无效');
+        const rewritten = await rewriteAdField({
+          kind: 'description',
+          merchantName,
+          merchantUrl,
+          countryCode,
+          languageCode,
+          personaPrompt,
+          siblings: draft.descriptions.filter((_, i) => i !== index),
+          currentText: draft.descriptions[index],
+        });
+        if (!('text' in rewritten)) throw new BadRequestException('生成结果格式不对');
+        const descriptions = [...draft.descriptions];
+        descriptions[index] = rewritten.text;
+        next = {
+          ...next,
+          descriptions,
+          translations: patchTranslationList_(draft.translations, 'descriptions', index, rewritten.zh),
+        };
+      } else if (kind === 'callout') {
+        if (index >= draft.callouts.length) throw new BadRequestException('宣传信息索引无效');
+        const rewritten = await rewriteAdField({
+          kind: 'callout',
+          merchantName,
+          merchantUrl,
+          countryCode,
+          languageCode,
+          personaPrompt,
+          siblings: draft.callouts.filter((_, i) => i !== index),
+          currentText: draft.callouts[index],
+        });
+        if (!('text' in rewritten)) throw new BadRequestException('生成结果格式不对');
+        const callouts = [...draft.callouts];
+        callouts[index] = rewritten.text;
+        next = {
+          ...next,
+          callouts,
+          translations: patchTranslationList_(draft.translations, 'callouts', index, rewritten.zh),
+        };
+      } else if (kind === 'sitelink') {
+        if (index >= draft.sitelinks.length) throw new BadRequestException('站内链接索引无效');
+        const current = draft.sitelinks[index];
+        const rewritten = await rewriteAdField({
+          kind: 'sitelink',
+          merchantName,
+          merchantUrl,
+          countryCode,
+          languageCode,
+          personaPrompt,
+          siblings: draft.sitelinks.filter((_, i) => i !== index).map((item) => item.linkText),
+          currentSitelink: current,
+        });
+        if (!('sitelink' in rewritten)) throw new BadRequestException('生成结果格式不对');
+        const sitelinks = [...draft.sitelinks];
+        sitelinks[index] = {
+          ...current,
+          ...rewritten.sitelink,
+          verified: false,
+        };
+        next = {
+          ...next,
+          sitelinks,
+          translations: patchTranslationList_(draft.translations, 'sitelinks', index, rewritten.zh),
+        };
+      } else {
+        throw new BadRequestException('不支持的重写类型');
+      }
+
+      const errors = validateDraft(next).filter((item) => !item.includes('尚未验证'));
+      if (errors.length) {
+        throw new BadRequestException(errors.slice(0, 3).join('；'));
+      }
+
+      await this.prisma.adJob.update({
+        where: { id: jobId },
+        data: {
+          draft: next as unknown as Prisma.InputJsonValue,
+          errorMessage: null,
+          progressMessage: '已单条重写文案',
+        },
+      });
+      await this.personas.markUsed(ownerUserId);
+      await this.addEvent(jobId, 'READY_FOR_REVIEW', 'READY_FOR_REVIEW', `重写 ${kind} #${index + 1}`);
+      return this.getJob(ownerUserId, jobId);
+    } catch (error) {
+      if (error instanceof BadRequestException || error instanceof NotFoundException) throw error;
+      throw new BadRequestException(error instanceof Error ? error.message : '重新生成失败');
+    }
+  }
+
+  /**
+   * 配了 ModelGo 就按投放国家写文案，否则仍用示例草稿。
+   * force：审核页重新生成时覆盖已有草稿，但仍保留图片与预算等设置。
+   */
+  private async generate(jobId: string, options?: { force?: boolean }) {
+    const force = Boolean(options?.force);
     const useModel = modelGoConfig().enabled;
     const steps: Array<[string, number, string]> = useModel
-      ? [['GENERATING', 40, '正在按投放国家生成文案']]
+      ? [['GENERATING', 40, force ? '正在重新生成文案' : '正在按投放国家生成文案']]
       : [
           ['COMPETITOR_CREATIVES', 15, '竞品在投创意'],
           ['BRAND_TERMS', 35, '品牌核心词'],
           ['CRAWLING', 55, '正在分析商家网站'],
-          ['GENERATING', 80, 'AI 生成文案'],
+          ['GENERATING', 80, force ? '正在重新生成文案' : 'AI 生成文案'],
         ];
     try {
       const job = await this.prisma.adJob.findUnique({ where: { id: jobId } });
-      if (!job || job.draft) return;
+      if (!job) return;
+      if (job.draft && !force) return;
+      if (job.status === 'COMPLETED') return;
+      const previousDraft = job.draft && typeof job.draft === 'object' && !Array.isArray(job.draft)
+        ? (job.draft as unknown as AdDraft)
+        : null;
       const input = job.input as {
         merchantName: string;
         merchantUrl: string;
@@ -1853,19 +2014,22 @@ export class AdsAutomationService implements OnModuleInit {
         await this.prisma.adJob.update({
           where: { id: jobId },
           data: {
-            progressMessage: `已找到 ${pageLinks.length} 个站内页面，正在生成文案`,
+            progressMessage: `已找到 ${pageLinks.length} 个站内页面，正在${force ? '重新' : ''}生成文案`,
           },
         });
       }
-      const draft = useModel
+      const bidding = previousDraft?.bidding || input.bidding;
+      const dailyBudgetUsd = previousDraft?.dailyBudgetUsd?.trim() || input.dailyBudgetUsd;
+      const cpcBidCeilingUsd = previousDraft?.cpcBidCeilingUsd?.trim() || input.cpcBidCeilingUsd;
+      let draft = useModel
         ? await writeAdCopy({
             merchantName: input.merchantName,
             merchantUrl: input.merchantUrl,
             countryCode: input.countryCode,
             languageCode: language,
-            bidding: input.bidding,
-            dailyBudgetUsd: input.dailyBudgetUsd,
-            cpcBidCeilingUsd: input.cpcBidCeilingUsd,
+            bidding,
+            dailyBudgetUsd,
+            cpcBidCeilingUsd,
             personaPrompt,
             pageLinks,
           })
@@ -1874,10 +2038,22 @@ export class AdsAutomationService implements OnModuleInit {
             merchantUrl: input.merchantUrl,
             countryCode: input.countryCode,
             languageCode: language,
-            bidding: input.bidding,
-            dailyBudgetUsd: input.dailyBudgetUsd,
-            cpcBidCeilingUsd: input.cpcBidCeilingUsd,
+            bidding,
+            dailyBudgetUsd,
+            cpcBidCeilingUsd,
           });
+      if (previousDraft) {
+        draft = {
+          ...draft,
+          merchantUrl: previousDraft.merchantUrl || draft.merchantUrl,
+          bidding: previousDraft.bidding || draft.bidding,
+          dailyBudgetUsd: previousDraft.dailyBudgetUsd || draft.dailyBudgetUsd,
+          cpcBidCeilingUsd: previousDraft.cpcBidCeilingUsd ?? draft.cpcBidCeilingUsd,
+          finalUrlSuffix: previousDraft.finalUrlSuffix ?? draft.finalUrlSuffix,
+          imageUrls: previousDraft.imageUrls?.length ? previousDraft.imageUrls : draft.imageUrls,
+          logoUrls: previousDraft.logoUrls?.length ? previousDraft.logoUrls : draft.logoUrls,
+        };
+      }
       if (useModel) await this.personas.markUsed(job.ownerUserId);
       await this.prisma.adJob.update({
         where: { id: jobId },
@@ -1885,13 +2061,15 @@ export class AdsAutomationService implements OnModuleInit {
           status: 'READY_FOR_REVIEW',
           step: 'READY_FOR_REVIEW',
           progress: 80,
-          progressMessage: useModel ? '已按投放国家生成文案' : '最终预览',
+          progressMessage: force
+            ? (useModel ? '已重新生成文案，请核对' : '已重新生成示例文案，请核对')
+            : (useModel ? '已按投放国家生成文案' : '最终预览'),
           languageCode: language,
           errorMessage: null,
           draft: draft as unknown as Prisma.InputJsonValue,
         },
       });
-      await this.addEvent(jobId, 'READY_FOR_REVIEW', 'READY_FOR_REVIEW', '最终预览');
+      await this.addEvent(jobId, 'READY_FOR_REVIEW', 'READY_FOR_REVIEW', force ? '重新生成完成' : '最终预览');
     } catch (error) {
       const message = error instanceof Error ? error.message : '生成失败';
       try {
@@ -1974,11 +2152,11 @@ export class AdsAutomationService implements OnModuleInit {
   /**
    * 异步执行生成，避免领取接口一直等到文案写完。
    */
-  private kick(jobId: string) {
+  private kick(jobId: string, options?: { force?: boolean }) {
     if (this.runningJobs.has(jobId)) return;
     this.runningJobs.add(jobId);
     setImmediate(() => {
-      void this.generate(jobId).finally(() => this.runningJobs.delete(jobId));
+      void this.generate(jobId, options).finally(() => this.runningJobs.delete(jobId));
     });
   }
 
@@ -2766,6 +2944,20 @@ export interface AdvertisedCampaignRow {
 /**
  * 同一个商家下，系列名和客户号相同只留一条。本地系列补上可暂停的编号。
  */
+function patchTranslationList_(
+  translations: AdCopyTranslations | undefined,
+  key: 'headlines' | 'descriptions' | 'callouts' | 'sitelinks',
+  index: number,
+  zh?: string,
+): AdCopyTranslations | undefined {
+  if (!zh?.trim()) return translations;
+  const current = translations ?? {};
+  const list = [...(current[key] ?? [])];
+  while (list.length <= index) list.push('');
+  list[index] = zh.trim();
+  return { ...current, [key]: list };
+}
+
 function pushAdvertisedCampaign(bucket: Map<string, AdvertisedCampaignRow[]>, mid: string, row: AdvertisedCampaignRow) {
   const key = mid.trim();
   if (!key || !row.campaignName) return;

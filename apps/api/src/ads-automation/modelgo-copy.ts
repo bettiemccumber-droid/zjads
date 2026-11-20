@@ -2,10 +2,12 @@ import {
   AD_COPY_LIMITS,
   AdDraft,
   AdPromotionAsset,
+  AdSitelink,
   AdStructuredSnippet,
   STRUCTURED_SNIPPET_HEADERS,
   buildSampleDraft,
   ensureCompleteSitelinks,
+  isUnsafeAdText,
   normalizeStructuredSnippetHeader,
   SampleArticle,
   sanitizeDraftForReview,
@@ -14,6 +16,8 @@ import {
   validateDraft,
 } from './ads-automation.util';
 import { completeModelGoChat } from './modelgo.client';
+
+export type AdCopyFieldKind = 'headline' | 'description' | 'callout' | 'sitelink';
 
 /**
  * 告诉模型这条广告要写给哪个国家的读者。墨西哥和西班牙的西语分开写。
@@ -434,6 +438,99 @@ export function applyArticle(raw: Record<string, unknown>): SampleArticle {
         .slice(0, 6)
     : [];
   return { title, intro, sections };
+}
+
+/**
+ * 审核页单条重写：只生成标题 / 描述 / 宣传信息 / 站内链接中的一条，避免整单重跑。
+ */
+export async function rewriteAdField(input: {
+  kind: AdCopyFieldKind;
+  merchantName: string;
+  merchantUrl: string;
+  countryCode: string;
+  languageCode: string;
+  personaPrompt?: string;
+  siblings: string[];
+  currentText?: string;
+  currentSitelink?: Pick<AdSitelink, 'linkText' | 'description1' | 'description2' | 'finalUrl'>;
+}): Promise<{ text: string; zh?: string } | { sitelink: Pick<AdSitelink, 'linkText' | 'description1' | 'description2'>; zh?: string }> {
+  const language = audienceLanguage(input.countryCode, input.languageCode);
+  const seasonHint = nearbySeasonCopyHint(new Date(), input.countryCode);
+  const brand = input.merchantName.trim() || 'the brand';
+  const avoid = input.siblings
+    .map((item) => item.trim())
+    .filter(Boolean)
+    .slice(0, 20)
+    .map((item) => `- ${item}`)
+    .join('\n');
+
+  if (input.kind === 'sitelink') {
+    const current = input.currentSitelink;
+    const raw = await askJson(
+      `Rewrite ONE Google Ads sitelink for ${brand}. Audience language: ${language}. Country: ${input.countryCode}.
+Landing page hint: ${current?.finalUrl || input.merchantUrl}.
+${seasonHint}
+Make linkText + description1 + description2 specific to this merchant/page. Do not reuse stock phrases like Official website / Shop now / Visit our site.
+Avoid duplicating these existing sitelink titles:
+${avoid || '- (none)'}`,
+      `Return JSON only: {"linkText": string, "description1": string, "description2": string, "zh": string}.
+Limits: linkText <= ${AD_COPY_LIMITS.sitelinkText}; each description <= ${AD_COPY_LIMITS.sitelinkDescription}; both descriptions required.
+zh is a short Simplified Chinese gloss of the three fields for human review.`,
+      500,
+      input.personaPrompt,
+    );
+    const linkText = softenExcessiveUppercase(fitAdText(String(raw.linkText ?? ''), AD_COPY_LIMITS.sitelinkText));
+    const description1 = softenExcessiveUppercase(fitAdText(String(raw.description1 ?? ''), AD_COPY_LIMITS.sitelinkDescription));
+    const description2 = softenExcessiveUppercase(fitAdText(String(raw.description2 ?? ''), AD_COPY_LIMITS.sitelinkDescription));
+    if (!linkText || !description1 || !description2) {
+      throw new Error('模型没有返回完整的站内链接文案');
+    }
+    if (
+      isUnsafeAdText(linkText, 'sitelink')
+      || isUnsafeAdText(description1, 'sitelink')
+      || isUnsafeAdText(description2, 'sitelink')
+    ) {
+      throw new Error('生成的站内链接含违规表述，请再试一次');
+    }
+    return {
+      sitelink: { linkText, description1, description2 },
+      zh: typeof raw.zh === 'string' ? raw.zh.trim() : undefined,
+    };
+  }
+
+  const limit = input.kind === 'headline'
+    ? AD_COPY_LIMITS.headline
+    : input.kind === 'description'
+      ? AD_COPY_LIMITS.description
+      : AD_COPY_LIMITS.callout;
+  const label = input.kind === 'headline' ? 'headline' : input.kind === 'description' ? 'description' : 'callout';
+  const raw = await askJson(
+    `Rewrite ONE Google Ads RSA ${label} for ${brand}. Audience language: ${language}. Country: ${input.countryCode}.
+Current line (replace it, do not copy): ${input.currentText?.trim() || '(empty)'}
+${seasonHint}
+Avoid duplicating these existing lines:
+${avoid || '- (none)'}`,
+    `Return JSON only: {"text": string, "zh": string}.
+Hard limit: text <= ${limit} characters (spaces/punctuation count). Strong click intent; specific to this merchant; no placeholders like $X or [link]; no more than 4 consecutive uppercase Latin letters.
+zh is a short Simplified Chinese gloss for human review.`,
+    400,
+    input.personaPrompt,
+  );
+  const text = softenExcessiveUppercase(fitAdText(String(raw.text ?? ''), limit));
+  if (!text) throw new Error('模型没有返回文案');
+  const unsafeKind = input.kind === 'headline' || input.kind === 'description' || input.kind === 'callout'
+    ? input.kind
+    : 'general';
+  if (isUnsafeAdText(text, unsafeKind)) {
+    throw new Error('生成的文案含违规表述，请再试一次');
+  }
+  if (input.siblings.some((item) => item.trim().toLowerCase() === text.toLowerCase())) {
+    throw new Error('生成结果与现有文案重复，请再试一次');
+  }
+  return {
+    text,
+    zh: typeof raw.zh === 'string' ? raw.zh.trim() : undefined,
+  };
 }
 
 /**

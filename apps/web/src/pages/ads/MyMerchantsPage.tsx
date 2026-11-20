@@ -5,6 +5,7 @@ import {
   AlertOutlined,
   CalendarOutlined,
   FireOutlined,
+  InfoCircleOutlined,
   ReloadOutlined,
   SaveOutlined,
   SearchOutlined,
@@ -938,6 +939,21 @@ export default function MyMerchantsPage() {
     () => new Set(violationList.map((item) => `${(item.platformCode || '').toLowerCase()}:${item.mid}`)),
     [violationList],
   );
+  const advertisedByKey = useMemo(() => {
+    const map = new Map<string, AdvertisedMerchant>();
+    for (const item of advertised) {
+      map.set(`${(item.platformCode || '').toLowerCase()}:${item.mid}`, item);
+    }
+    return map;
+  }, [advertised]);
+  const accountByPlatform = useMemo(() => {
+    const map = new Map<string, ChannelAccount>();
+    for (const account of accounts) {
+      const code = (account.platformCode || '').toLowerCase();
+      if (code && !map.has(code)) map.set(code, account);
+    }
+    return map;
+  }, [accounts]);
 
   const refreshOpsLists = useCallback(async () => {
     setOpsListsLoaded(false);
@@ -1036,15 +1052,63 @@ export default function MyMerchantsPage() {
     });
   }, [nodeMerchants, nodeQuery, nodePlatform]);
 
-  const libraryStateCell = (row: OpsListItem) => {
+  const nodeLibraryState = (row: OpsListItem) => {
     const key = `${(row.platformCode || '').toLowerCase()}:${row.mid}`;
     if (violationKeySet.has(key)) {
-      return <span className="merchant-state merchant-state--off">违规</span>;
+      return { kind: 'violation' as const, label: '违规', claimable: false };
     }
-    if (claimedKeySet.has(key)) {
-      return <span className="merchant-state merchant-state--on">已领取</span>;
+    const claimed = advertisedByKey.get(key);
+    if (claimed) {
+      if (!claimed.enabled) {
+        return { kind: 'paused' as const, label: '已认领(暂停)', claimable: false };
+      }
+      return { kind: 'claimed' as const, label: '已领取', claimable: false };
     }
-    return <span className="merchant-state merchant-state--wait">可领取</span>;
+    if (accountByPlatform.has((row.platformCode || '').toLowerCase())) {
+      return { kind: 'claim' as const, label: '可领取', claimable: true };
+    }
+    return { kind: 'missing' as const, label: '未入库', claimable: false };
+  };
+
+  const libraryStateCell = (row: OpsListItem) => {
+    const state = nodeLibraryState(row);
+    const className =
+      state.kind === 'violation' ? 'merchant-state merchant-state--violation'
+        : state.kind === 'paused' ? 'merchant-state merchant-state--paused'
+          : state.kind === 'claimed' ? 'merchant-state merchant-state--on'
+            : state.kind === 'claim' ? 'merchant-state merchant-state--claim'
+              : 'merchant-state merchant-state--missing';
+    return <span className={className}>{state.label}</span>;
+  };
+
+  const openNodeClaim = (row: OpsListItem) => {
+    const account = accountByPlatform.get((row.platformCode || '').toLowerCase());
+    if (!account) {
+      message.warning('当前没有该联盟账号，无法领取');
+      return;
+    }
+    const url = row.merchantUrl?.trim() || '';
+    if (!/^https?:\/\//i.test(url)) {
+      message.warning('这个商家没有网址，不能领取');
+      return;
+    }
+    openLaunch({
+      channelAccountId: account.id,
+      platformCode: row.platformCode,
+      platformName: row.platformCode,
+      accountName: account.displayName,
+      mid: row.mid,
+      name: row.name || row.mid,
+      merchantUrl: url,
+      commRate: row.commissionRate || '',
+      categories: row.category || '',
+      countryCode: row.countryCode || 'US',
+      supportRegion: row.countryCode || '',
+      tags: '',
+      logo: '',
+      relationshipLabel: 'Joined',
+      claimed: false,
+    });
   };
 
   const persistEngines = (next: EnginePrefs) => {
@@ -1692,89 +1756,93 @@ export default function MyMerchantsPage() {
               children: !promoNodesLoaded ? <Spin /> : (
                 <>
                   <div className="promo-nodes">
-                    {(promoNodes?.nodes ?? []).map((node) => (
-                      <button
-                        key={node.key}
-                        type="button"
-                        className={`promo-nodes__chip${activeNodeKey === node.key ? ' is-active' : ''}`}
-                        onClick={() => {
-                          setActiveNodeKey(node.key);
-                          setNodeDraft('');
-                          setNodeQuery('');
-                          setNodePlatform(undefined);
-                        }}
-                      >
-                        <span className="promo-nodes__name">{node.name}</span>
-                        <span className="promo-nodes__days">{node.daysUntil === 0 ? '今天' : `${node.daysUntil}天`}</span>
-                        {node.merchantCount > 0 ? (
-                          <span className="promo-nodes__count">名单 {node.merchantCount}</span>
-                        ) : null}
-                      </button>
-                    ))}
+                    {(promoNodes?.nodes ?? []).map((node) => {
+                      const active = activeNodeKey === node.key;
+                      return (
+                        <button
+                          key={node.key}
+                          type="button"
+                          className={`promo-nodes__chip${active ? ' is-active' : ''}`}
+                          onClick={() => {
+                            setActiveNodeKey(node.key);
+                            setNodeDraft('');
+                            setNodeQuery('');
+                            setNodePlatform(undefined);
+                          }}
+                        >
+                          {active ? <FireOutlined className="promo-nodes__fire" /> : null}
+                          <span className="promo-nodes__label">
+                            {node.name}
+                            {' '}
+                            {node.daysUntil === 0 ? '今天' : `${node.daysUntil}天后`}
+                          </span>
+                        </button>
+                      );
+                    })}
                   </div>
                   {activePromoNode ? (
-                    <Alert
-                      className="promo-nodes__banner"
-                      type="warning"
-                      showIcon
-                      message={`${activePromoNode.name}（${activePromoNode.date}）· 还有 ${activePromoNode.daysUntil} 天`}
-                      description={activePromoNode.description}
-                    />
+                    <div className="promo-nodes__banner">
+                      <InfoCircleOutlined className="promo-nodes__banner-icon" />
+                      <div>
+                        {activePromoNode.name}
+                        （
+                        {activePromoNode.date}
+                        ）推荐商家。
+                        {activePromoNode.description}
+                      </div>
+                    </div>
                   ) : (
                     <TabNote>暂无即将到来的促销节点。</TabNote>
                   )}
-                  <div className="merchant-toolbar">
-                    <Input
-                      allowClear
-                      prefix={<SearchOutlined />}
-                      style={{ width: 240 }}
-                      placeholder="搜索商家名 / MID"
-                      value={nodeDraft}
-                      onChange={(event) => setNodeDraft(event.target.value)}
-                      onPressEnter={() => setNodeQuery(nodeDraft.trim())}
-                    />
-                    <Select
-                      allowClear
-                      placeholder="全部联盟"
-                      style={{ width: 140 }}
-                      value={nodePlatform}
-                      onChange={(value) => setNodePlatform(value)}
-                      options={nodePlatforms.map((code) => ({
-                        value: code,
-                        label: opsPlatformShort(code),
-                      }))}
-                    />
-                    <Button type="primary" icon={<SearchOutlined />} onClick={() => setNodeQuery(nodeDraft.trim())}>
-                      查询
-                    </Button>
-                    <Button
-                      icon={<ReloadOutlined />}
-                      loading={nodeMerchantsLoading}
-                      onClick={() => {
-                        setNodeDraft('');
-                        setNodeQuery('');
-                        setNodePlatform(undefined);
-                        void refreshOpsLists();
-                        if (activeNodeKey) void loadNodeMerchants(activeNodeKey);
-                      }}
-                    >
-                      刷新
-                    </Button>
-                  </div>
-                  <div className="promo-nodes__list-title">
-                    官方推荐名单
-                    {activePromoNode ? `（${nodeMerchantsLoading ? '…' : filteredNodeMerchants.length}）` : ''}
+                  <div className="promo-nodes__list-head">
+                    <div className="promo-nodes__list-title">
+                      官方推荐名单
+                      {activePromoNode ? `（${nodeMerchantsLoading ? '…' : filteredNodeMerchants.length}）` : ''}
+                    </div>
+                    <Space wrap size={8}>
+                      <Input
+                        allowClear
+                        prefix={<SearchOutlined />}
+                        style={{ width: 200 }}
+                        placeholder="搜索商家"
+                        value={nodeDraft}
+                        onChange={(event) => setNodeDraft(event.target.value)}
+                        onPressEnter={() => setNodeQuery(nodeDraft.trim())}
+                      />
+                      <Select
+                        allowClear
+                        placeholder="联盟"
+                        style={{ width: 110 }}
+                        value={nodePlatform}
+                        onChange={(value) => setNodePlatform(value)}
+                        options={nodePlatforms.map((code) => ({
+                          value: code,
+                          label: opsPlatformShort(code),
+                        }))}
+                      />
+                      <Button
+                        icon={<ReloadOutlined />}
+                        loading={nodeMerchantsLoading}
+                        onClick={() => {
+                          setNodeDraft('');
+                          setNodeQuery('');
+                          setNodePlatform(undefined);
+                          void refreshOpsLists();
+                          if (activeNodeKey) void loadNodeMerchants(activeNodeKey);
+                        }}
+                      />
+                    </Space>
                   </div>
                   {nodeMerchantsLoading ? <Spin /> : nodeMerchants.length === 0 ? (
                     <div className="merchant-empty">
-                      该节点还没有官方名单。管理员可在「违规/推荐名单」里按节日节点上传。
+                      该节点还没有官方名单。管理员可在「违规/推荐/节点名单」里按节日上传。
                     </div>
                   ) : (
                     <Table
                       className="merchant-table merchant-table--ops"
                       rowKey={(row) => String(row.id)}
                       size="middle"
-                      scroll={{ x: 1200 }}
+                      scroll={{ x: 1280 }}
                       pagination={{ pageSize: 20, showSizeChanger: true, pageSizeOptions: ['10', '20', '50'], showTotal: (total) => `共 ${total} 条` }}
                       dataSource={filteredNodeMerchants}
                       locale={{ emptyText: '没有匹配的节点商家' }}
@@ -1782,14 +1850,24 @@ export default function MyMerchantsPage() {
                         {
                           title: '商家名称',
                           dataIndex: 'name',
-                          width: 240,
-                          render: (_: string, row: OpsListItem) => <RecommendName row={row} />,
+                          width: 220,
+                          render: (_: string, row: OpsListItem) => {
+                            const title = row.name?.trim() || row.mid;
+                            const href = row.merchantUrl?.trim();
+                            if (!href) return title;
+                            const url = /^https?:\/\//i.test(href) ? href : `https://${href}`;
+                            return (
+                              <a className="promo-nodes__name-link" href={url} target="_blank" rel="noopener noreferrer">
+                                {title}
+                              </a>
+                            );
+                          },
                         },
                         { title: '联盟', dataIndex: 'platformCode', width: 90, render: (value: string) => platformTag(value) },
                         {
                           title: '出单国家',
                           dataIndex: 'countryCode',
-                          width: 120,
+                          width: 110,
                           render: (value: string) => (value ? regionTags(value) : blank()),
                         },
                         {
@@ -1819,8 +1897,28 @@ export default function MyMerchantsPage() {
                         },
                         {
                           title: '我的库状态',
-                          width: 100,
+                          width: 120,
                           render: (_: unknown, row: OpsListItem) => libraryStateCell(row),
+                        },
+                        {
+                          title: '操作',
+                          width: 90,
+                          fixed: 'right',
+                          render: (_: unknown, row: OpsListItem) => {
+                            const state = nodeLibraryState(row);
+                            if (!state.claimable) {
+                              return <span className="promo-nodes__action is-disabled">—</span>;
+                            }
+                            return (
+                              <Button
+                                type="link"
+                                className="promo-nodes__action"
+                                onClick={() => openNodeClaim(row)}
+                              >
+                                去选品
+                              </Button>
+                            );
+                          },
                         },
                       ]}
                     />

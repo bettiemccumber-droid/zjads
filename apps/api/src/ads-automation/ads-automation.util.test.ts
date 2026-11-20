@@ -94,6 +94,25 @@ const missingHomepage = withVerifiedSitelinks({
 });
 assert.ok(validateDraft(missingHomepage).some((msg) => /官网/.test(msg)));
 
+assert.deepStrictEqual(
+  validateDraft(withVerifiedSitelinks({ ...draft, sitelinks: [] })),
+  [],
+  '全删站内链接仍可提交',
+);
+assert.deepStrictEqual(
+  validateDraft(withVerifiedSitelinks({ ...draft, callouts: [], structuredSnippets: [] })),
+  [],
+  '宣传信息与结构化摘要可为空',
+);
+assert.deepStrictEqual(
+  validateDraft(withVerifiedSitelinks({
+    ...draft,
+    structuredSnippets: [{ header: 'Types', values: ['A', 'B'] }],
+  })),
+  [],
+  '结构化摘要不强制条数与最少值个数',
+);
+
 const plainArticle = {
   title: 'Koia drinks',
   intro: [

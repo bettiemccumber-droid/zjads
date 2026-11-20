@@ -475,6 +475,17 @@ export default function MyMerchantsPage() {
   const [launchMerchant, setLaunchMerchant] = useState<DiscoverRow | null>(null);
   const [settingsForm] = Form.useForm<AdLaunchSettings>();
   const [claimForm] = Form.useForm();
+  const claimCountry = Form.useWatch('targetCountry', claimForm) as string | undefined;
+  const claimLanguage = Form.useWatch('languageCode', claimForm) as string | undefined;
+  const claimLanguageHint = useMemo(() => {
+    const country = (claimCountry || '').trim().toUpperCase();
+    const language = (claimLanguage || '').trim();
+    const countryLabel = AD_COUNTRY_OPTIONS.find((item) => item.value === country)?.label || country || '未选国家';
+    const languageLabel = language
+      ? (AD_LANGUAGE_OPTIONS.find((item) => item.value === language)?.label || language)
+      : '未选（提交时按国家市场语言回退）';
+    return `当前：${countryLabel} → ${languageLabel}。选国家会自动匹配语言，一般不用改；也可手动覆盖。`;
+  }, [claimCountry, claimLanguage]);
   const [tab, setTab] = useState('mine');
   const [discoverPlatform, setDiscoverPlatform] = useState<string | undefined>();
   const [discoverQuery, setDiscoverQuery] = useState('');
@@ -713,11 +724,12 @@ export default function MyMerchantsPage() {
       return;
     }
     const regions = row.supportRegion.split(/[,，/\s]+/).map((item) => item.trim().toUpperCase()).filter((item) => /^[A-Z]{2}$/.test(item));
+    const targetCountry = regions[0] || settings?.targetCountry || row.countryCode || 'US';
     setLaunchMerchant(row);
     claimForm.setFieldsValue({
       mccCustomerId: connections[0]?.mccCustomerId,
-      targetCountry: regions[0] || settings?.targetCountry || row.countryCode || 'US',
-      languageCode: settings?.languageCode || 'en',
+      targetCountry,
+      languageCode: defaultLanguageForCountry(targetCountry),
     });
   }, [claimForm, settings, connections]);
 
@@ -2025,6 +2037,9 @@ export default function MyMerchantsPage() {
                 showSearch
                 optionFilterProp="label"
                 options={AD_COUNTRY_OPTIONS}
+                onChange={(code: string) => {
+                  claimForm.setFieldValue('languageCode', defaultLanguageForCountry(code));
+                }}
               />
             </Form.Item>
             {launchMerchant.supportRegion ? (
@@ -2038,7 +2053,11 @@ export default function MyMerchantsPage() {
                         color="blue"
                         style={{ cursor: 'pointer' }}
                         onClick={() => {
-                          if (/^[A-Z]{2}$/.test(code)) claimForm.setFieldValue('targetCountry', code);
+                          if (!/^[A-Z]{2}$/.test(code)) return;
+                          claimForm.setFieldsValue({
+                            targetCountry: code,
+                            languageCode: defaultLanguageForCountry(code),
+                          });
                         }}
                       >
                         {code || region}
@@ -2051,9 +2070,15 @@ export default function MyMerchantsPage() {
             <Form.Item
               name="languageCode"
               label="广告语言（可选）"
-              extra="不选则默认使用投放设置中的语言；爬取失败时回退目标国家市场语言。"
+              extra={claimLanguageHint}
             >
-              <Select allowClear options={AD_LANGUAGE_OPTIONS} placeholder="默认跟随设置" />
+              <Select
+                allowClear
+                showSearch
+                optionFilterProp="label"
+                options={[...AD_LANGUAGE_OPTIONS]}
+                placeholder="随国家自动匹配"
+              />
             </Form.Item>
             <Form.Item label="联盟账号">
               <Input value={`${launchMerchant.accountName} / ${launchMerchant.platformCode}`} disabled />

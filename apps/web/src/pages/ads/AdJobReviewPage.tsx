@@ -1259,7 +1259,7 @@ export default function AdJobReviewPage() {
             <Card
               size="small"
               className="ad-review__card"
-              title={`站内链接（${draft.sitelinks.length}/6，最多 8）`}
+              title={`站内链接（${draft.sitelinks.length}，最多 8；可全部删除后发布）`}
               extra={(
                 <Button
                   size="small"
@@ -1280,7 +1280,7 @@ export default function AdJobReviewPage() {
                 type="info"
                 showIcon
                 style={{ marginBottom: 12 }}
-                message="默认 6 条：有商家网址时第 1 条优先用它，其余用不同内页。官网有更好，没有也可发布。发布前需点「验证」，由系统实际请求落地页，确认能打开。"
+                message="默认生成 6 条（第 1 条优先官网）。生成后会自动探测落地页；未通过的可再点「验证」。不合适可全部删除后再提交 Google Ads。"
               />
               {draft.sitelinks.map((link, index) => (
                 <Card

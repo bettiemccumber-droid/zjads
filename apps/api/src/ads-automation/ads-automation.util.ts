@@ -10,11 +10,12 @@ export const AD_COPY_LIMITS = {
   structuredValue: 20,
   headlineCount: { min: 3, max: 15, prefer: 15 },
   descriptionCount: { min: 2, max: 4, prefer: 4 },
-  calloutCount: { min: 0, max: 8, prefer: 8 },
-  /** 自动化默认正好 6 条；发布时至少 6，最多 8。 */
-  sitelinkCount: { min: 6, max: 8, prefer: 6 },
+  calloutCount: { min: 0, max: 20, prefer: 8 },
+  /** 生成默认 6 条；提交允许 0～8（全删也可发）。 */
+  sitelinkCount: { min: 0, max: 8, prefer: 6 },
+  /** 生成默认 2 类；提交不强制条数。 */
   structuredCategories: 2,
-  structuredValuesMin: 4,
+  structuredValuesMin: 3,
 } as const;
 
 /**
@@ -484,14 +485,14 @@ export function validateDraft(draft: AdDraft): string[] {
     if (!keyword.text.trim()) errors.push('关键词不能为空');
   });
   if (!draft.negativeKeywords.length) errors.push('至少需要一条否定关键词');
-  if (draft.sitelinks.length < limits.sitelinkCount.min || draft.sitelinks.length > limits.sitelinkCount.max) {
-    errors.push(`站内链接需要 ${limits.sitelinkCount.min} 到 ${limits.sitelinkCount.max} 条（默认 ${limits.sitelinkCount.prefer} 条）`);
+  if (draft.sitelinks.length > limits.sitelinkCount.max) {
+    errors.push(`站内链接最多 ${limits.sitelinkCount.max} 条（默认生成 ${limits.sitelinkCount.prefer} 条，也可全部删除后发布）`);
   }
   const sitelinkUrlKeys = new Set<string>();
   draft.sitelinks.forEach((link, index) => {
     if (!link.linkText.trim()) errors.push(`站内链接 ${index + 1} 需要填写文案`);
     if (!link.verified) {
-      errors.push(`站内链接 ${index + 1} 尚未验证，请点「验证」确认落地页能打开`);
+      errors.push(`站内链接 ${index + 1} 尚未验证，请点「验证」或等自动验证通过`);
     }
     if (link.linkText.length > limits.sitelinkText) {
       errors.push(`站内链接 ${index + 1} 文案超过 ${limits.sitelinkText} 个字符`);
@@ -523,28 +524,21 @@ export function validateDraft(draft: AdDraft): string[] {
   ) {
     errors.push('站内链接至少需要一条指向商家官网（登记网址或同站首页）');
   }
-  if (draft.callouts.length > limits.calloutCount.max) {
-    errors.push(`宣传信息最多 ${limits.calloutCount.max} 条`);
-  }
+  // 宣传信息 / 结构化摘要：提交不卡条数；有内容才校字数与风险词
   draft.callouts.forEach((text, index) => {
     if (text.length > limits.callout) errors.push(`宣传信息 ${index + 1} 超过 ${limits.callout} 个字符`);
-    // 宣传信息 / 描述均可写折扣、物流等促销语；仍拦免费体验与风险词
     errors.push(...policyHits(text, `宣传信息 ${index + 1}`, { allowPromo: true }));
   });
   const snippets = draft.structuredSnippets ?? [];
-  if (snippets.length && snippets.length !== limits.structuredCategories) {
-    errors.push(`结构化摘要需要正好 ${limits.structuredCategories} 类`);
-  }
   snippets.forEach((snippet, index) => {
+    const values = (snippet.values ?? []).map((item) => item.trim()).filter(Boolean);
+    if (!values.length && !String(snippet.header ?? '').trim()) return;
     if (!normalizeStructuredSnippetHeader(snippet.header)) {
       errors.push(`结构化摘要 ${index + 1} 类别不在允许列表中`);
     }
-    if (snippet.values.length < limits.structuredValuesMin) {
-      errors.push(`结构化摘要 ${index + 1} 至少 ${limits.structuredValuesMin} 个值`);
-    }
-    snippet.values.forEach((value, valueIndex) => {
-      if (!value.trim() || value.length > limits.structuredValue) {
-        errors.push(`结构化摘要 ${index + 1} 第 ${valueIndex + 1} 个值需在 1 到 ${limits.structuredValue} 个字符`);
+    values.forEach((value, valueIndex) => {
+      if (value.length > limits.structuredValue) {
+        errors.push(`结构化摘要 ${index + 1} 第 ${valueIndex + 1} 个值超过 ${limits.structuredValue} 个字符`);
       }
     });
   });

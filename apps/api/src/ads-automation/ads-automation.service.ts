@@ -578,6 +578,23 @@ export class AdsAutomationService implements OnModuleInit {
   }
 
   /**
+   * 生成后自动探测站内链接；打不开的保持未验证，仍可手动再验。
+   */
+  private async autoVerifyDraftSitelinks_(draft: AdDraft): Promise<AdDraft> {
+    if (!draft.sitelinks.length) return draft;
+    const results = await Promise.all(
+      draft.sitelinks.map((link) => probeLandingPageUrl(link.finalUrl)),
+    );
+    return {
+      ...draft,
+      sitelinks: draft.sitelinks.map((link, index) => ({
+        ...link,
+        verified: results[index]?.ok === true,
+      })),
+    };
+  }
+
+  /**
    * 代理商家图，供预览页 canvas 裁切正方形（避免跨域污染）。
    */
   async proxyArticleImage(imageUrl: string) {
@@ -2074,7 +2091,18 @@ export class AdsAutomationService implements OnModuleInit {
           logoUrls: previousDraft.logoUrls?.length ? previousDraft.logoUrls : draft.logoUrls,
         };
       }
+      if (draft.sitelinks.length) {
+        await this.prisma.adJob.update({
+          where: { id: jobId },
+          data: { progressMessage: '正在自动验证站内链接落地页…', progress: 75 },
+        });
+        draft = await this.autoVerifyDraftSitelinks_(draft);
+      }
       if (useModel) await this.personas.markUsed(job.ownerUserId);
+      const verifiedCount = draft.sitelinks.filter((item) => item.verified).length;
+      const sitelinkNote = draft.sitelinks.length
+        ? `（站内链接已自动验证 ${verifiedCount}/${draft.sitelinks.length}）`
+        : '';
       await this.prisma.adJob.update({
         where: { id: jobId },
         data: {
@@ -2082,8 +2110,8 @@ export class AdsAutomationService implements OnModuleInit {
           step: 'READY_FOR_REVIEW',
           progress: 80,
           progressMessage: force
-            ? (useModel ? '已重新生成文案，请核对' : '已重新生成示例文案，请核对')
-            : (useModel ? '已按投放国家生成文案' : '最终预览'),
+            ? (useModel ? `已重新生成文案，请核对${sitelinkNote}` : `已重新生成示例文案，请核对${sitelinkNote}`)
+            : (useModel ? `已按投放国家生成文案${sitelinkNote}` : `最终预览${sitelinkNote}`),
           languageCode: language,
           errorMessage: null,
           draft: draft as unknown as Prisma.InputJsonValue,

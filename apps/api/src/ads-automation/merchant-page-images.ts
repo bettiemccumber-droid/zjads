@@ -219,12 +219,49 @@ function safePathname(url: string): string {
  * 打开商家首页，抽出同站内链（带锚文本）。抓取失败时返回空列表，不阻断生成。
  */
 export async function crawlMerchantNavLinks(pageUrl: string): Promise<MerchantNavLink[]> {
+  const { pageLinks } = await crawlMerchantAdContext(pageUrl);
+  return pageLinks;
+}
+
+/**
+ * 一次抓取：站内链接 + 页面文本线索（供节日证据检测）。
+ * siteScan=failed 只表示抓取失败，不能据此断定商家未做活动。
+ */
+export async function crawlMerchantAdContext(pageUrl: string): Promise<{
+  pageLinks: MerchantNavLink[];
+  pageTextHints: string[];
+  siteScan: 'ok' | 'failed';
+}> {
   try {
     const { html, finalUrl } = await fetchMerchantHtml(pageUrl);
-    return extractMerchantNavLinks(html, finalUrl);
+    const pageLinks = extractMerchantNavLinks(html, finalUrl);
+    const pageTextHints = extractPageTextHints_(html, pageLinks);
+    return { pageLinks, pageTextHints, siteScan: 'ok' };
   } catch {
-    return [];
+    return { pageLinks: [], pageTextHints: [], siteScan: 'failed' };
   }
+}
+
+function extractPageTextHints_(html: string, pageLinks: MerchantNavLink[]): string[] {
+  const titleMatch = html.match(/<title[^>]*>([\s\S]*?)<\/title>/i);
+  const title = titleMatch ? decodeHtml(stripTags(titleMatch[1])).trim() : '';
+  const metaBits: string[] = [];
+  for (const tag of tags(html, 'meta')) {
+    const name = `${attr(tag, 'name')} ${attr(tag, 'property')}`.toLowerCase();
+    if (!/(description|og:title|og:description|twitter:title|twitter:description|keywords)/i.test(name)) continue;
+    const content = decodeHtml(attr(tag, 'content')).trim();
+    if (content) metaBits.push(content);
+  }
+  const bodyText = decodeHtml(stripTags(html.replace(/<script[\s\S]*?<\/script>/gi, ' ').replace(/<style[\s\S]*?<\/style>/gi, ' ')))
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 5000);
+  return [
+    title,
+    ...metaBits.slice(0, 8),
+    bodyText,
+    ...pageLinks.map((item) => `${item.label} ${safePathname(item.url)}`),
+  ].filter(Boolean);
 }
 
 /**

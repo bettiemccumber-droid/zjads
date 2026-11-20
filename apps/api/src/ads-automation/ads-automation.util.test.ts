@@ -7,6 +7,7 @@ import {
   buildSampleDraft,
   buildTrackUrl,
   isCustomerEligible,
+  isMerchantHomepageUrl,
   softenExcessiveUppercase,
   usdToMicros,
   validateDraft,
@@ -18,8 +19,12 @@ const draft = buildSampleDraft({
   countryCode: 'US',
   languageCode: 'en',
 });
+const withVerifiedSitelinks = <T extends { sitelinks: Array<{ verified: boolean }> }>(value: T): T => ({
+  ...value,
+  sitelinks: value.sitelinks.map((link) => ({ ...link, verified: true })),
+});
 
-assert.deepStrictEqual(validateDraft(draft), []);
+assert.deepStrictEqual(validateDraft(withVerifiedSitelinks(draft)), []);
 assert.strictEqual(usdToMicros('3.00'), '3000000');
 assert.strictEqual(usdToMicros('0.50'), '500000');
 assert.strictEqual(
@@ -62,18 +67,32 @@ assert.strictEqual(
   false,
 );
 
-const tooLong = { ...draft, headlines: ['x'.repeat(31), 'ab', 'cd'] };
+const tooLong = withVerifiedSitelinks({ ...draft, headlines: ['x'.repeat(31), 'ab', 'cd'] });
 assert.ok(validateDraft(tooLong).length > 0);
 
 assert.strictEqual(softenExcessiveUppercase('SHOPNOW Today'), 'Shopnow Today');
 assert.strictEqual(softenExcessiveUppercase('BEST DEALS'), 'BEST Deals');
 assert.strictEqual(softenExcessiveUppercase('FREE'), 'FREE');
-const allCaps = { ...draft, headlines: ['SHOPNOW Official', 'Shop Brand', 'Visit Store'] };
+const allCaps = withVerifiedSitelinks({ ...draft, headlines: ['SHOPNOW Official', 'Shop Brand', 'Visit Store'] });
 assert.ok(validateDraft(allCaps).some((msg) => /连续大写/.test(msg)));
 assert.deepStrictEqual(
-  validateDraft({ ...draft, headlines: ['FREE Shipping', 'Shop Brand', 'Visit Store'] }),
+  validateDraft(withVerifiedSitelinks({ ...draft, headlines: ['FREE Shipping', 'Shop Brand', 'Visit Store'] })),
   [],
 );
+
+assert.ok(isMerchantHomepageUrl('https://www.vietnamairlines.com/', 'https://www.vietnamairlines.com/vn/vi/home'));
+assert.ok(isMerchantHomepageUrl('https://www.vietnamairlines.com/vn/vi/home', 'https://www.vietnamairlines.com/vn/vi/home'));
+assert.ok(!isMerchantHomepageUrl('https://www.vietnamairlines.com/vn/en/book', 'https://www.vietnamairlines.com/vn/vi/home'));
+
+const missingHomepage = withVerifiedSitelinks({
+  ...draft,
+  sitelinks: draft.sitelinks.map((link, index) => ({
+    ...link,
+    finalUrl: `https://www.agjeansoutlet.com/shop-${index + 1}`,
+    verified: true,
+  })),
+});
+assert.ok(validateDraft(missingHomepage).some((msg) => /官网/.test(msg)));
 
 const plainArticle = {
   title: 'Koia drinks',

@@ -514,7 +514,15 @@ export function validateDraft(draft: AdDraft): string[] {
     }
     errors.push(...policyHits(`${link.linkText} ${link.description1} ${link.description2}`, `站内链接 ${index + 1}`, { allowPromo: true }));
   });
-  // 有官网更好，没有不拦发布（商家登记网址未必是站点根路径）
+  // 至少一条官网：登记 merchantUrl 同页，或同站根路径 /
+  if (
+    draft.merchantUrl
+    && /^https?:\/\//i.test(draft.merchantUrl)
+    && draft.sitelinks.length > 0
+    && !draft.sitelinks.some((link) => isMerchantHomepageUrl(link.finalUrl, draft.merchantUrl))
+  ) {
+    errors.push('站内链接至少需要一条指向商家官网（登记网址或同站首页）');
+  }
   if (draft.callouts.length > limits.calloutCount.max) {
     errors.push(`宣传信息最多 ${limits.calloutCount.max} 条`);
   }
@@ -1308,7 +1316,7 @@ export function sitelinkPageScore(url: string, label = ''): number {
 
 /**
  * 给站内链接分配互不相同的同站落地页。
- * 优先把商家登记网址放第 1 条（有则更好）；不强行改成站点根路径。
+ * 第 1 条固定为商家登记网址（官网）；其余用同站内页，不强行改成站点根路径。
  */
 export function assignUniqueSitelinkUrls(
   sitelinks: AdSitelink[],

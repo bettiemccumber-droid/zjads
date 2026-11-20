@@ -9,17 +9,49 @@ import {
   sitelinkPageScore,
   validateDraft,
 } from './ads-automation.util';
-import { applyAdCopy, audienceLanguage, nearbySeasonCopyHint, parseModelJson } from './modelgo-copy';
+import {
+  applyAdCopy,
+  audienceLanguage,
+  detectMerchantSeasonEvidence,
+  nearbySeasonCopyHint,
+  parseModelJson,
+} from './modelgo-copy';
 import { buildCreateCampaignPayload } from './mutate-payload';
 
-const blackFridayHint = nearbySeasonCopyHint(new Date('2026-11-25T12:00:00Z'), 'US');
-assert.ok(/ACTIVE SEASON/i.test(blackFridayHint));
-assert.ok(/Black Friday/i.test(blackFridayHint));
-assert.ok(/MUST weave/i.test(blackFridayHint));
+const blackFridayUnknown = nearbySeasonCopyHint(new Date('2026-11-25T12:00:00Z'), 'US');
+assert.ok(/Black Friday/i.test(blackFridayUnknown));
+assert.ok(/Unconfirmed ≠ not participating/i.test(blackFridayUnknown));
+assert.ok(/Do NOT name/i.test(blackFridayUnknown));
+assert.ok(!/CONFIRMED MERCHANT SEASON/i.test(blackFridayUnknown));
+assert.ok(!/has NO confirmed participation|merchant is not participating/i.test(blackFridayUnknown));
+
+const blackFridayCrawlFailed = nearbySeasonCopyHint(new Date('2026-11-25T12:00:00Z'), 'US', {
+  siteScan: 'failed',
+});
+assert.ok(/could not be crawled/i.test(blackFridayCrawlFailed));
+assert.ok(/NOT proof the merchant is skipping/i.test(blackFridayCrawlFailed));
+assert.ok(/Do NOT name/i.test(blackFridayCrawlFailed));
+
+const blackFridayScannedNoHit = nearbySeasonCopyHint(new Date('2026-11-25T12:00:00Z'), 'US', {
+  siteScan: 'ok',
+  merchantEvidence: [],
+});
+assert.ok(/insufficient evidence/i.test(blackFridayScannedNoHit));
+assert.ok(/NOT a conclusion that the merchant is not participating/i.test(blackFridayScannedNoHit));
+
+const blackFridayConfirmed = nearbySeasonCopyHint(new Date('2026-11-25T12:00:00Z'), 'US', {
+  merchantEvidence: ['Shop our Black Friday deals'],
+  siteScan: 'ok',
+});
+assert.ok(/CONFIRMED MERCHANT SEASON/i.test(blackFridayConfirmed));
+assert.ok(/MUST weave/i.test(blackFridayConfirmed));
 
 const quietHint = nearbySeasonCopyHint(new Date('2026-04-10T12:00:00Z'), 'US');
-assert.ok(!/ACTIVE SEASON/i.test(quietHint));
+assert.ok(!/CONFIRMED MERCHANT SEASON/i.test(quietHint));
 assert.ok(/evergreen/i.test(quietHint));
+
+assert.ok(detectMerchantSeasonEvidence(['Black Friday Sale', '/collections/bfcm']).some((item) => /Black Friday/i.test(item)));
+assert.deepStrictEqual(detectMerchantSeasonEvidence(['Shop shoes online']), []);
 
 assert.strictEqual(audienceLanguage('MX', 'es'), 'Spanish as used in Mexico');
 assert.strictEqual(audienceLanguage('ES', 'es'), 'Spanish as used in Spain');

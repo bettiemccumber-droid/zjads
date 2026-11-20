@@ -32,7 +32,7 @@ import {
   validateAdImages,
   validateDraft,
 } from './ads-automation.util';
-import { crawlMerchantImages, crawlMerchantNavLinks, probeLandingPageUrl } from './merchant-page-images';
+import { crawlMerchantAdContext, crawlMerchantImages, probeLandingPageUrl } from './merchant-page-images';
 import { AiPersonaService } from './ai-persona.service';
 import { resolveAdLanguage } from './market-language';
 import { AdCopyFieldKind, rewriteAdField, writeAdCopy, writeArticle } from './modelgo-copy';
@@ -2017,12 +2017,22 @@ export class AdsAutomationService implements OnModuleInit {
       }
       const language = resolveAdLanguage(input.countryCode || job.targetCountry || 'US', input.languageCode);
       const personaPrompt = useModel ? await this.personas.activePrompt(job.ownerUserId, 'ads') : '';
-      const pageLinks = useModel ? await crawlMerchantNavLinks(input.merchantUrl) : [];
+      const siteContext = useModel
+        ? await crawlMerchantAdContext(input.merchantUrl)
+        : { pageLinks: [] as Array<{ url: string; label: string }>, pageTextHints: [] as string[], siteScan: 'unknown' as const };
+      const pageLinks = siteContext.pageLinks;
       if (useModel && pageLinks.length) {
         await this.prisma.adJob.update({
           where: { id: jobId },
           data: {
             progressMessage: `已找到 ${pageLinks.length} 个站内页面，正在${force ? '重新' : ''}生成文案`,
+          },
+        });
+      } else if (useModel && siteContext.siteScan === 'failed') {
+        await this.prisma.adJob.update({
+          where: { id: jobId },
+          data: {
+            progressMessage: `站点暂未抓取成功（不代表商家未做活动），正在${force ? '重新' : ''}生成文案`,
           },
         });
       }
@@ -2040,6 +2050,8 @@ export class AdsAutomationService implements OnModuleInit {
             cpcBidCeilingUsd,
             personaPrompt,
             pageLinks,
+            pageTextHints: siteContext.pageTextHints,
+            siteScan: siteContext.siteScan,
           })
         : buildSampleDraft({
             merchantName: input.merchantName,

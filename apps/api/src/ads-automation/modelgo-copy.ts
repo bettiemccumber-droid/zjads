@@ -80,12 +80,21 @@ export async function writeAdCopy(input: {
   cpcBidCeilingUsd?: string;
   personaPrompt?: string;
   pageLinks?: Array<{ url: string; label?: string }>;
+  /** 商家页面/导航里出现的节日线索；无证据时不得点名节日（≠断定未参与）。 */
+  pageTextHints?: string[];
+  merchantSeasonEvidence?: string[];
+  /** 站点抓取结果：failed 只表示爬不到，不能当成商家没做活动。 */
+  siteScan?: 'ok' | 'failed' | 'unknown';
 }): Promise<AdDraft> {
   const pageLinks = input.pageLinks ?? [];
   const base = buildSampleDraft(input);
   const language = audienceLanguage(input.countryCode, input.languageCode);
   const shape = adCopyJsonShape(input.merchantUrl, pageLinks);
-  const seasonHint = nearbySeasonCopyHint(new Date(), input.countryCode);
+  const merchantEvidence = resolveMerchantSeasonEvidence_(input);
+  const seasonHint = nearbySeasonCopyHint(new Date(), input.countryCode, {
+    merchantEvidence,
+    siteScan: input.siteScan ?? (input.pageTextHints?.length ? 'ok' : 'unknown'),
+  });
   const raw = await askJson(
     `Write Google search ads for ${input.merchantName}. Audience language: ${language}. Country: ${input.countryCode}. Use real brand tone; strong click and purchase intent.
 ${seasonHint}`,
@@ -102,13 +111,28 @@ ${seasonHint}`,
 ${seasonHint}`,
     `Previous draft failed validation: ${errors.slice(0, 3).join('; ')}.
 ${shape}
-Fix every limit and policy issue. Prefer shorter lines. Keep seasonal/holiday lines when the season hint requires them. Callouts may mention discounts/shipping; never use placeholders like $X or [link].`,
+Fix every limit and policy issue. Prefer shorter lines. Keep seasonal/holiday lines only when the season hint confirms merchant participation. Callouts may mention discounts/shipping; never use placeholders like $X or [link].`,
     2200,
     input.personaPrompt,
   );
   draft = sanitizeDraftForReview(applyAdCopy(base, retryRaw, pageLinks), base);
   // 仍有问题也不抛错：进入人工预览，不合规字段已尽量换成安全备选。
   return draft;
+}
+
+function resolveMerchantSeasonEvidence_(input: {
+  pageLinks?: Array<{ url: string; label?: string }>;
+  pageTextHints?: string[];
+  merchantSeasonEvidence?: string[];
+}): string[] {
+  if (input.merchantSeasonEvidence?.length) {
+    return uniqueNonEmpty(input.merchantSeasonEvidence.map((item) => item.trim()));
+  }
+  const texts = [
+    ...(input.pageTextHints ?? []),
+    ...(input.pageLinks ?? []).map((item) => `${item.label ?? ''} ${item.url}`),
+  ];
+  return detectMerchantSeasonEvidence(texts);
 }
 
 function adCopyJsonShape(merchantUrl: string, pageLinks: Array<{ url: string; label?: string }> = []): string {
@@ -126,7 +150,7 @@ Hard character limits (spaces/punctuation count):
 - callout <= ${AD_COPY_LIMITS.callout}
 - sitelink linkText <= ${AD_COPY_LIMITS.sitelinkText}; every sitelink must fill linkText, description1, description2, and finalUrl
 - each sitelink description <= ${AD_COPY_LIMITS.sitelinkDescription}, both filled (never leave description blank)
-- Prefer one sitelink using the merchant URL as finalUrl when available; if not available, use distinct on-site pages only (homepage is preferred, not required).
+- Exactly one sitelink MUST use an official-site landing page as finalUrl: either ${merchantUrl} or the same-host site root (e.g. https://example.com/). Remaining sitelinks use distinct on-site pages.
 - each structured snippet value <= ${AD_COPY_LIMITS.structuredValue}
 - promotionTarget <= 20
 
@@ -134,7 +158,7 @@ Content rules:
 - Exactly ${AD_COPY_LIMITS.headlineCount.prefer} unique headlines, ${AD_COPY_LIMITS.descriptionCount.prefer} descriptions, ${AD_COPY_LIMITS.calloutCount.prefer} callouts, exactly ${AD_COPY_LIMITS.sitelinkCount.prefer} fully filled sitelinks.
 - Strong purchase verbs; low repetition; language must match the audience.
 - Sitelink copy must feel specific to THIS merchant and page — not generic templates. Vary linkText / description1 / description2 across the ${AD_COPY_LIMITS.sitelinkCount.prefer} rows; mention brand, product type, category, season, or page purpose. Avoid repeating the same stock phrases (Official website, Shop now, Visit our site, Explore online, New arrivals, Best sellers, Collections, Sale deals, Browse online, See more details). Each pair of descriptions should add a concrete reason to click.
-- Seasonal / holiday shopping is a high priority: when the task message names a nearby holiday or shopping season, you MUST include it — aim for at least 4 headlines, 1–2 descriptions, and 1–2 callouts that clearly reference that season (name the holiday or shopping event in the audience language). Also include logistics / soft promo lines. If no specific season is named, still prefer evergreen sale/deal/logistics angles where natural. Prefer real merchant offers; if unknown, use soft seasonal wording without inventing fake coupon codes or fake % off.
+- Seasonal / holiday naming is compliance-sensitive: ONLY name a holiday or shopping event when the task message marks it as CONFIRMED for THIS merchant. Missing crawl evidence means insufficient proof — never conclude the merchant is not running the season. When unconfirmed, do NOT name Black Friday, Christmas, Singles Day, Valentine's, or other holidays (avoid false advertising); use evergreen sale/deal/logistics/category angles. Never invent fake coupon codes or fake % off.
 - Forbidden: free trial/gift wording, placeholders like $X or [link], Google risk words (gun/firearm/tactical/combat/military/prescription/Rx/wine/vodka/etc), medical cure claims.
 - Never use more than 4 consecutive uppercase Latin letters (SHOPNOW is bad; Shop Now / FREE is ok). Avoid ALL-CAPS words longer than 4 letters.
 - Callouts and descriptions MAY mention discounts, free shipping, coupons, or sale language when plausible. Concrete % off / coupon codes still prefer promotionAsset when known.
@@ -143,58 +167,128 @@ Content rules:
 - structuredSnippets: pick exactly 2 headers from [${headers}] that best fit this merchant (e.g. travel: Types + Destinations; multi-brand: Types + Brands; own-brand: Types + Styles, avoid Brands). Use these exact English strings. Each needs at least ${AD_COPY_LIMITS.structuredValuesMin} short values.
 - Always include useful negativeKeywords (careers, login, free pdf, etc.).
 - Ad final URL (RSA) stays ${merchantUrl}. No URLs inside headline/description/callout text.
-- Each sitelink MUST include its own finalUrl, linkText, description1, and description2 (all required). finalUrl values must be distinct https pages on the same merchant host. Prefer using ${merchantUrl} for one sitelink when it works as a landing page; do not invent a root homepage if the merchant only has deeper paths. Prefer purchase pages: shop, collections, products, best sellers, new arrivals, sale/deals. Avoid Contact Us / About / Support / Careers / Login unless no purchase pages exist. When a known page label exists, rewrite it into natural sitelink copy for the audience language instead of pasting the raw nav label.
+- Each sitelink MUST include its own finalUrl, linkText, description1, and description2 (all required). finalUrl values must be distinct https pages on the same merchant host. MUST include one official-site sitelink using ${merchantUrl} (or same-host root /). Prefer purchase pages for the rest: shop, collections, products, best sellers, new arrivals, sale/deals. Avoid Contact Us / About / Support / Careers / Login unless no purchase pages exist. When a known page label exists, rewrite it into natural sitelink copy for the audience language instead of pasting the raw nav label.
 ${knownPages ? `Known on-site pages to prefer for sitelink finalUrl (purchase pages first):\n${knownPages}` : ''}`;
 }
 
+/** 日历临近节日标签（与商家证据做交集后才允许点名）。 */
+const NEARBY_SEASON_RULES: Array<{
+  label: string;
+  match: RegExp;
+  when: (month: number, day: number, asia: boolean) => boolean;
+}> = [
+  {
+    label: 'Lunar New Year / Spring Festival shopping',
+    match: /lunar\s*new|spring\s*festival|chinese\s*new|春节|过年|农历新年/i,
+    when: (month, day, asia) => asia && ((month === 1 && day <= 31) || (month === 2 && day <= 20)),
+  },
+  {
+    label: 'Halloween / early holiday shopping',
+    match: /halloween|万圣节/i,
+    when: (month, day) => (month === 10 && day >= 20) || (month === 11 && day <= 5),
+  },
+  {
+    label: 'Black Friday / Thanksgiving / Cyber week',
+    match: /black\s*friday|thanksgiving|cyber\s*(monday|week)|黑五|黑色星期五|感恩节|网络星期一/i,
+    when: (month, day) => month === 11 && day >= 15 && day <= 30,
+  },
+  {
+    label: 'Christmas / December holiday / year-end shopping',
+    match: /christmas|xmas|holiday\s*sale|year[\s-]*end|圣诞|年末|年终/i,
+    when: (month) => month === 12,
+  },
+  {
+    label: 'New Year shopping',
+    match: /new\s*year|元旦|新年/i,
+    when: (month, day, asia) => month === 1 && day <= 15 && !asia,
+  },
+  {
+    label: "Valentine's Day",
+    match: /valentine|情人节/i,
+    when: (month, day) => month === 2 && day <= 20,
+  },
+  {
+    label: "Mother's Day",
+    match: /mother'?s\s*day|母亲节/i,
+    when: (month, day) => month === 5 && day <= 15,
+  },
+  {
+    label: "Father's Day / mid-year shopping",
+    match: /father'?s\s*day|父亲节/i,
+    when: (month, day) => month === 6 && day <= 20,
+  },
+  {
+    label: 'Back-to-school',
+    match: /back[\s-]*to[\s-]*school|返校|开学/i,
+    when: (month, day) => month === 8 || (month === 9 && day <= 10),
+  },
+  {
+    label: 'Singles Day (11.11) shopping',
+    match: /singles?\s*day|11\.?\s*11|双十一|双11/i,
+    when: (month, day, asia) => asia && month === 11 && day <= 15,
+  },
+];
+
 /**
- * 生成时提示临近节日/购物季。有节日时要求尽量写进标题/描述/宣传信息，不编造假优惠码。
+ * 从商家页面/导航文本里抽出节日线索（用于和日历窗口求交）。
  */
-export function nearbySeasonCopyHint(now = new Date(), countryCode = 'US'): string {
+export function detectMerchantSeasonEvidence(texts: string[]): string[] {
+  const blob = texts.filter(Boolean).join('\n');
+  if (!blob.trim()) return [];
+  const found: string[] = [];
+  for (const rule of NEARBY_SEASON_RULES) {
+    if (rule.match.test(blob)) found.push(rule.label);
+  }
+  return found;
+}
+
+/**
+ * 生成时提示临近节日/购物季。
+ * 有页面证据才点名节日；抓取失败/无线索 = 证据不足，不等于商家未参与。
+ */
+export function nearbySeasonCopyHint(
+  now = new Date(),
+  countryCode = 'US',
+  options?: { merchantEvidence?: string[]; siteScan?: 'ok' | 'failed' | 'unknown' },
+): string {
   const month = now.getUTCMonth() + 1;
   const day = now.getUTCDate();
   const country = countryCode.trim().toUpperCase();
   const asia = ['CN', 'HK', 'TW', 'SG', 'MY', 'JP', 'KR'].includes(country);
   const hints: string[] = [`Today (UTC) is ${now.toISOString().slice(0, 10)}.`];
-  let seasonNamed = false;
-  const requireSeason = (label: string) => {
-    seasonNamed = true;
-    hints.push(
-      `ACTIVE SEASON: ${label}. You MUST weave this into the ad copy — at least 4 headlines, 1–2 descriptions, and 1–2 callouts that clearly reference it in the audience language. Soft gift / deal / shopping-event wording is fine; do not invent fake coupon codes or fake % off.`,
-    );
-  };
+  const nearby = NEARBY_SEASON_RULES
+    .filter((rule) => rule.when(month, day, asia))
+    .map((rule) => rule.label);
+  const evidenceBlob = (options?.merchantEvidence ?? []).join('\n');
+  const siteScan = options?.siteScan ?? (evidenceBlob.trim() ? 'ok' : 'unknown');
+  const confirmed = nearby.filter((label) => {
+    const rule = NEARBY_SEASON_RULES.find((item) => item.label === label);
+    if (!rule) return false;
+    if (!evidenceBlob.trim()) return false;
+    return rule.match.test(evidenceBlob) || evidenceBlob.toLowerCase().includes(label.toLowerCase());
+  });
 
-  if (asia && ((month === 1 && day <= 31) || (month === 2 && day <= 20))) {
-    requireSeason('Lunar New Year / Spring Festival shopping');
-  }
-  if ((month === 10 && day >= 20) || (month === 11 && day <= 5)) {
-    requireSeason('Halloween / early holiday shopping');
-  }
-  if (month === 11 && day >= 15 && day <= 30) {
-    requireSeason('Black Friday / Thanksgiving / Cyber week');
-  }
-  if (month === 12) {
-    requireSeason('Christmas / December holiday / year-end shopping');
-  }
-  if (month === 1 && day <= 15 && !asia) {
-    requireSeason('New Year shopping');
-  }
-  if (month === 2 && day <= 20) {
-    requireSeason("Valentine's Day");
-  }
-  if (month === 5 && day <= 15) {
-    requireSeason("Mother's Day");
-  }
-  if (month === 6 && day <= 20) {
-    requireSeason("Father's Day / mid-year shopping");
-  }
-  if (month === 8 || (month === 9 && day <= 10)) {
-    requireSeason('Back-to-school');
-  }
-  if (asia && month === 11 && day <= 15) {
-    requireSeason('Singles Day (11.11) shopping');
-  }
-  if (!seasonNamed) {
+  if (confirmed.length) {
+    for (const label of confirmed) {
+      hints.push(
+        `CONFIRMED MERCHANT SEASON: ${label}. Site evidence shows this merchant is running it. You MUST weave this into the ad copy — at least 4 headlines, 1–2 descriptions, and 1–2 callouts that clearly reference it in the audience language. Soft gift / deal / shopping-event wording is fine; do not invent fake coupon codes or fake % off.`,
+      );
+    }
+  } else if (nearby.length) {
+    if (siteScan === 'failed') {
+      hints.push(
+        `Calendar-nearby seasons (${nearby.join('; ')}) exist, but the merchant site could not be crawled. Crawl failure is NOT proof the merchant is skipping these events — do not claim they are not participating. Still do NOT name these holidays in ads without confirmation (avoid false advertising); use evergreen deal / logistics / category angles. Operators can add holiday copy manually after review.`,
+      );
+    } else if (siteScan === 'ok') {
+      hints.push(
+        `Calendar-nearby seasons (${nearby.join('; ')}) exist. The page was scanned but no matching holiday keywords were found — that is insufficient evidence to name the holiday, NOT a conclusion that the merchant is not participating. Do NOT name these holidays in headlines, descriptions, or callouts without confirmation; use evergreen deal / logistics / category angles.`,
+      );
+    } else {
+      hints.push(
+        `Calendar-nearby seasons (${nearby.join('; ')}) exist, but merchant participation is unconfirmed (no site evidence available). Unconfirmed ≠ not participating. Do NOT name these holidays without confirmation; use evergreen deal / logistics / category angles.`,
+      );
+    }
+  } else {
     hints.push(
       'No major holiday is immediate; still include a few evergreen deal / logistics / seasonal-pick headlines when natural for this merchant.',
     );
@@ -454,9 +548,15 @@ export async function rewriteAdField(input: {
   siblings: string[];
   currentText?: string;
   currentSitelink?: Pick<AdSitelink, 'linkText' | 'description1' | 'description2' | 'finalUrl'>;
+  pageTextHints?: string[];
+  merchantSeasonEvidence?: string[];
+  siteScan?: 'ok' | 'failed' | 'unknown';
 }): Promise<{ text: string; zh?: string } | { sitelink: Pick<AdSitelink, 'linkText' | 'description1' | 'description2'>; zh?: string }> {
   const language = audienceLanguage(input.countryCode, input.languageCode);
-  const seasonHint = nearbySeasonCopyHint(new Date(), input.countryCode);
+  const seasonHint = nearbySeasonCopyHint(new Date(), input.countryCode, {
+    merchantEvidence: resolveMerchantSeasonEvidence_(input),
+    siteScan: input.siteScan ?? (input.pageTextHints?.length ? 'ok' : 'unknown'),
+  });
   const brand = input.merchantName.trim() || 'the brand';
   const avoid = input.siblings
     .map((item) => item.trim())

@@ -94,10 +94,11 @@ ${seasonHint}`,
   if (!errors.length) return draft;
 
   const retryRaw = await askJson(
-    `Write Google search ads for ${input.merchantName}. Audience language: ${language}. Country: ${input.countryCode}.`,
+    `Write Google search ads for ${input.merchantName}. Audience language: ${language}. Country: ${input.countryCode}.
+${seasonHint}`,
     `Previous draft failed validation: ${errors.slice(0, 3).join('; ')}.
 ${shape}
-Fix every limit and policy issue. Prefer shorter lines. Callouts may mention discounts/shipping; never use placeholders like $X or [link].`,
+Fix every limit and policy issue. Prefer shorter lines. Keep seasonal/holiday lines when the season hint requires them. Callouts may mention discounts/shipping; never use placeholders like $X or [link].`,
     2200,
     input.personaPrompt,
   );
@@ -128,7 +129,7 @@ Hard character limits (spaces/punctuation count):
 Content rules:
 - Exactly ${AD_COPY_LIMITS.headlineCount.prefer} unique headlines, ${AD_COPY_LIMITS.descriptionCount.prefer} descriptions, ${AD_COPY_LIMITS.calloutCount.prefer} callouts, exactly ${AD_COPY_LIMITS.sitelinkCount.prefer} fully filled sitelinks.
 - Strong purchase verbs; low repetition; language must match the audience.
-- Include several headlines/descriptions about discounts, logistics, and nearby real holidays/shopping seasons when relevant (Black Friday, Cyber Monday, Christmas, New Year, Singles Day, Valentine, Mother's Day, back-to-school, etc.). Prefer real merchant offers; if unknown, use soft seasonal or logistics lines without inventing fake coupon codes or fake % off.
+- Seasonal / holiday shopping is a high priority: when the task message names a nearby holiday or shopping season, you MUST include it — aim for at least 4 headlines, 1–2 descriptions, and 1–2 callouts that clearly reference that season (name the holiday or shopping event in the audience language). Also include logistics / soft promo lines. If no specific season is named, still prefer evergreen sale/deal/logistics angles where natural. Prefer real merchant offers; if unknown, use soft seasonal wording without inventing fake coupon codes or fake % off.
 - Forbidden: free trial/gift wording, placeholders like $X or [link], Google risk words (gun/firearm/tactical/combat/military/prescription/Rx/wine/vodka/etc), medical cure claims.
 - Never use more than 4 consecutive uppercase Latin letters (SHOPNOW is bad; Shop Now / FREE is ok). Avoid ALL-CAPS words longer than 4 letters.
 - Callouts and descriptions MAY mention discounts, free shipping, coupons, or sale language when plausible. Concrete % off / coupon codes still prefer promotionAsset when known.
@@ -142,37 +143,58 @@ ${knownPages ? `Known on-site pages to prefer for sitelink finalUrl (purchase pa
 }
 
 /**
- * 生成时提示临近节日/购物季，避免编造虚假促销码。
+ * 生成时提示临近节日/购物季。有节日时要求尽量写进标题/描述/宣传信息，不编造假优惠码。
  */
 export function nearbySeasonCopyHint(now = new Date(), countryCode = 'US'): string {
   const month = now.getUTCMonth() + 1;
   const day = now.getUTCDate();
+  const country = countryCode.trim().toUpperCase();
+  const asia = ['CN', 'HK', 'TW', 'SG', 'MY', 'JP', 'KR'].includes(country);
   const hints: string[] = [`Today (UTC) is ${now.toISOString().slice(0, 10)}.`];
+  let seasonNamed = false;
+  const requireSeason = (label: string) => {
+    seasonNamed = true;
+    hints.push(
+      `ACTIVE SEASON: ${label}. You MUST weave this into the ad copy — at least 4 headlines, 1–2 descriptions, and 1–2 callouts that clearly reference it in the audience language. Soft gift / deal / shopping-event wording is fine; do not invent fake coupon codes or fake % off.`,
+    );
+  };
+
+  if (asia && ((month === 1 && day <= 31) || (month === 2 && day <= 20))) {
+    requireSeason('Lunar New Year / Spring Festival shopping');
+  }
   if ((month === 10 && day >= 20) || (month === 11 && day <= 5)) {
-    hints.push('Near Halloween / early holiday shopping; soft seasonal lines OK if natural.');
+    requireSeason('Halloween / early holiday shopping');
   }
   if (month === 11 && day >= 15 && day <= 30) {
-    hints.push('Near Black Friday / Thanksgiving / Cyber week — real shopping-season headlines welcome; do not invent fake coupon codes.');
+    requireSeason('Black Friday / Thanksgiving / Cyber week');
   }
   if (month === 12) {
-    hints.push('December holiday / Christmas / year-end — seasonal gift or holiday shopping lines OK when natural.');
+    requireSeason('Christmas / December holiday / year-end shopping');
   }
-  if (month === 1 && day <= 15) {
-    hints.push('Near New Year — new year / fresh start shopping lines OK when natural.');
+  if (month === 1 && day <= 15 && !asia) {
+    requireSeason('New Year shopping');
   }
   if (month === 2 && day <= 20) {
-    hints.push('Near Valentine\'s Day — soft seasonal lines OK when natural for this merchant.');
+    requireSeason("Valentine's Day");
   }
   if (month === 5 && day <= 15) {
-    hints.push('Near Mother\'s Day (many markets) — soft seasonal lines OK when natural.');
+    requireSeason("Mother's Day");
+  }
+  if (month === 6 && day <= 20) {
+    requireSeason("Father's Day / mid-year shopping");
   }
   if (month === 8 || (month === 9 && day <= 10)) {
-    hints.push('Back-to-school season — seasonal lines OK when natural for this merchant.');
+    requireSeason('Back-to-school');
   }
-  if (countryCode === 'CN' || countryCode === 'HK' || countryCode === 'TW' || countryCode === 'SG') {
-    if (month === 11 && day <= 15) hints.push('Near Singles Day (11.11) shopping season for some Asia markets.');
+  if (asia && month === 11 && day <= 15) {
+    requireSeason('Singles Day (11.11) shopping');
   }
-  hints.push('Only mention discounts/promos that are plausible; never invent fake % off or coupon codes.');
+  if (!seasonNamed) {
+    hints.push(
+      'No major holiday is immediate; still include a few evergreen deal / logistics / seasonal-pick headlines when natural for this merchant.',
+    );
+  }
+  hints.push('Never invent fake % off amounts or coupon codes.');
   return hints.join(' ');
 }
 

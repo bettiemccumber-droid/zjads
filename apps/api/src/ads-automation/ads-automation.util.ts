@@ -10,6 +10,7 @@ export const AD_COPY_LIMITS = {
   structuredValue: 20,
   headlineCount: { min: 3, max: 15, prefer: 15 },
   descriptionCount: { min: 2, max: 4, prefer: 4 },
+  /** 生成默认 8 条；人工可加到 max。 */
   calloutCount: { min: 0, max: 20, prefer: 8 },
   /** 生成默认 6 条；提交允许 0～8（全删也可发）。 */
   sitelinkCount: { min: 0, max: 8, prefer: 6 },
@@ -524,7 +525,10 @@ export function validateDraft(draft: AdDraft): string[] {
   ) {
     errors.push('站内链接至少需要一条指向商家官网（登记网址或同站首页）');
   }
-  // 宣传信息 / 结构化摘要：提交不卡条数；有内容才校字数与风险词
+  // 宣传信息最多 8 条；条数可为 0。结构化摘要提交不卡条数。
+  if (draft.callouts.length > limits.calloutCount.max) {
+    errors.push(`宣传信息最多 ${limits.calloutCount.max} 条`);
+  }
   draft.callouts.forEach((text, index) => {
     if (text.length > limits.callout) errors.push(`宣传信息 ${index + 1} 超过 ${limits.callout} 个字符`);
     errors.push(...policyHits(text, `宣传信息 ${index + 1}`, { allowPromo: true }));
@@ -783,7 +787,7 @@ export function sanitizeDraftForReview(draft: AdDraft, fallback: AdDraft): AdDra
     draft.callouts,
     fallback.callouts,
     Math.min(limits.calloutCount.prefer, fallback.callouts.length || limits.calloutCount.prefer),
-    limits.calloutCount.max,
+    limits.calloutCount.prefer,
     'callout',
   ).map((text) => text.slice(0, limits.callout));
 

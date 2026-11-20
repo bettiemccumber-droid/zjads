@@ -376,7 +376,7 @@ export function applyAdCopy(
   const callouts = uniqueNonEmpty([
     ...textList(raw.callouts).map((text) => fitAdText(text, limits.callout)),
     ...base.callouts,
-  ]).slice(0, limits.calloutCount.max);
+  ]).slice(0, limits.calloutCount.prefer);
   const sitelinks = ensureCompleteSitelinks(
     [
       ...sitelinkList(raw.sitelinks),

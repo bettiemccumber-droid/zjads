@@ -1560,7 +1560,7 @@ export default function AdJobReviewPage() {
               </Space.Compact>
             </Card>
 
-            <Card size="small" className="ad-review__card" title={`宣传信息（${draft.callouts.length}/8）`}>
+            <Card size="small" className="ad-review__card" title={`宣传信息（${draft.callouts.length}，默认 8，最多 20）`}>
               <div className="ad-review__hint" style={{ marginBottom: 8 }}>
                 可写折扣、免运费、优惠等促销语；具体百分比优惠码更建议放下方促销栏。
               </div>
@@ -1610,9 +1610,9 @@ export default function AdJobReviewPage() {
                   </div>
                 </div>
               ))}
-              {draft.callouts.length < 8 ? (
+              {draft.callouts.length < 20 ? (
                 <Button type="dashed" block onClick={() => setDraft({ ...draft, callouts: [...draft.callouts, ''] })}>
-                  + 添加宣传信息（最多 10）
+                  + 添加宣传信息（最多 20）
                 </Button>
               ) : null}
             </Card>

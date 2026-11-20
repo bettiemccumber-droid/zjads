@@ -690,11 +690,13 @@ export default function MyMerchantsPage() {
         const msg = (err as { response?: { data?: { message?: string } }; message?: string }).response?.data?.message
           || (err as { message?: string }).message
           || '查找失败';
+        // 失败平台不写入 total:0，避免把其它平台已汇总的总数冲掉；只挂错误提示
+        const prev = byPlatform.get(code);
         byPlatform.set(code, {
-          total: 0,
+          total: prev?.total ?? 0,
           page: 1,
           pageSize: 20,
-          rows: [],
+          rows: prev?.rows ?? [],
           errors: [{ channelAccountId: 0, platformCode: code, message: `${PLATFORM_SHORT[code] || code}: ${msg}` }],
           hint: '',
         });

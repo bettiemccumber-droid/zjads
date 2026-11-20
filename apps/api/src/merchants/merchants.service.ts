@@ -531,8 +531,9 @@ export class MerchantsService {
           account.platform.name,
         );
         const approved = browsed.rows.filter((row) => this.isApprovedMerchant_(row));
+        // 总数用联盟返回的 Joined 全量；不要用本页过滤后的条数，否则会把 1 万+ 压成十几
         return {
-          total: approved.length === browsed.rows.length ? browsed.total : approved.length,
+          total: Math.max(browsed.total || 0, approved.length),
           rows: approved
             .map((row, index) => {
               const mapped = this.toDiscoverRow_(account, row);
@@ -778,13 +779,19 @@ export class MerchantsService {
     page: number,
     pageSize: number,
   ) {
+    // 只用未截断的全量扫描缓存；截断扫描（如前 1000/2000）不能当浏览总数，否则刷新后会少一大截
     const scanned = this.discoverScanCache.get(channelAccountId);
-    if (scanned && Date.now() - scanned.at < 10 * 60 * 1000 && scanned.rows.length >= pageSize) {
+    if (
+      scanned
+      && !scanned.truncated
+      && Date.now() - scanned.at < 10 * 60 * 1000
+      && scanned.rows.length >= pageSize
+    ) {
       const start = (page - 1) * pageSize;
       return {
         rows: scanned.rows.slice(start, start + pageSize),
-        total: scanned.truncated ? Math.max(scanned.rows.length, start + pageSize + 1) : scanned.rows.length,
-        pages: Math.max(1, Math.ceil((scanned.truncated ? scanned.rows.length + 1 : scanned.rows.length) / pageSize)),
+        total: scanned.rows.length,
+        pages: Math.max(1, Math.ceil(scanned.rows.length / pageSize)),
       };
     }
     const pageKey = `${channelAccountId}:${page}:${pageSize}`;

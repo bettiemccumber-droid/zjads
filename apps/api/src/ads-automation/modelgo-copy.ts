@@ -138,7 +138,7 @@ Content rules:
 - Forbidden: free trial/gift wording, placeholders like $X or [link], Google risk words (gun/firearm/tactical/combat/military/prescription/Rx/wine/vodka/etc), medical cure claims.
 - Never use more than 4 consecutive uppercase Latin letters (SHOPNOW is bad; Shop Now / FREE is ok). Avoid ALL-CAPS words longer than 4 letters.
 - Callouts and descriptions MAY mention discounts, free shipping, coupons, or sale language when plausible. Concrete % off / coupon codes still prefer promotionAsset when known.
-- promotionAsset: optional. Set enabled=true only when a concrete discount is known or strongly typical for this merchant; otherwise enabled=false or null. Use percentOff as whole percent (20 means 20%). moneyAmountOff is a decimal string. languageCode should match the ad language. finalUrl defaults to merchant URL if omitted. occasion may be empty or a real holiday occasion when applicable.
+- promotionAsset: optional. Set enabled=true only when a concrete discount is known or strongly typical for this merchant; otherwise enabled=false or null. Use percentOff as whole percent (20 means 20%). moneyAmountOff is a decimal string. languageCode should match the ad language. finalUrl defaults to merchant URL if omitted. occasion may be empty or a real holiday occasion when applicable. Always leave startDate and endDate empty (operators set schedule manually later).
 - translations: required Simplified Chinese glosses for human review only (not sent to Google). Must include: headlines, descriptions, callouts, sitelinks, keywords (aligned to keywords[]), structuredSnippets (2 strings; each is comma-separated Chinese glosses for that snippet's values), and promotion if any.
 - structuredSnippets: pick exactly 2 headers from [${headers}] that best fit this merchant (e.g. travel: Types + Destinations; multi-brand: Types + Brands; own-brand: Types + Styles, avoid Brands). Use these exact English strings. Each needs at least ${AD_COPY_LIMITS.structuredValuesMin} short values.
 - Always include useful negativeKeywords (careers, login, free pdf, etc.).
@@ -380,8 +380,9 @@ function parsePromotionAsset(value: unknown, base: AdDraft): AdPromotionAsset | 
     finalUrl: typeof row.finalUrl === 'string' && row.finalUrl.trim() ? row.finalUrl.trim() : base.merchantUrl,
     promotionCode: typeof row.promotionCode === 'string' ? row.promotionCode.trim().slice(0, 20) : '',
     ordersOverAmount: typeof row.ordersOverAmount === 'string' ? row.ordersOverAmount.trim() : '',
-    startDate: typeof row.startDate === 'string' ? row.startDate.trim() : '',
-    endDate: typeof row.endDate === 'string' ? row.endDate.trim() : '',
+    // 起止时间由人工按投放情况填写，不采用模型自动填的日期
+    startDate: '',
+    endDate: '',
   };
 }
 

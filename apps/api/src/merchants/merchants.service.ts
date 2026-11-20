@@ -710,7 +710,7 @@ export class MerchantsService {
         const scanned = await this.loadDiscoverScan_(account.platform.code, account.id, apiToken);
         for (const brand of scanned.rows) rememberMerchantLogo_(logos, brand);
         const missed = unique.filter((mid) => !logos.has(mid));
-        if (missed.length > 0 && account.platform.code !== 'linkbux') {
+        if (missed.length > 0) {
           const brands = await preloadMonetizationBrandsForAccount(
             account.platform.code,
             apiToken,

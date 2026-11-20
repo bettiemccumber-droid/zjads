@@ -1713,6 +1713,29 @@ export default function AdJobReviewPage() {
                       promotionAsset: { ...draft.promotionAsset!, promotionCode: event.target.value },
                     })}
                   />
+                  <Space wrap style={{ width: '100%' }}>
+                    <Input
+                      style={{ width: 160 }}
+                      placeholder="开始日期 YYYY-MM-DD"
+                      value={draft.promotionAsset.startDate || ''}
+                      onChange={(event) => setDraft({
+                        ...draft,
+                        promotionAsset: { ...draft.promotionAsset!, startDate: event.target.value },
+                      })}
+                      allowClear
+                    />
+                    <Input
+                      style={{ width: 160 }}
+                      placeholder="结束日期 YYYY-MM-DD"
+                      value={draft.promotionAsset.endDate || ''}
+                      onChange={(event) => setDraft({
+                        ...draft,
+                        promotionAsset: { ...draft.promotionAsset!, endDate: event.target.value },
+                      })}
+                      allowClear
+                    />
+                  </Space>
+                  <div className="ad-review__hint">起止时间留空即可；需要限时再按投放情况填写。</div>
                   {draft.translations?.promotion ? (
                     <div className="ad-review__zh">{draft.translations.promotion}</div>
                   ) : null}

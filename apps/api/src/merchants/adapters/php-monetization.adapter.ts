@@ -26,21 +26,35 @@ export async function fetchPhpMonetizationBrands(
 
   if (midFilter.length > 0) {
     for (const mid of midFilter) {
-      const rows = await fetchPhpMonetizationOnce_(baseUrl, apiToken, { brand_id: mid, mcid: mid });
+      // LinkBux：数字 MID 用 mid；slug 用 mcid。brand_id+mcid 组合会直接返回空列表。
+      let rows = await fetchPhpMonetizationOnce_(baseUrl, apiToken, { mid });
+      if (rows.length === 0) {
+        rows = await fetchPhpMonetizationOnce_(baseUrl, apiToken, { mcid: mid });
+      }
+      if (rows.length === 0) {
+        rows = await fetchPhpMonetizationOnce_(baseUrl, apiToken, { brand_id: mid });
+        // brand_id 无效时接口可能退回整页列表，只保留真正匹配的行
+        rows = rows.filter((row) => {
+          const ids = [row.brand_id, row.mid, row.mcid, row.m_id].map((v) => String(v ?? ''));
+          return ids.includes(mid);
+        });
+      }
       all.push(...rows);
     }
     return dedupeMonetizationRows_(all);
   }
 
+  // LinkBux 单页上限约 1000；按 1000 翻页才能扫全库
+  const pageSize = 1000;
   let page = 1;
   let hasMore = true;
-  while (hasMore && page <= 20) {
+  while (hasMore && page <= 40) {
     const rows = await fetchPhpMonetizationOnce_(baseUrl, apiToken, {
       page: String(page),
-      limit: '2000',
+      limit: String(pageSize),
     });
     all.push(...rows);
-    hasMore = rows.length >= 2000;
+    hasMore = rows.length >= pageSize;
     page += 1;
     if (rows.length === 0) break;
   }

@@ -278,6 +278,13 @@ export function buildTrackUrl(platformCode: string, merchantUrl: string, prefix 
   return `${base}${join}url=${target}`;
 }
 
+/** 样板站内链接文案：优先带品牌，超长则用短备选。 */
+function fitBrandSitelink_(preferred: string, shortFallback: string, maxLen = AD_COPY_LIMITS.sitelinkText): string {
+  const text = preferred.trim();
+  if (text && text.length <= maxLen) return text;
+  return shortFallback.slice(0, maxLen);
+}
+
 /**
  * 生成一份不超过字数限制的样例草稿。抓站和模型接入前使用。
  */
@@ -365,44 +372,44 @@ export function buildSampleDraft(input: {
     sitelinks: ensureCompleteSitelinks(
       [
         {
-          linkText: 'Official website'.slice(0, AD_COPY_LIMITS.sitelinkText),
-          description1: 'Visit our site'.slice(0, AD_COPY_LIMITS.sitelinkDescription),
-          description2: 'Explore online'.slice(0, AD_COPY_LIMITS.sitelinkDescription),
+          linkText: fitBrandSitelink_(`Visit ${brand}`, 'Brand site'),
+          description1: fitBrandSitelink_(`Explore ${brand}`, 'Browse the store', AD_COPY_LIMITS.sitelinkDescription),
+          description2: fitBrandSitelink_('See what we offer', 'Start exploring', AD_COPY_LIMITS.sitelinkDescription),
           finalUrl: input.merchantUrl,
           verified: false,
         },
         {
-          linkText: 'Shop now'.slice(0, AD_COPY_LIMITS.sitelinkText),
-          description1: 'Current styles'.slice(0, AD_COPY_LIMITS.sitelinkDescription),
-          description2: 'View the latest'.slice(0, AD_COPY_LIMITS.sitelinkDescription),
+          linkText: fitBrandSitelink_(`Shop ${brand}`, 'Shop catalog'),
+          description1: fitBrandSitelink_('Browse products', 'Find your pick', AD_COPY_LIMITS.sitelinkDescription),
+          description2: fitBrandSitelink_('Ready to order', 'Add to bag', AD_COPY_LIMITS.sitelinkDescription),
           finalUrl: '',
           verified: false,
         },
         {
-          linkText: 'New arrivals'.slice(0, AD_COPY_LIMITS.sitelinkText),
-          description1: 'Fresh picks'.slice(0, AD_COPY_LIMITS.sitelinkDescription),
-          description2: 'See what is new'.slice(0, AD_COPY_LIMITS.sitelinkDescription),
+          linkText: fitBrandSitelink_(`${brand} new`, 'Just arrived'),
+          description1: fitBrandSitelink_('Fresh drops in', 'New this week', AD_COPY_LIMITS.sitelinkDescription),
+          description2: fitBrandSitelink_('See latest picks', 'Check what is new', AD_COPY_LIMITS.sitelinkDescription),
           finalUrl: '',
           verified: false,
         },
         {
-          linkText: 'Best sellers'.slice(0, AD_COPY_LIMITS.sitelinkText),
-          description1: 'Popular items'.slice(0, AD_COPY_LIMITS.sitelinkDescription),
-          description2: 'Shop top choices'.slice(0, AD_COPY_LIMITS.sitelinkDescription),
+          linkText: fitBrandSitelink_(`${brand} bestsellers`, 'Top picks'),
+          description1: fitBrandSitelink_('Customer favorites', 'Most loved items', AD_COPY_LIMITS.sitelinkDescription),
+          description2: fitBrandSitelink_('Shop popular now', 'See top rated', AD_COPY_LIMITS.sitelinkDescription),
           finalUrl: '',
           verified: false,
         },
         {
-          linkText: 'Collections'.slice(0, AD_COPY_LIMITS.sitelinkText),
-          description1: 'Browse categories'.slice(0, AD_COPY_LIMITS.sitelinkDescription),
-          description2: 'Find your style'.slice(0, AD_COPY_LIMITS.sitelinkDescription),
+          linkText: fitBrandSitelink_(`${brand} ranges`, 'Shop by type'),
+          description1: fitBrandSitelink_('Browse categories', 'Find your match', AD_COPY_LIMITS.sitelinkDescription),
+          description2: fitBrandSitelink_('Filter by style', 'Explore the range', AD_COPY_LIMITS.sitelinkDescription),
           finalUrl: '',
           verified: false,
         },
         {
-          linkText: 'Sale deals'.slice(0, AD_COPY_LIMITS.sitelinkText),
-          description1: 'Limited offers'.slice(0, AD_COPY_LIMITS.sitelinkDescription),
-          description2: 'Shop savings'.slice(0, AD_COPY_LIMITS.sitelinkDescription),
+          linkText: fitBrandSitelink_(`${brand} offers`, 'Deals today'),
+          description1: fitBrandSitelink_('Seasonal savings', 'Value picks now', AD_COPY_LIMITS.sitelinkDescription),
+          description2: fitBrandSitelink_('Shop the deals', 'Save while stock lasts', AD_COPY_LIMITS.sitelinkDescription),
           finalUrl: '',
           verified: false,
         },
@@ -410,12 +417,12 @@ export function buildSampleDraft(input: {
       input.merchantUrl,
       [],
       [
-        { url: joinMerchantPath(input.merchantUrl, '/shop'), label: 'Shop now' },
-        { url: joinMerchantPath(input.merchantUrl, '/new-arrivals'), label: 'New arrivals' },
-        { url: joinMerchantPath(input.merchantUrl, '/best-sellers'), label: 'Best sellers' },
-        { url: joinMerchantPath(input.merchantUrl, '/collections'), label: 'Collections' },
-        { url: joinMerchantPath(input.merchantUrl, '/sale'), label: 'Sale deals' },
-        { url: joinMerchantPath(input.merchantUrl, '/order'), label: 'Start shopping' },
+        { url: joinMerchantPath(input.merchantUrl, '/shop'), label: 'Shop catalog' },
+        { url: joinMerchantPath(input.merchantUrl, '/new-arrivals'), label: 'Just arrived' },
+        { url: joinMerchantPath(input.merchantUrl, '/best-sellers'), label: 'Top picks' },
+        { url: joinMerchantPath(input.merchantUrl, '/collections'), label: 'Shop by type' },
+        { url: joinMerchantPath(input.merchantUrl, '/sale'), label: 'Deals today' },
+        { url: joinMerchantPath(input.merchantUrl, '/order'), label: 'Ready to order' },
       ],
     ),
     callouts: [
@@ -687,13 +694,31 @@ export function validatePromotionAsset(
  */
 export function isUnsafeAdText(
   text: string,
-  kind: 'headline' | 'description' | 'callout' | 'general' = 'general',
+  kind: 'headline' | 'description' | 'callout' | 'sitelink' | 'general' = 'general',
 ): boolean {
   const value = text.trim();
   if (!value) return true;
-  // 标题 / 描述 / 宣传信息均可写折扣类促销语
-  const allowPromo = kind === 'headline' || kind === 'description' || kind === 'callout';
+  // 标题 / 描述 / 宣传信息 / 站内链接均可写折扣类促销语；general 仍偏严，只给其它字段兜底
+  const allowPromo =
+    kind === 'headline'
+    || kind === 'description'
+    || kind === 'callout'
+    || kind === 'sitelink';
   return policyHits(value, 't', { allowPromo }).length > 0;
+}
+
+/** 站内链接字段：有安全原文就保留，空或硬违规才用兜底。 */
+function keepSitelinkField_(
+  primary: string,
+  reserve: string | undefined,
+  hardFallback: string,
+  maxLen: number,
+): string {
+  const text = primary.trim();
+  if (text && !isUnsafeAdText(text, 'sitelink')) return text.slice(0, maxLen);
+  const backup = (reserve ?? '').trim();
+  if (backup && !isUnsafeAdText(backup, 'sitelink')) return backup.slice(0, maxLen);
+  return hardFallback.slice(0, maxLen);
 }
 
 /**
@@ -769,23 +794,30 @@ export function sanitizeDraftForReview(draft: AdDraft, fallback: AdDraft): AdDra
     assignUniqueSitelinkUrls(
       sitelinkSource.map((link, index) => {
         const fallbackLink = fallback.sitelinks[index] || fallback.sitelinks[0];
-        const softenedLink = softenExcessiveUppercase(link.linkText);
-        const softenedDesc1 = softenExcessiveUppercase(link.description1);
-        const softenedDesc2 = softenExcessiveUppercase(link.description2);
-        const linkText = isUnsafeAdText(softenedLink, 'general')
-          ? (fallbackLink?.linkText || 'Shop now')
-          : softenedLink;
-        const description1 = isUnsafeAdText(softenedDesc1, 'general')
-          ? (fallbackLink?.description1 || 'Browse online')
-          : (softenedDesc1 || fallbackLink?.description1 || 'Browse online');
-        const description2 = isUnsafeAdText(softenedDesc2, 'general')
-          ? (fallbackLink?.description2 || 'See more details')
-          : (softenedDesc2 || fallbackLink?.description2 || 'See more details');
+        // 只在空或硬违规时换兜底，保留模型按商家写的活文案（含合理促销语）
+        const linkText = keepSitelinkField_(
+          softenExcessiveUppercase(link.linkText),
+          fallbackLink?.linkText,
+          'Shop now',
+          limits.sitelinkText,
+        );
+        const description1 = keepSitelinkField_(
+          softenExcessiveUppercase(link.description1),
+          fallbackLink?.description1,
+          'Browse online',
+          limits.sitelinkDescription,
+        );
+        const description2 = keepSitelinkField_(
+          softenExcessiveUppercase(link.description2),
+          fallbackLink?.description2,
+          'See more details',
+          limits.sitelinkDescription,
+        );
         return {
           ...link,
-          linkText: linkText.slice(0, limits.sitelinkText),
-          description1: description1.slice(0, limits.sitelinkDescription),
-          description2: description2.slice(0, limits.sitelinkDescription),
+          linkText,
+          description1,
+          description2,
         };
       }),
       merchantHome,
@@ -1316,9 +1348,10 @@ export function assignUniqueSitelinkUrls(
       if (homeKey) used.add(homeKey);
       return {
         ...link,
-        linkText: (link.linkText.trim() || 'Official website').slice(0, AD_COPY_LIMITS.sitelinkText),
-        description1: (link.description1.trim() || 'Visit our site').slice(0, AD_COPY_LIMITS.sitelinkDescription),
-        description2: (link.description2.trim() || 'Explore online').slice(0, AD_COPY_LIMITS.sitelinkDescription),
+        // 只补空，不覆盖模型已写的标题/描述
+        linkText: (link.linkText.trim() || 'Visit site').slice(0, AD_COPY_LIMITS.sitelinkText),
+        description1: (link.description1.trim() || 'Browse the store').slice(0, AD_COPY_LIMITS.sitelinkDescription),
+        description2: (link.description2.trim() || 'See what we offer').slice(0, AD_COPY_LIMITS.sitelinkDescription),
         finalUrl: homeUrl,
         verified: false,
       };

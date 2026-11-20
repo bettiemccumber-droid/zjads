@@ -95,12 +95,26 @@ const dirty = {
   headlines: ['Buy now 50% off', 'Panini Store', 'Magazines'],
   promotion: 'Use code $X',
   cpcBidCeilingUsd: '',
+  sitelinks: base.sitelinks.map((link, index) => (
+    index === 1
+      ? {
+          ...link,
+          linkText: 'Acegolfs Deals',
+          description1: 'Save on gear',
+          description2: 'Season sale live',
+          verified: false,
+        }
+      : link
+  )),
 };
 const cleaned = sanitizeDraftForReview(dirty, base);
 // 宣传信息允许折扣 / 免运费；促销备注里的占位符 $X 仍会清掉
 assert.ok(cleaned.callouts.some((text) => /\$|free shipping/i.test(text)));
 assert.ok(cleaned.headlines.some((text) => /50%\s*off/i.test(text)));
 assert.strictEqual(cleaned.promotion, '');
+// 站内链接促销语应保留，不要被换回 Shop now 万能句
+assert.ok(cleaned.sitelinks.some((link) => /Acegolfs Deals/i.test(link.linkText)));
+assert.ok(cleaned.sitelinks.some((link) => /Season sale/i.test(link.description2)));
 // 生成后的站内链接需人工标记已验证后才能过校验
 assert.ok(cleaned.sitelinks.every((link) => link.finalUrl && !link.verified));
 assert.deepStrictEqual(

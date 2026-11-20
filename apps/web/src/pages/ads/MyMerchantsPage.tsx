@@ -138,8 +138,28 @@ interface OpsListItem {
   merchantUrl: string;
   category: string;
   note: string;
+  nodeKey?: string;
+  epc?: string;
+  commissionRate?: string;
+  avgOrderValue?: string;
   updatedAt?: string;
   createdAt?: string;
+}
+
+interface PromoNodeItem {
+  key: string;
+  name: string;
+  nameEn: string;
+  description: string;
+  date: string;
+  daysUntil: number;
+  merchantCount: number;
+}
+
+interface PromoNodesResult {
+  nearestDaysUntil: number | null;
+  nearestKey: string | null;
+  nodes: PromoNodeItem[];
 }
 
 interface EnginePrefs {
@@ -466,6 +486,14 @@ export default function MyMerchantsPage() {
   const [recommendDraft, setRecommendDraft] = useState('');
   const [recommendQuery, setRecommendQuery] = useState('');
   const [recommendPlatform, setRecommendPlatform] = useState<string | undefined>();
+  const [promoNodes, setPromoNodes] = useState<PromoNodesResult | null>(null);
+  const [promoNodesLoaded, setPromoNodesLoaded] = useState(false);
+  const [activeNodeKey, setActiveNodeKey] = useState<string>('');
+  const [nodeMerchants, setNodeMerchants] = useState<OpsListItem[]>([]);
+  const [nodeMerchantsLoading, setNodeMerchantsLoading] = useState(false);
+  const [nodeDraft, setNodeDraft] = useState('');
+  const [nodeQuery, setNodeQuery] = useState('');
+  const [nodePlatform, setNodePlatform] = useState<string | undefined>();
   const [reasonModal, setReasonModal] = useState<{ name: string; note: string } | null>(null);
   const [personaOpen, setPersonaOpen] = useState(false);
   const [personaTotal, setPersonaTotal] = useState(0);
@@ -746,14 +774,25 @@ export default function MyMerchantsPage() {
     void Promise.all([
       api.get<ApiResult<{ items: OpsListItem[] }>>('/merchant-ops-lists/violation'),
       api.get<ApiResult<{ items: OpsListItem[] }>>('/merchant-ops-lists/recommend'),
-    ]).then(([violationRes, recommendRes]) => {
+      api.get<ApiResult<PromoNodesResult>>('/promo-nodes'),
+    ]).then(([violationRes, recommendRes, promoRes]) => {
       setViolationList(violationRes.data.success ? violationRes.data.data.items ?? [] : []);
       setRecommendList(recommendRes.data.success ? recommendRes.data.data.items ?? [] : []);
+      if (promoRes.data.success) {
+        const data = promoRes.data.data;
+        setPromoNodes(data);
+        setActiveNodeKey((prev) => prev || data.nearestKey || data.nodes[0]?.key || '');
+      } else {
+        setPromoNodes(null);
+      }
       setOpsListsLoaded(true);
+      setPromoNodesLoaded(true);
     }).catch(() => {
       setViolationList([]);
       setRecommendList([]);
+      setPromoNodes(null);
       setOpsListsLoaded(true);
+      setPromoNodesLoaded(true);
     });
     return () => {
       loadGen.current += 1;
@@ -895,24 +934,63 @@ export default function MyMerchantsPage() {
     () => new Set(advertised.map((item) => `${(item.platformCode || '').toLowerCase()}:${item.mid}`)),
     [advertised],
   );
+  const violationKeySet = useMemo(
+    () => new Set(violationList.map((item) => `${(item.platformCode || '').toLowerCase()}:${item.mid}`)),
+    [violationList],
+  );
 
   const refreshOpsLists = useCallback(async () => {
     setOpsListsLoaded(false);
+    setPromoNodesLoaded(false);
     try {
-      const [violationRes, recommendRes] = await Promise.all([
+      const [violationRes, recommendRes, promoRes] = await Promise.all([
         api.get<ApiResult<{ items: OpsListItem[] }>>('/merchant-ops-lists/violation'),
         api.get<ApiResult<{ items: OpsListItem[] }>>('/merchant-ops-lists/recommend'),
+        api.get<ApiResult<PromoNodesResult>>('/promo-nodes'),
       ]);
       setViolationList(violationRes.data.success ? violationRes.data.data.items ?? [] : []);
       setRecommendList(recommendRes.data.success ? recommendRes.data.data.items ?? [] : []);
+      if (promoRes.data.success) {
+        const data = promoRes.data.data;
+        setPromoNodes(data);
+        setActiveNodeKey((prev) => {
+          if (prev && data.nodes.some((node) => node.key === prev)) return prev;
+          return data.nearestKey || data.nodes[0]?.key || '';
+        });
+      }
     } catch {
       setViolationList([]);
       setRecommendList([]);
+      setPromoNodes(null);
       message.error('刷新运营名单失败');
     } finally {
       setOpsListsLoaded(true);
+      setPromoNodesLoaded(true);
     }
   }, []);
+
+  const loadNodeMerchants = useCallback(async (nodeKey: string) => {
+    if (!nodeKey) {
+      setNodeMerchants([]);
+      return;
+    }
+    setNodeMerchantsLoading(true);
+    try {
+      const res = await api.get<ApiResult<{ items: OpsListItem[] }>>(
+        `/promo-nodes/${encodeURIComponent(nodeKey)}/merchants`,
+      );
+      setNodeMerchants(res.data.success ? res.data.data.items ?? [] : []);
+    } catch {
+      setNodeMerchants([]);
+    } finally {
+      setNodeMerchantsLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (tab !== 'nodes' || !activeNodeKey) return;
+    void loadNodeMerchants(activeNodeKey);
+  }, [tab, activeNodeKey, loadNodeMerchants]);
 
   const filteredViolations = useMemo(() => {
     const query = violationQuery.trim().toLowerCase();
@@ -938,11 +1016,36 @@ export default function MyMerchantsPage() {
     });
   }, [recommendList, recommendQuery, recommendPlatform]);
 
-  const nodeCountry = (settings?.targetCountry || 'US').toUpperCase();
-  const nodeRows = useMemo(() => {
-    const ordered = new Set(chargebacks.filter((item) => item.orderCount > 0).map((item) => `${item.platformCode}:${item.merchantId}`));
-    return visibleAdvertised.filter((item) => (item.countryCode || '').toUpperCase() === nodeCountry && ordered.has(`${item.platformCode}:${item.mid}`));
-  }, [chargebacks, visibleAdvertised, nodeCountry]);
+  const activePromoNode = useMemo(
+    () => promoNodes?.nodes.find((node) => node.key === activeNodeKey) ?? promoNodes?.nodes[0] ?? null,
+    [promoNodes, activeNodeKey],
+  );
+
+  const nodePlatforms = useMemo(() => {
+    const codes = [...new Set(nodeMerchants.map((item) => item.platformCode).filter(Boolean))];
+    return codes.sort((a, b) => (PLATFORM_SHORT[a] || a).localeCompare(PLATFORM_SHORT[b] || b));
+  }, [nodeMerchants]);
+
+  const filteredNodeMerchants = useMemo(() => {
+    const query = nodeQuery.trim().toLowerCase();
+    return nodeMerchants.filter((item) => {
+      if (nodePlatform && item.platformCode !== nodePlatform) return false;
+      if (!query) return true;
+      const hay = `${item.name} ${item.mid} ${item.merchantUrl} ${item.category} ${item.countryCode}`.toLowerCase();
+      return hay.includes(query);
+    });
+  }, [nodeMerchants, nodeQuery, nodePlatform]);
+
+  const libraryStateCell = (row: OpsListItem) => {
+    const key = `${(row.platformCode || '').toLowerCase()}:${row.mid}`;
+    if (violationKeySet.has(key)) {
+      return <span className="merchant-state merchant-state--off">违规</span>;
+    }
+    if (claimedKeySet.has(key)) {
+      return <span className="merchant-state merchant-state--on">已领取</span>;
+    }
+    return <span className="merchant-state merchant-state--wait">可领取</span>;
+  };
 
   const persistEngines = (next: EnginePrefs) => {
     setEngines(next);
@@ -999,12 +1102,17 @@ export default function MyMerchantsPage() {
       };
     }
     if (tab === 'nodes') {
+      const nearest = promoNodes?.nearestDaysUntil;
       return {
-        title: '节点推荐',
-        loaded: merchantsLoaded && settlementLoaded,
-        count: nodeRows.length,
-        label: `国家 ${nodeCountry}`,
-        foot: merchantsLoaded && settlementLoaded ? `投放国家 ${nodeCountry} 近 90 天有单` : '正在加载',
+        title: nearest != null ? `节点推荐 ${nearest}天` : '节点推荐',
+        loaded: promoNodesLoaded,
+        count: activePromoNode?.merchantCount ?? nodeMerchants.length,
+        label: activePromoNode ? activePromoNode.name : '促销节点',
+        foot: promoNodesLoaded
+          ? (activePromoNode
+            ? `${activePromoNode.name} · ${activePromoNode.date} · 官方名单 ${activePromoNode.merchantCount}`
+            : '暂无即将到来的促销节点')
+          : '正在加载节点',
         chips: 'none' as const,
       };
     }
@@ -1039,8 +1147,10 @@ export default function MyMerchantsPage() {
     hotOrgRows.length,
     recommendList.length,
     settlementLoaded,
-    nodeRows.length,
-    nodeCountry,
+    promoNodesLoaded,
+    promoNodes?.nearestDaysUntil,
+    activePromoNode,
+    nodeMerchants.length,
     chargebackRows.length,
     visibleAdvertised.length,
     enabledCount,
@@ -1570,29 +1680,151 @@ export default function MyMerchantsPage() {
             },
             {
               key: 'nodes',
-              label: tabLabel(<CalendarOutlined />, merchantsLoaded && settlementLoaded ? `节点推荐 (${nodeRows.length})` : '节点推荐', 'node'),
-              children: (
+              label: tabLabel(
+                <CalendarOutlined />,
+                promoNodesLoaded
+                  ? (promoNodes?.nearestDaysUntil != null
+                    ? `节点推荐 ${promoNodes.nearestDaysUntil}天`
+                    : '节点推荐')
+                  : '节点推荐',
+                'node',
+              ),
+              children: !promoNodesLoaded ? <Spin /> : (
                 <>
-                  <TabNote>{`按当前投放国家 ${nodeCountry} 里近 90 天有订单的商家。促销节点日历接入后会改成按节点推荐。`}</TabNote>
-                  {merchantsLoaded && settlementLoaded ? (
-                    nodeRows.length === 0 ? <div className="merchant-empty">这个国家近 90 天没有出单商家。</div> : (
-                      <Table
-                        className="merchant-table"
-                        rowKey={(row) => `${row.channelAccountId}:${row.mid}`}
-                        size="middle"
-                        pagination={{ pageSize: 10, showTotal: (total) => `共 ${total} 条` }}
-                        dataSource={nodeRows}
-                        columns={[
-                          { title: '商家名称', dataIndex: 'name', render: (value: string, row: AdvertisedMerchant) => <MerchantMark name={value} logo={row.logo} merchantUrl={row.merchantUrl} /> },
-                          { title: '平台', dataIndex: 'platformCode', width: 72, render: (value: string) => platformTag(value) },
-                          { title: 'MID', dataIndex: 'mid', width: 120 },
-                          { title: '支持地区', dataIndex: 'countryCode', width: 120, render: (value: string) => regionTags(value) },
-                          { title: '结算率', width: 90, render: (_: unknown, row: AdvertisedMerchant) => settlementCell(row.platformCode, row.mid) },
-                          { title: '订单数', width: 90, render: (_: unknown, row: AdvertisedMerchant) => settlementByKey.get(`${row.platformCode}:${row.mid}`)?.orderCount ?? blank() },
-                        ]}
-                      />
-                    )
-                  ) : <Spin />}
+                  <div className="promo-nodes">
+                    {(promoNodes?.nodes ?? []).map((node) => (
+                      <button
+                        key={node.key}
+                        type="button"
+                        className={`promo-nodes__chip${activeNodeKey === node.key ? ' is-active' : ''}`}
+                        onClick={() => {
+                          setActiveNodeKey(node.key);
+                          setNodeDraft('');
+                          setNodeQuery('');
+                          setNodePlatform(undefined);
+                        }}
+                      >
+                        <span className="promo-nodes__name">{node.name}</span>
+                        <span className="promo-nodes__days">{node.daysUntil === 0 ? '今天' : `${node.daysUntil}天`}</span>
+                        {node.merchantCount > 0 ? (
+                          <span className="promo-nodes__count">名单 {node.merchantCount}</span>
+                        ) : null}
+                      </button>
+                    ))}
+                  </div>
+                  {activePromoNode ? (
+                    <Alert
+                      className="promo-nodes__banner"
+                      type="warning"
+                      showIcon
+                      message={`${activePromoNode.name}（${activePromoNode.date}）· 还有 ${activePromoNode.daysUntil} 天`}
+                      description={activePromoNode.description}
+                    />
+                  ) : (
+                    <TabNote>暂无即将到来的促销节点。</TabNote>
+                  )}
+                  <div className="merchant-toolbar">
+                    <Input
+                      allowClear
+                      prefix={<SearchOutlined />}
+                      style={{ width: 240 }}
+                      placeholder="搜索商家名 / MID"
+                      value={nodeDraft}
+                      onChange={(event) => setNodeDraft(event.target.value)}
+                      onPressEnter={() => setNodeQuery(nodeDraft.trim())}
+                    />
+                    <Select
+                      allowClear
+                      placeholder="全部联盟"
+                      style={{ width: 140 }}
+                      value={nodePlatform}
+                      onChange={(value) => setNodePlatform(value)}
+                      options={nodePlatforms.map((code) => ({
+                        value: code,
+                        label: opsPlatformShort(code),
+                      }))}
+                    />
+                    <Button type="primary" icon={<SearchOutlined />} onClick={() => setNodeQuery(nodeDraft.trim())}>
+                      查询
+                    </Button>
+                    <Button
+                      icon={<ReloadOutlined />}
+                      loading={nodeMerchantsLoading}
+                      onClick={() => {
+                        setNodeDraft('');
+                        setNodeQuery('');
+                        setNodePlatform(undefined);
+                        void refreshOpsLists();
+                        if (activeNodeKey) void loadNodeMerchants(activeNodeKey);
+                      }}
+                    >
+                      刷新
+                    </Button>
+                  </div>
+                  <div className="promo-nodes__list-title">
+                    官方推荐名单
+                    {activePromoNode ? `（${nodeMerchantsLoading ? '…' : filteredNodeMerchants.length}）` : ''}
+                  </div>
+                  {nodeMerchantsLoading ? <Spin /> : nodeMerchants.length === 0 ? (
+                    <div className="merchant-empty">
+                      该节点还没有官方名单。管理员可在「违规/推荐名单」里按节日节点上传。
+                    </div>
+                  ) : (
+                    <Table
+                      className="merchant-table merchant-table--ops"
+                      rowKey={(row) => String(row.id)}
+                      size="middle"
+                      scroll={{ x: 1200 }}
+                      pagination={{ pageSize: 20, showSizeChanger: true, pageSizeOptions: ['10', '20', '50'], showTotal: (total) => `共 ${total} 条` }}
+                      dataSource={filteredNodeMerchants}
+                      locale={{ emptyText: '没有匹配的节点商家' }}
+                      columns={[
+                        {
+                          title: '商家名称',
+                          dataIndex: 'name',
+                          width: 240,
+                          render: (_: string, row: OpsListItem) => <RecommendName row={row} />,
+                        },
+                        { title: '联盟', dataIndex: 'platformCode', width: 90, render: (value: string) => platformTag(value) },
+                        {
+                          title: '出单国家',
+                          dataIndex: 'countryCode',
+                          width: 120,
+                          render: (value: string) => (value ? regionTags(value) : blank()),
+                        },
+                        {
+                          title: 'EPC',
+                          dataIndex: 'epc',
+                          width: 90,
+                          render: (value: string) => blank(value),
+                        },
+                        {
+                          title: '佣金率',
+                          dataIndex: 'commissionRate',
+                          width: 90,
+                          render: (value: string) => blank(value),
+                        },
+                        {
+                          title: '每单均价',
+                          dataIndex: 'avgOrderValue',
+                          width: 90,
+                          render: (value: string) => blank(value),
+                        },
+                        {
+                          title: '品类',
+                          dataIndex: 'category',
+                          width: 140,
+                          ellipsis: true,
+                          render: (value: string) => blank(value),
+                        },
+                        {
+                          title: '我的库状态',
+                          width: 100,
+                          render: (_: unknown, row: OpsListItem) => libraryStateCell(row),
+                        },
+                      ]}
+                    />
+                  )}
                 </>
               ),
             },

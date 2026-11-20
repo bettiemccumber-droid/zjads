@@ -9,6 +9,9 @@ export interface MerchantOpsListImportRow {
   merchantUrl?: string;
   category?: string;
   note?: string;
+  epc?: string;
+  commissionRate?: string;
+  avgOrderValue?: string;
 }
 
 const PLATFORM_HEADERS = [
@@ -68,6 +71,23 @@ const URL_HEADERS = [
   'siteurl',
 ];
 const CATEGORY_HEADERS = ['category', 'categories', '品类', '类目', '主营业务'];
+const EPC_HEADERS = ['epc', 'earningsperclick', '单次点击收益'];
+const COMMISSION_HEADERS = [
+  'commission',
+  'commissionrate',
+  'commrate',
+  '佣金率',
+  '平均佣金率',
+  '佣金',
+];
+const AOV_HEADERS = [
+  'aov',
+  'avgordervalue',
+  'averageordervalue',
+  '客单价',
+  '每单均价',
+  '均价',
+];
 const NOTE_HEADERS = [
   'note',
   'reason',
@@ -160,6 +180,9 @@ function parseSheet_(
   const colCountry = findCol_(header, COUNTRY_HEADERS);
   const colUrl = findCol_(header, URL_HEADERS);
   const colCategory = findCol_(header, CATEGORY_HEADERS);
+  const colEpc = findCol_(header, EPC_HEADERS);
+  const colCommission = findCol_(header, COMMISSION_HEADERS);
+  const colAov = findCol_(header, AOV_HEADERS);
   const colNote = findCol_(header, NOTE_HEADERS);
   const colSid = findCol_(header, SID_HEADERS);
 
@@ -184,6 +207,9 @@ function parseSheet_(
     const countryCode = colCountry != null ? extractCountry_(String(line[colCountry] ?? '')) : '';
     const merchantUrl = colUrl != null ? String(line[colUrl] ?? '').trim() : '';
     const category = colCategory != null ? String(line[colCategory] ?? '').trim() : '';
+    const epc = colEpc != null ? String(line[colEpc] ?? '').trim() : '';
+    const commissionRate = colCommission != null ? String(line[colCommission] ?? '').trim() : '';
+    const avgOrderValue = colAov != null ? String(line[colAov] ?? '').trim() : '';
     const noteParts = [
       colNote != null ? String(line[colNote] ?? '').trim() : '',
       colSid != null ? String(line[colSid] ?? '').trim() : '',
@@ -197,6 +223,9 @@ function parseSheet_(
       countryCode: countryCode || undefined,
       merchantUrl: merchantUrl || undefined,
       category: category || undefined,
+      epc: epc || undefined,
+      commissionRate: commissionRate || undefined,
+      avgOrderValue: avgOrderValue || undefined,
       note: noteParts.length ? noteParts.join(' · ') : undefined,
     });
   }

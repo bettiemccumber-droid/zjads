@@ -127,7 +127,7 @@ export function buildAdminSidebarMenu(): MenuProps['items'] {
       item(
         '/admin/merchant-lists',
         <ShopOutlined />,
-        <Link to="/admin/merchant-lists">违规/推荐名单</Link>,
+        <Link to="/admin/merchant-lists">违规/推荐/节点名单</Link>,
       ),
     ]),
     group('数据中心', [

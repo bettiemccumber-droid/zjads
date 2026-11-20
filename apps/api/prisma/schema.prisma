@@ -710,24 +710,30 @@ model UserAiPreference {
   @@map("user_ai_preferences")
 }
 
-/// 运营维护的违规/推荐商家名单。管理员整表替换上传，员工只读查看。
+/// 运营维护的违规/推荐/节点推荐商家名单。管理员上传，员工只读。
+/// listType=node 时 nodeKey 为节日节点（如 black_friday）；violation/recommend 的 nodeKey 为空串。
 model MerchantOpsListItem {
-  id             Int      @id @default(autoincrement())
-  organizationId Int      @map("organization_id")
-  listType       String   @map("list_type") @db.VarChar(16)
-  platformCode   String   @map("platform_code") @db.VarChar(50)
-  mid            String   @db.VarChar(64)
-  name           String   @default("") @db.VarChar(255)
-  countryCode    String   @default("") @map("country_code") @db.VarChar(32)
-  merchantUrl    String   @default("") @map("merchant_url") @db.VarChar(2048)
-  category       String   @default("") @db.VarChar(255)
-  note           String   @default("") @db.VarChar(500)
-  createdAt      DateTime @default(now()) @map("created_at")
-  updatedAt      DateTime @updatedAt @map("updated_at")
+  id              Int      @id @default(autoincrement())
+  organizationId  Int      @map("organization_id")
+  listType        String   @map("list_type") @db.VarChar(16)
+  nodeKey         String   @default("") @map("node_key") @db.VarChar(48)
+  platformCode    String   @map("platform_code") @db.VarChar(50)
+  mid             String   @db.VarChar(64)
+  name            String   @default("") @db.VarChar(255)
+  countryCode     String   @default("") @map("country_code") @db.VarChar(32)
+  merchantUrl     String   @default("") @map("merchant_url") @db.VarChar(2048)
+  category        String   @default("") @db.VarChar(255)
+  note            String   @default("") @db.VarChar(500)
+  epc             String   @default("") @db.VarChar(32)
+  commissionRate  String   @default("") @map("commission_rate") @db.VarChar(32)
+  avgOrderValue   String   @default("") @map("avg_order_value") @db.VarChar(32)
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
 
   organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
 
-  @@unique([organizationId, listType, platformCode, mid])
+  @@unique([organizationId, listType, nodeKey, platformCode, mid])
   @@index([organizationId, listType])
+  @@index([organizationId, listType, nodeKey])
   @@map("merchant_ops_list_items")
 }

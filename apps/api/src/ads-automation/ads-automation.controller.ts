@@ -91,6 +91,18 @@ class MerchantOpsListRowBody {
   @IsOptional()
   @IsString()
   note?: string;
+
+  @IsOptional()
+  @IsString()
+  epc?: string;
+
+  @IsOptional()
+  @IsString()
+  commissionRate?: string;
+
+  @IsOptional()
+  @IsString()
+  avgOrderValue?: string;
 }
 
 class ImportMerchantOpsListBody {
@@ -103,6 +115,11 @@ class ImportMerchantOpsListBody {
   @IsOptional()
   @IsIn(['merge', 'replace_platforms', 'replace_all'])
   mode?: MerchantOpsImportMode;
+
+  /** listType=node 时必填，如 black_friday */
+  @IsOptional()
+  @IsString()
+  nodeKey?: string;
 }
 
 class KeywordBody implements AdKeyword {
@@ -263,13 +280,72 @@ export class AdsAutomationController {
     private readonly merchantLists: MerchantOpsListService,
   ) {}
 
-  /** 违规/推荐运营名单。员工只读。 */
+  /** 即将到来的促销节点（倒计时）+ 各节点名单数量。 */
+  @Get('promo-nodes')
+  async listPromoNodes(@CurrentUser() user: AuthUser) {
+    return ok(await this.merchantLists.listPromoNodes(user.organizationId));
+  }
+
+  /** 某个节点的官方推荐名单。 */
+  @Get('promo-nodes/:nodeKey/merchants')
+  async listPromoNodeMerchants(
+    @CurrentUser() user: AuthUser,
+    @Param('nodeKey') nodeKey: string,
+  ) {
+    return ok(await this.merchantLists.list(user.organizationId, 'node', nodeKey));
+  }
+
+  /** 管理员导入某个节点的推荐名单。 */
+  @Post('promo-nodes/:nodeKey/import')
+  async importPromoNodeMerchants(
+    @CurrentUser() user: AuthUser,
+    @Param('nodeKey') nodeKey: string,
+    @Body() body: ImportMerchantOpsListBody,
+  ) {
+    if (user.role !== UserRole.ADMIN) {
+      throw new ForbiddenException('只有管理员可以上传名单');
+    }
+    const mode = body.mode ?? 'merge';
+    const data = await this.merchantLists.importRows(
+      user.organizationId,
+      'node',
+      body.rows ?? [],
+      mode,
+      nodeKey,
+    );
+    const tip =
+      mode === 'merge'
+        ? `已合并导入 ${data.imported} 条`
+        : mode === 'replace_platforms'
+          ? `已覆盖平台 ${data.platforms.join('、')}，共 ${data.imported} 条`
+          : `已整表替换为 ${data.imported} 条`;
+    return ok(data, tip);
+  }
+
+  /** 清空某个节点名单，或只清某个平台。 */
+  @Delete('promo-nodes/:nodeKey')
+  async clearPromoNodeMerchants(
+    @CurrentUser() user: AuthUser,
+    @Param('nodeKey') nodeKey: string,
+    @Query('platformCode') platformCode?: string,
+  ) {
+    if (user.role !== UserRole.ADMIN) {
+      throw new ForbiddenException('只有管理员可以清空名单');
+    }
+    return ok(
+      await this.merchantLists.clear(user.organizationId, 'node', platformCode, nodeKey),
+      platformCode ? `已清空平台 ${platformCode}` : '节点名单已清空',
+    );
+  }
+
+  /** 违规/推荐运营名单。员工只读。listType=node 时需带 nodeKey。 */
   @Get('merchant-ops-lists/:listType')
   async listMerchantOps(
     @CurrentUser() user: AuthUser,
     @Param('listType') listType: MerchantOpsListType,
+    @Query('nodeKey') nodeKey?: string,
   ) {
-    return ok(await this.merchantLists.list(user.organizationId, listType));
+    return ok(await this.merchantLists.list(user.organizationId, listType, nodeKey ?? ''));
   }
 
   /** 管理员导入违规或推荐名单。默认合并，可多次按平台上传。 */
@@ -288,6 +364,7 @@ export class AdsAutomationController {
       listType,
       body.rows ?? [],
       mode,
+      body.nodeKey ?? '',
     );
     const tip =
       mode === 'merge'
@@ -314,6 +391,7 @@ export class AdsAutomationController {
         listType,
         body.rows ?? [],
         body.mode ?? 'replace_all',
+        body.nodeKey ?? '',
       ),
       '名单已更新',
     );
@@ -325,12 +403,13 @@ export class AdsAutomationController {
     @CurrentUser() user: AuthUser,
     @Param('listType') listType: MerchantOpsListType,
     @Query('platformCode') platformCode?: string,
+    @Query('nodeKey') nodeKey?: string,
   ) {
     if (user.role !== UserRole.ADMIN) {
       throw new ForbiddenException('只有管理员可以清空名单');
     }
     return ok(
-      await this.merchantLists.clear(user.organizationId, listType, platformCode),
+      await this.merchantLists.clear(user.organizationId, listType, platformCode, nodeKey ?? ''),
       platformCode ? `已清空平台 ${platformCode}` : '名单已清空',
     );
   }

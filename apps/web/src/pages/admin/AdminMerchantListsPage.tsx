@@ -21,7 +21,7 @@ import {
 } from '../../utils/parseMerchantOpsListImport';
 import { opsPlatformShort } from '../../utils/opsPlatform';
 
-type ListType = 'violation' | 'recommend';
+type ListType = 'violation' | 'recommend' | 'node';
 type ImportMode = 'merge' | 'replace_platforms' | 'replace_all';
 
 interface OpsItem {
@@ -33,17 +33,37 @@ interface OpsItem {
   merchantUrl: string;
   category: string;
   note: string;
+  epc?: string;
+  commissionRate?: string;
+  avgOrderValue?: string;
   updatedAt: string;
 }
 
 interface OpsListData {
   listType: ListType;
+  nodeKey?: string;
   total: number;
   platformCounts?: Record<string, number>;
   items: OpsItem[];
   imported?: number;
   platforms?: string[];
   mode?: ImportMode;
+}
+
+interface PromoNodeDef {
+  key: string;
+  name: string;
+  nameEn: string;
+  description: string;
+  date?: string;
+  daysUntil?: number;
+  merchantCount?: number;
+}
+
+interface PromoNodesResult {
+  nearestKey: string | null;
+  definitions: PromoNodeDef[];
+  nodes: PromoNodeDef[];
 }
 
 /**
@@ -65,10 +85,12 @@ function dedupeRows(rows: MerchantOpsListImportRow[]) {
 }
 
 /**
- * 管理员上传违规 / 推荐名单；支持多文件、多 sheet，按平台+MID 去重。
+ * 管理员上传违规 / 推荐 / 节日节点名单；支持多文件、多 sheet，按平台+MID 去重。
  */
 export default function AdminMerchantListsPage() {
   const [listType, setListType] = useState<ListType>('violation');
+  const [nodeKey, setNodeKey] = useState<string>('');
+  const [nodeOptions, setNodeOptions] = useState<PromoNodeDef[]>([]);
   const [loading, setLoading] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [data, setData] = useState<OpsListData | null>(null);
@@ -78,12 +100,35 @@ export default function AdminMerchantListsPage() {
   const batchFilesRef = useRef<RcFile[]>([]);
   const batchModeRef = useRef<ImportMode>('merge');
   const listTypeRef = useRef(listType);
+  const nodeKeyRef = useRef(nodeKey);
   listTypeRef.current = listType;
+  nodeKeyRef.current = nodeKey;
 
-  const load = useCallback(async (type: ListType) => {
+  const loadNodes = useCallback(async () => {
+    try {
+      const res = await api.get<ApiResult<PromoNodesResult>>('/promo-nodes');
+      if (!res.data.success) return;
+      const defs = res.data.data.definitions?.length
+        ? res.data.data.definitions
+        : res.data.data.nodes ?? [];
+      setNodeOptions(defs);
+      setNodeKey((prev) => prev || res.data.data.nearestKey || defs[0]?.key || '');
+    } catch {
+      /* 节点日历失败不挡违规/推荐 */
+    }
+  }, []);
+
+  const load = useCallback(async (type: ListType, key: string) => {
+    if (type === 'node' && !key) {
+      setData(null);
+      return;
+    }
     setLoading(true);
     try {
-      const res = await api.get<ApiResult<OpsListData>>(`/merchant-ops-lists/${type}`);
+      const url = type === 'node'
+        ? `/promo-nodes/${encodeURIComponent(key)}/merchants`
+        : `/merchant-ops-lists/${type}`;
+      const res = await api.get<ApiResult<OpsListData>>(url);
       if (!res.data.success) {
         message.error(res.data.message || '加载名单失败');
         return;
@@ -97,9 +142,13 @@ export default function AdminMerchantListsPage() {
   }, []);
 
   useEffect(() => {
+    void loadNodes();
+  }, [loadNodes]);
+
+  useEffect(() => {
     setPlatformFilter(undefined);
-    void load(listType);
-  }, [listType, load]);
+    void load(listType, nodeKey);
+  }, [listType, nodeKey, load]);
 
   const uploadRows = async (
     rows: MerchantOpsListImportRow[],
@@ -111,12 +160,22 @@ export default function AdminMerchantListsPage() {
       message.warning('没有有效商家行（需要平台 + MID）');
       return;
     }
+    if (listTypeRef.current === 'node' && !nodeKeyRef.current) {
+      message.warning('请先选择节日节点');
+      return;
+    }
     setUploading(true);
     try {
-      const res = await api.post<ApiResult<OpsListData>>(
-        `/merchant-ops-lists/${listTypeRef.current}/import`,
-        { rows: unique, mode },
-      );
+      const type = listTypeRef.current;
+      const key = nodeKeyRef.current;
+      const url = type === 'node'
+        ? `/promo-nodes/${encodeURIComponent(key)}/import`
+        : `/merchant-ops-lists/${type}/import`;
+      const res = await api.post<ApiResult<OpsListData>>(url, {
+        rows: unique,
+        mode,
+        ...(type === 'node' ? { nodeKey: key } : {}),
+      });
       if (!res.data.success) {
         message.error(res.data.message || '上传失败');
         return;
@@ -129,6 +188,7 @@ export default function AdminMerchantListsPage() {
         removed > 0 ? `去重去掉 ${removed} 条` : '',
       ].filter(Boolean);
       message.success(parts.join(' · '));
+      if (type === 'node') void loadNodes();
     } catch (error: unknown) {
       const apiMessage = (error as { response?: { data?: { message?: string } } })?.response?.data?.message;
       message.error(apiMessage || (error instanceof Error ? error.message : '上传失败'));
@@ -140,7 +200,6 @@ export default function AdminMerchantListsPage() {
   const parseFiles = async (files: File[]) => {
     const allRows: MerchantOpsListImportRow[] = [];
     const failures: string[] = [];
-    // 按文件名去重，避免 antd 批次回调重复塞入同一文件
     const uniqueFiles = [...new Map(files.map((file) => [file.name + file.size, file])).values()];
     for (const file of uniqueFiles) {
       try {
@@ -155,9 +214,16 @@ export default function AdminMerchantListsPage() {
   };
 
   const clearList = async (platformCode?: string) => {
+    if (listType === 'node' && !nodeKey) {
+      message.warning('请先选择节日节点');
+      return;
+    }
     setUploading(true);
     try {
-      const res = await api.delete<ApiResult<OpsListData>>(`/merchant-ops-lists/${listType}`, {
+      const url = listType === 'node'
+        ? `/promo-nodes/${encodeURIComponent(nodeKey)}`
+        : `/merchant-ops-lists/${listType}`;
+      const res = await api.delete<ApiResult<OpsListData>>(url, {
         params: platformCode ? { platformCode } : undefined,
       });
       if (!res.data.success) {
@@ -167,6 +233,7 @@ export default function AdminMerchantListsPage() {
       setData(res.data.data);
       setPlatformFilter(undefined);
       message.success(res.data.message || '已清空');
+      if (listType === 'node') void loadNodes();
     } catch (error: unknown) {
       const apiMessage = (error as { response?: { data?: { message?: string } } })?.response?.data?.message;
       message.error(apiMessage || (error instanceof Error ? error.message : '清空失败'));
@@ -186,10 +253,10 @@ export default function AdminMerchantListsPage() {
   }, [data?.platformCounts]);
 
   const rows = useMemo(() => {
-    const items = data?.listType === listType ? data.items : [];
+    const items = data?.items ?? [];
     if (!platformFilter) return items;
     return items.filter((item) => item.platformCode === platformFilter);
-  }, [data, listType, platformFilter]);
+  }, [data, platformFilter]);
 
   /**
    * 多选时 beforeUpload 会按文件多次回调；用 50ms 防抖收齐同一批后再解析导入。
@@ -200,7 +267,6 @@ export default function AdminMerchantListsPage() {
     showUploadList: false as const,
     beforeUpload: (file: RcFile, fileList: RcFile[]) => {
       batchModeRef.current = mode;
-      // fileList 为本轮对话框选中的全部文件；单次回调也至少带上当前 file
       const incoming = fileList.length > 0 ? fileList : [file];
       const merged = new Map(batchFilesRef.current.map((item) => [item.uid, item]));
       for (const item of incoming) merged.set(item.uid, item);
@@ -224,15 +290,20 @@ export default function AdminMerchantListsPage() {
     },
   });
 
-  const isRecommend = listType === 'recommend';
+  const activeNode = nodeOptions.find((item) => item.key === nodeKey);
+  const emptyText = listType === 'recommend'
+    ? '还没有推荐名单，可一次选多个平台文件上传'
+    : listType === 'node'
+      ? (nodeKey ? `还没有「${activeNode?.name || nodeKey}」名单，上传后按节点保存` : '请先选择节日节点')
+      : '还没有违规名单，上传后按平台+MID 去重保存';
 
   return (
     <Space direction="vertical" size={16} style={{ width: '100%' }}>
-      <Typography.Title level={4} style={{ margin: 0 }}>违规 / 推荐商家名单</Typography.Title>
+      <Typography.Title level={4} style={{ margin: 0 }}>违规 / 推荐 / 节点商家名单</Typography.Title>
       <Alert
         type="info"
         showIcon
-        message="去重规则：按平台+MID 去重。支持多文件/多 sheet；识别 MID、BU Merchant ID（含 Mercahnt 拼写）、BU 列，以及标题里的 PM/LH 等平台。"
+        message="去重规则：按平台+MID 去重。节点推荐需先选节日再上传；可识别 EPC、佣金率、每单均价列。"
       />
       <Card size="small">
         <Tabs
@@ -240,6 +311,18 @@ export default function AdminMerchantListsPage() {
           onChange={(key) => setListType(key as ListType)}
           tabBarExtraContent={(
             <Space wrap>
+              {listType === 'node' ? (
+                <Select
+                  style={{ width: 180 }}
+                  placeholder="选择节日节点"
+                  value={nodeKey || undefined}
+                  options={nodeOptions.map((node) => ({
+                    value: node.key,
+                    label: `${node.name}${node.daysUntil != null ? ` · ${node.daysUntil}天` : ''}`,
+                  }))}
+                  onChange={(value) => setNodeKey(value)}
+                />
+              ) : null}
               <Select
                 allowClear
                 placeholder="按平台筛选"
@@ -282,8 +365,18 @@ export default function AdminMerchantListsPage() {
               key: 'recommend',
               label: listType === 'recommend' && data ? `推荐商家 (${data.total})` : '推荐商家',
             },
+            {
+              key: 'node',
+              label: listType === 'node' && data ? `节点推荐 (${data.total})` : '节点推荐',
+            },
           ]}
         />
+        {listType === 'node' && activeNode ? (
+          <Typography.Paragraph type="secondary" style={{ marginTop: 0 }}>
+            当前节点：{activeNode.name}（{activeNode.nameEn}）
+            {activeNode.description ? ` · ${activeNode.description}` : ''}
+          </Typography.Paragraph>
+        ) : null}
         {platformOptions.length > 0 ? (
           <Typography.Paragraph type="secondary" style={{ marginTop: 0 }}>
             已入库平台：{platformOptions.map((item) => item.label).join(' · ')}
@@ -295,7 +388,7 @@ export default function AdminMerchantListsPage() {
           loading={loading || uploading}
           dataSource={rows}
           pagination={{ pageSize: 20, showTotal: (total) => `共 ${total} 条` }}
-          locale={{ emptyText: isRecommend ? '还没有推荐名单，可一次选多个平台文件上传' : '还没有违规名单，上传后按平台+MID 去重保存' }}
+          locale={{ emptyText }}
           columns={[
             { title: '商家名称', dataIndex: 'name', ellipsis: true, render: (value: string) => value || '—' },
             {
@@ -308,6 +401,9 @@ export default function AdminMerchantListsPage() {
             },
             { title: 'MID', dataIndex: 'mid', width: 120 },
             { title: '国家', dataIndex: 'countryCode', width: 100, render: (value: string) => value || '—' },
+            { title: 'EPC', dataIndex: 'epc', width: 90, render: (value: string) => value || '—' },
+            { title: '佣金率', dataIndex: 'commissionRate', width: 90, render: (value: string) => value || '—' },
+            { title: '每单均价', dataIndex: 'avgOrderValue', width: 90, render: (value: string) => value || '—' },
             { title: '品类', dataIndex: 'category', width: 140, ellipsis: true, render: (value: string) => value || '—' },
             { title: '网址', dataIndex: 'merchantUrl', ellipsis: true, render: (value: string) => value || '—' },
             { title: '备注', dataIndex: 'note', ellipsis: true, render: (value: string) => value || '—' },

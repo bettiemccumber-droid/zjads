@@ -24,6 +24,7 @@ import { isLbClickPseudoMerchant } from '../collectors/linkbux-clicks';
 import { isRwClickPseudoMerchant } from '../collectors/rewardoo-clicks';
 import { buildSheetCsvUrl, parseAdSheetCsv } from '../ad-sources/sheet-parser.util';
 import { PrismaService } from '../prisma/prisma.service';
+import { aggregatePlatformDaily } from './platform-daily.util';
 
 export interface ReportDateQuery {
   startDate: string;
@@ -1803,6 +1804,70 @@ export class ReportsService {
     return {
       gte: new Date(`${startDate}T00:00:00.000Z`),
       lte: new Date(`${endDate}T23:59:59.999Z`),
+    };
+  }
+
+  /**
+   * 平台按天佣金/点击/订单（只读聚合 affiliate_merchant_click_daily）。
+   * 不改采集与其它报表口径。
+   */
+  async platformDaily(
+    user: AuthUser,
+    q: ReportDateQuery & { platformCode: string },
+  ) {
+    const ownerId = resolveOwnerUserId(user, q.userId);
+    const platformCode = (q.platformCode || '').trim().toLowerCase();
+    if (!platformCode) {
+      return {
+        platformCode: '',
+        startDate: q.startDate,
+        endDate: q.endDate,
+        totals: { clicks: 0, orders: 0, commission: 0 },
+        days: aggregatePlatformDaily([], q.startDate, q.endDate).days,
+        accountCount: 0,
+      };
+    }
+
+    const accounts = await this.prisma.channelAccount.findMany({
+      where: {
+        ownerUserId: ownerId,
+        platform: { code: platformCode },
+      },
+      select: { id: true },
+    });
+    const accountIds = accounts.map((item) => item.id);
+    if (!accountIds.length) {
+      return {
+        platformCode,
+        startDate: q.startDate,
+        endDate: q.endDate,
+        totals: { clicks: 0, orders: 0, commission: 0 },
+        days: aggregatePlatformDaily([], q.startDate, q.endDate).days,
+        accountCount: 0,
+      };
+    }
+
+    const rows = await this.prisma.affiliateMerchantClickDaily.findMany({
+      where: {
+        channelAccountId: { in: accountIds },
+        clickDate: this.adDateRange(q.startDate, q.endDate),
+      },
+      select: {
+        clickDate: true,
+        clicks: true,
+        performanceOrders: true,
+        performanceCommission: true,
+      },
+    });
+
+    const { days, totals } = aggregatePlatformDaily(rows, q.startDate, q.endDate);
+    return {
+      platformCode,
+      startDate: q.startDate,
+      endDate: q.endDate,
+      totals,
+      days,
+      accountCount: accountIds.length,
     };
   }
 

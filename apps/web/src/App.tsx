@@ -5,6 +5,7 @@ import PrivacyPage from './pages/PrivacyPage';
 import TermsPage from './pages/TermsPage';
 import AppLayout from './layouts/AppLayout';
 import DashboardPage from './pages/DashboardPage';
+import PlatformDailyPage from './pages/PlatformDailyPage';
 import ChannelAccountsPage from './pages/ChannelAccountsPage';
 import SettlementPage from './pages/SettlementPage';
 import SettlementReportPage from './pages/SettlementReportPage';
@@ -68,6 +69,7 @@ export default function App() {
           }
         >
           <Route path="dashboard" element={<DashboardPage />} />
+          <Route path="platform-daily" element={<PlatformDailyPage />} />
           <Route path="merchants" element={<MerchantHubLayout />}>
             <Route index element={<Navigate to={merchantHubDefaultPath()} replace />} />
             <Route path="status" element={<MerchantStatusPage />} />

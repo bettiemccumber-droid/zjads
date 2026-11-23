@@ -59,6 +59,11 @@ export function buildEmployeeSidebarMenu(): MenuProps['items'] {
         <Link to="/dashboard">数据采集</Link>,
       ),
       item(
+        '/platform-daily',
+        <BarChartOutlined />,
+        <Link to="/platform-daily">平台日报</Link>,
+      ),
+      item(
         '/settlement',
         <BarChartOutlined />,
         <Link to="/settlement">结算查询</Link>,
@@ -131,6 +136,11 @@ export function buildAdminSidebarMenu(): MenuProps['items'] {
       ),
     ]),
     group('数据中心', [
+      item(
+        '/platform-daily',
+        <BarChartOutlined />,
+        <Link to="/platform-daily">平台日报</Link>,
+      ),
       item('/settlement', <BarChartOutlined />, <Link to="/settlement">结算查询</Link>),
       item(
         '/settlement-report',

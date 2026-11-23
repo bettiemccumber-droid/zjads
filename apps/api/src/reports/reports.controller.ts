@@ -44,6 +44,11 @@ class DateRangeQuery {
   userId?: string;
 }
 
+class PlatformDailyQuery extends DateRangeQuery {
+  @IsString()
+  platformCode!: string;
+}
+
 class CampaignSummaryQuery extends DateRangeQuery {
   /** all | active | paused */
   @IsOptional()
@@ -203,6 +208,18 @@ export class ReportsController {
   @Get('campaign-daily')
   async campaignDaily(@CurrentUser() user: AuthUser, @Query() q: CampaignSummaryQuery) {
     return ok(await this.reports.campaignDaily(user, this.parseCampaignQuery(q)));
+  }
+
+  @Get('platform-daily')
+  async platformDaily(@CurrentUser() user: AuthUser, @Query() q: PlatformDailyQuery) {
+    return ok(
+      await this.reports.platformDaily(user, {
+        platformCode: q.platformCode,
+        startDate: q.startDate,
+        endDate: q.endDate,
+        userId: q.userId ? parseInt(q.userId, 10) : undefined,
+      }),
+    );
   }
 
   @Get('ad-spend-coverage')

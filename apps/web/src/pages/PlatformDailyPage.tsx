@@ -176,43 +176,44 @@ export default function PlatformDailyPage() {
     {
       title: '日期',
       dataIndex: 'date',
-      width: 120,
+      width: 128,
+      align: 'center',
       render: (value: string) => <span className="pd-date">{value}</span>,
     },
     {
       title: '点击',
       dataIndex: 'clicks',
-      align: 'right',
+      align: 'center',
       render: (value: number) => <span className="pd-num">{value.toLocaleString()}</span>,
     },
     {
       title: '订单',
       dataIndex: 'orders',
-      align: 'right',
-      render: (value: number) => <span className="pd-num">{value.toLocaleString()}</span>,
+      align: 'center',
+      render: (value: number) => <span className="pd-num pd-num--orders">{value.toLocaleString()}</span>,
     },
     {
       title: '花费 ($)',
       dataIndex: 'cost',
-      align: 'right',
+      align: 'center',
       render: (value: number) => <MoneyCell value={value} kind="cost" />,
     },
     {
       title: '佣金 ($)',
       dataIndex: 'commission',
-      align: 'right',
+      align: 'center',
       render: (value: number) => <MoneyCell value={value} kind="commission" />,
     },
     {
       title: '拒付 ($)',
       dataIndex: 'rejected',
-      align: 'right',
+      align: 'center',
       render: (value: number) => <MoneyCell value={value} kind="rejected" />,
     },
     {
       title: '利润 ($)',
       dataIndex: 'profit',
-      align: 'right',
+      align: 'center',
       render: (value: number) => <MoneyCell value={value} kind="profit" />,
     },
   ];
@@ -340,23 +341,23 @@ export default function PlatformDailyPage() {
           summary={() => (
             <Table.Summary fixed>
               <Table.Summary.Row>
-                <Table.Summary.Cell index={0}>合计</Table.Summary.Cell>
-                <Table.Summary.Cell index={1} align="right">
+                <Table.Summary.Cell index={0} align="center">合计</Table.Summary.Cell>
+                <Table.Summary.Cell index={1} align="center">
                   <span className="pd-num">{totals.clicks.toLocaleString()}</span>
                 </Table.Summary.Cell>
-                <Table.Summary.Cell index={2} align="right">
-                  <span className="pd-num">{totals.orders.toLocaleString()}</span>
+                <Table.Summary.Cell index={2} align="center">
+                  <span className="pd-num pd-num--orders">{totals.orders.toLocaleString()}</span>
                 </Table.Summary.Cell>
-                <Table.Summary.Cell index={3} align="right">
+                <Table.Summary.Cell index={3} align="center">
                   <MoneyCell value={totals.cost} kind="cost" />
                 </Table.Summary.Cell>
-                <Table.Summary.Cell index={4} align="right">
+                <Table.Summary.Cell index={4} align="center">
                   <MoneyCell value={totals.commission} kind="commission" />
                 </Table.Summary.Cell>
-                <Table.Summary.Cell index={5} align="right">
+                <Table.Summary.Cell index={5} align="center">
                   <MoneyCell value={totals.rejected} kind="rejected" />
                 </Table.Summary.Cell>
-                <Table.Summary.Cell index={6} align="right">
+                <Table.Summary.Cell index={6} align="center">
                   <MoneyCell value={totals.profit} kind="profit" />
                 </Table.Summary.Cell>
               </Table.Summary.Row>

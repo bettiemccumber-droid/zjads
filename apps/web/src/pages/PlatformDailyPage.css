@@ -99,8 +99,8 @@
 
 .platform-daily-page .pd-metric-value {
   color: var(--pd-ink);
-  font-size: 22px;
-  font-weight: 650;
+  font-size: 24px;
+  font-weight: 700;
   font-variant-numeric: tabular-nums;
   letter-spacing: -0.02em;
   line-height: 1.15;
@@ -178,31 +178,65 @@
 }
 
 .platform-daily-page .pd-table .ant-table-thead > tr > th {
-  background: var(--pd-panel) !important;
-  color: var(--pd-muted);
-  font-size: 12px;
-  font-weight: 600;
+  background: #eef3f9 !important;
+  color: #475569;
+  font-size: 13px;
+  font-weight: 650;
+  text-align: center !important;
   border-bottom: 1px solid var(--pd-line) !important;
+  padding: 12px 8px !important;
 }
 
 .platform-daily-page .pd-table .ant-table-tbody > tr > td {
+  text-align: center !important;
   font-variant-numeric: tabular-nums;
-  border-bottom: 1px solid #f0f3f7;
+  border-bottom: 1px solid #edf1f6;
+  padding: 14px 8px !important;
+}
+
+.platform-daily-page .pd-table .ant-table-tbody > tr:nth-child(even) > td {
+  background: #fafbfd;
 }
 
 .platform-daily-page .pd-table .ant-table-tbody > tr:hover > td {
-  background: #f7faff !important;
+  background: #eef5ff !important;
 }
 
 .platform-daily-page .pd-table .ant-table-summary > tr > td {
-  background: #f8fafc;
+  background: #eef3f9;
   border-top: 1px solid var(--pd-line);
-  font-weight: 650;
+  text-align: center !important;
+  font-weight: 700;
   font-variant-numeric: tabular-nums;
+  padding: 14px 8px !important;
 }
 
 .platform-daily-page .pd-num {
+  display: inline-block;
+  min-width: 3.5em;
+  color: var(--pd-ink);
+  font-size: 15px;
+  font-weight: 650;
   font-variant-numeric: tabular-nums;
+  letter-spacing: -0.01em;
+  line-height: 1.2;
+}
+
+.platform-daily-page .pd-num--orders {
+  color: #4338ca;
+}
+
+.platform-daily-page .pd-money-cost,
+.platform-daily-page .pd-money-commission,
+.platform-daily-page .pd-money-rejected,
+.platform-daily-page .pd-money-profit {
+  display: inline-block;
+  min-width: 4.5em;
+  font-size: 15px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.015em;
+  line-height: 1.2;
 }
 
 .platform-daily-page .pd-money-cost {
@@ -219,7 +253,7 @@
 
 .platform-daily-page .pd-money-profit {
   color: var(--pd-profit-pos);
-  font-weight: 600;
+  font-size: 16px;
 }
 
 .platform-daily-page .pd-money-profit.is-neg {
@@ -227,6 +261,13 @@
 }
 
 .platform-daily-page .pd-date {
+  display: inline-block;
   color: var(--pd-ink);
-  font-weight: 500;
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+}
+
+.platform-daily-page .pd-table-card .ant-table-pagination {
+  margin: 12px 16px !important;
 }

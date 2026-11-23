@@ -166,7 +166,7 @@ export default function PlatformDailyPage() {
         {viewUserId && isAdmin ? `平台日报（${viewUsername}）` : '平台日报'}
       </Typography.Title>
       <Typography.Paragraph type="secondary">
-        按平台查看每天预估佣金（来自已采集的联盟日报）。数据需先在「数据采集」同步对应平台账号。
+        按平台查看每天预估佣金。订单与佣金来自已同步入库的联盟订单，点击来自联盟点击日报（与「数据采集」同源）。
       </Typography.Paragraph>
 
       <Card style={{ marginBottom: 16 }}>
@@ -210,15 +210,20 @@ export default function PlatformDailyPage() {
           type="info"
           showIcon
           style={{ marginBottom: 16 }}
-          message="这个区间还没有联盟日报"
+          message={data?.accountCount === 0 ? '当前用户下没有该平台账号' : '这个区间还没有订单或点击数据'}
           description={(
             <span>
-              请先到
-              {' '}
-              <Link to={viewUserId ? `/dashboard?userId=${viewUserId}` : '/dashboard'}>数据采集</Link>
-              {' '}
-              勾选该平台账号并同步；同步后再回来查询。
-              {data?.accountCount === 0 ? ' 当前用户下也没有该平台账号。' : ''}
+              {data?.accountCount === 0
+                ? '请先在「我的平台账号」添加并启用该平台，再到数据采集同步。'
+                : (
+                  <>
+                    请先到
+                    {' '}
+                    <Link to={viewUserId ? `/dashboard?userId=${viewUserId}` : '/dashboard'}>数据采集</Link>
+                    {' '}
+                    勾选该平台账号并同步对应日期；同步后再回来查询。
+                  </>
+                )}
             </span>
           )}
         />

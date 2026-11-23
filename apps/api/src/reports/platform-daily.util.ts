@@ -1,12 +1,20 @@
 /**
- * 平台日报：把商家×日行聚合成按天汇总（纯函数，便于单测）。
+ * 平台日报：订单佣金 + 点击按天合并（纯函数，便于单测）。
  */
 
-export type PlatformDailyRowInput = {
+export type PlatformDailyOrderInput = {
+  orderDate: Date | string;
+  /** 同日去重键：通常 channelAccountId|dedupeOrderId */
+  orderKey: string;
+  commission: number | string;
+};
+
+export type PlatformDailyClickInput = {
   clickDate: Date | string;
   clicks: number;
-  performanceOrders: number;
-  performanceCommission: number | string;
+  /** RW Performance 口径订单/佣金（其它平台可省略） */
+  performanceOrders?: number;
+  performanceCommission?: number | string;
 };
 
 export type PlatformDailyDay = {
@@ -47,24 +55,50 @@ function roundMoney(value: number): number {
 }
 
 /**
- * 按 clickDate 汇总；补齐区间内无数据日期为 0；返回新→旧。
+ * 合并订单与点击：按天补齐区间，新→旧。
+ * @param usePerformanceMetrics true 时订单/佣金用 click 行的 performance*（RW）
  */
-export function aggregatePlatformDaily(
-  rows: PlatformDailyRowInput[],
-  startDate: string,
-  endDate: string,
-): { days: PlatformDailyDay[]; totals: PlatformDailyTotals } {
+export function mergePlatformDaily(input: {
+  startDate: string;
+  endDate: string;
+  orderRows?: PlatformDailyOrderInput[];
+  clickRows?: PlatformDailyClickInput[];
+  usePerformanceMetrics?: boolean;
+}): { days: PlatformDailyDay[]; totals: PlatformDailyTotals } {
   const map = new Map<string, PlatformDailyDay>();
-  for (const row of rows) {
-    const date = dateKey(row.clickDate);
-    const prev = map.get(date) ?? { date, clicks: 0, orders: 0, commission: 0 };
-    prev.clicks += Number(row.clicks) || 0;
-    prev.orders += Number(row.performanceOrders) || 0;
-    prev.commission += Number(row.performanceCommission) || 0;
-    map.set(date, prev);
+  const ensure = (date: string) => {
+    const prev = map.get(date);
+    if (prev) return prev;
+    const next = { date, clicks: 0, orders: 0, commission: 0 };
+    map.set(date, next);
+    return next;
+  };
+
+  for (const row of input.clickRows ?? []) {
+    const day = ensure(dateKey(row.clickDate));
+    day.clicks += Number(row.clicks) || 0;
+    if (input.usePerformanceMetrics) {
+      day.orders += Number(row.performanceOrders) || 0;
+      day.commission += Number(row.performanceCommission) || 0;
+    }
   }
 
-  const days = listDatesInRange(startDate, endDate)
+  if (!input.usePerformanceMetrics) {
+    const seenOrderKeys = new Set<string>();
+    for (const row of input.orderRows ?? []) {
+      const date = dateKey(row.orderDate);
+      const day = ensure(date);
+      const commission = Number(row.commission) || 0;
+      const dedupeKey = `${date}|${row.orderKey}`;
+      if (!seenOrderKeys.has(dedupeKey)) {
+        seenOrderKeys.add(dedupeKey);
+        day.orders += 1;
+      }
+      day.commission += commission;
+    }
+  }
+
+  const days = listDatesInRange(input.startDate, input.endDate)
     .map((date) => {
       const hit = map.get(date);
       return {
@@ -86,4 +120,25 @@ export function aggregatePlatformDaily(
   );
 
   return { days, totals };
+}
+
+/**
+ * @deprecated 兼容旧单测调用；请用 mergePlatformDaily
+ */
+export function aggregatePlatformDaily(
+  rows: Array<{
+    clickDate: Date | string;
+    clicks: number;
+    performanceOrders: number;
+    performanceCommission: number | string;
+  }>,
+  startDate: string,
+  endDate: string,
+): { days: PlatformDailyDay[]; totals: PlatformDailyTotals } {
+  return mergePlatformDaily({
+    startDate,
+    endDate,
+    clickRows: rows,
+    usePerformanceMetrics: true,
+  });
 }

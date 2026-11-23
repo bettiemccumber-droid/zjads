@@ -24,7 +24,7 @@ import { isLbClickPseudoMerchant } from '../collectors/linkbux-clicks';
 import { isRwClickPseudoMerchant } from '../collectors/rewardoo-clicks';
 import { buildSheetCsvUrl, parseAdSheetCsv } from '../ad-sources/sheet-parser.util';
 import { PrismaService } from '../prisma/prisma.service';
-import { aggregatePlatformDaily } from './platform-daily.util';
+import { mergePlatformDaily } from './platform-daily.util';
 
 export interface ReportDateQuery {
   startDate: string;
@@ -1808,8 +1808,8 @@ export class ReportsService {
   }
 
   /**
-   * 平台按天佣金/点击/订单（只读聚合 affiliate_merchant_click_daily）。
-   * 不改采集与其它报表口径。
+   * 平台按天佣金/点击/订单。
+   * 订单+佣金：affiliate_order（RW 用 click daily 的 performance*）；点击：click daily。
    */
   async platformDaily(
     user: AuthUser,
@@ -1817,16 +1817,22 @@ export class ReportsService {
   ) {
     const ownerId = resolveOwnerUserId(user, q.userId);
     const platformCode = (q.platformCode || '').trim().toLowerCase();
-    if (!platformCode) {
-      return {
-        platformCode: '',
+    const empty = (accountCount: number) => {
+      const { days, totals } = mergePlatformDaily({
         startDate: q.startDate,
         endDate: q.endDate,
-        totals: { clicks: 0, orders: 0, commission: 0 },
-        days: aggregatePlatformDaily([], q.startDate, q.endDate).days,
-        accountCount: 0,
+      });
+      return {
+        platformCode,
+        startDate: q.startDate,
+        endDate: q.endDate,
+        totals,
+        days,
+        accountCount,
       };
-    }
+    };
+
+    if (!platformCode) return empty(0);
 
     const accounts = await this.prisma.channelAccount.findMany({
       where: {
@@ -1836,21 +1842,15 @@ export class ReportsService {
       select: { id: true },
     });
     const accountIds = accounts.map((item) => item.id);
-    if (!accountIds.length) {
-      return {
-        platformCode,
-        startDate: q.startDate,
-        endDate: q.endDate,
-        totals: { clicks: 0, orders: 0, commission: 0 },
-        days: aggregatePlatformDaily([], q.startDate, q.endDate).days,
-        accountCount: 0,
-      };
-    }
+    if (!accountIds.length) return empty(0);
 
-    const rows = await this.prisma.affiliateMerchantClickDaily.findMany({
+    const usePerformanceMetrics = platformCode === 'rewardoo';
+    const dateRange = this.adDateRange(q.startDate, q.endDate);
+
+    const clickRows = await this.prisma.affiliateMerchantClickDaily.findMany({
       where: {
         channelAccountId: { in: accountIds },
-        clickDate: this.adDateRange(q.startDate, q.endDate),
+        clickDate: dateRange,
       },
       select: {
         clickDate: true,
@@ -1860,16 +1860,42 @@ export class ReportsService {
       },
     });
 
-    const { days, totals } = aggregatePlatformDaily(
-      rows.map((row) => ({
+    let orderRows: Array<{ orderDate: Date; orderKey: string; commission: number }> = [];
+    if (!usePerformanceMetrics) {
+      const orders = await this.prisma.affiliateOrder.findMany({
+        where: {
+          channelAccountId: { in: accountIds },
+          orderDate: dateRange,
+        },
+        select: {
+          channelAccountId: true,
+          externalOrderId: true,
+          commission: true,
+          orderDate: true,
+          rawPayload: true,
+          channelAccount: { select: { platform: { select: { code: true } } } },
+        },
+      });
+      orderRows = orders.map((order) => ({
+        orderDate: order.orderDate,
+        orderKey: `${order.channelAccountId}|${dedupeAffiliateOrderRecord(order)}`,
+        commission: Number(order.commission),
+      }));
+    }
+
+    const { days, totals } = mergePlatformDaily({
+      startDate: q.startDate,
+      endDate: q.endDate,
+      usePerformanceMetrics,
+      orderRows,
+      clickRows: clickRows.map((row) => ({
         clickDate: row.clickDate,
         clicks: row.clicks,
         performanceOrders: row.performanceOrders,
         performanceCommission: Number(row.performanceCommission),
       })),
-      q.startDate,
-      q.endDate,
-    );
+    });
+
     return {
       platformCode,
       startDate: q.startDate,

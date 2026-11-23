@@ -43,23 +43,30 @@ export async function resolveModelGoModel(): Promise<string> {
  */
 export async function completeModelGoChat(
   messages: Array<{ role: 'system' | 'user'; content: string }>,
-  options?: { maxTokens?: number },
+  options?: { maxTokens?: number; timeoutMs?: number },
 ): Promise<string> {
   const config = modelGoConfig();
   const model = await resolveModelGoModel();
-  const response = await axios.post(
-    `${config.baseUrl}/chat/completions`,
-    { model, messages, temperature: 0.4, max_tokens: options?.maxTokens ?? 1400 },
-    {
-      headers: { Authorization: `Bearer ${config.apiKey}`, 'Content-Type': 'application/json' },
-      timeout: 60000,
-      validateStatus: () => true,
-    },
-  );
-  if (response.status >= 400) throw new Error(explainModelGoError(response.status, response.data));
-  const content = messageText(response.data?.choices?.[0]?.message);
-  if (!content) throw new Error('AI 没有返回文案');
-  return content;
+  try {
+    const response = await axios.post(
+      `${config.baseUrl}/chat/completions`,
+      { model, messages, temperature: 0.4, max_tokens: options?.maxTokens ?? 1400 },
+      {
+        headers: { Authorization: `Bearer ${config.apiKey}`, 'Content-Type': 'application/json' },
+        timeout: options?.timeoutMs ?? 90000,
+        validateStatus: () => true,
+      },
+    );
+    if (response.status >= 400) throw new Error(explainModelGoError(response.status, response.data));
+    const content = messageText(response.data?.choices?.[0]?.message);
+    if (!content) throw new Error('AI 没有返回文案');
+    return content;
+  } catch (error) {
+    if (axios.isAxiosError(error) && (error.code === 'ECONNABORTED' || /timeout/i.test(error.message))) {
+      throw new Error('AI 生成超时，请重试');
+    }
+    throw error;
+  }
 }
 
 /**

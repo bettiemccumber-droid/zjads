@@ -67,8 +67,19 @@ export function audienceLanguage(countryCode: string, languageCode: string): str
   return `the language coded ${language} for readers in ${country || 'the target country'}`;
 }
 
+type AdCopyChunkId = 'headlines' | 'descriptions' | 'callouts' | 'sitelinks' | 'extras';
+
+const CHUNK_LABEL: Record<AdCopyChunkId, string> = {
+  headlines: '标题',
+  descriptions: '描述',
+  callouts: '宣传语',
+  sitelinks: '站内链接',
+  extras: '结构化与促销',
+};
+
 /**
- * 按投放国家生成广告草稿。预算、出价和最终网址仍用本地设置。
+ * 按投放国家并行分块生成广告草稿。预算、出价和最终网址仍用本地设置。
+ * AI 路径不用示例模板凑数；某块失败只重试该块一次。
  */
 export async function writeAdCopy(input: {
   merchantName: string;
@@ -85,38 +96,176 @@ export async function writeAdCopy(input: {
   merchantSeasonEvidence?: string[];
   /** 站点抓取结果：failed 只表示爬不到，不能当成商家没做活动。 */
   siteScan?: 'ok' | 'failed' | 'unknown';
+  onProgress?: (message: string, progress?: number) => void | Promise<void>;
 }): Promise<AdDraft> {
   const pageLinks = input.pageLinks ?? [];
-  const base = buildSampleDraft(input);
+  const shell = buildSampleDraft(input);
   const language = audienceLanguage(input.countryCode, input.languageCode);
-  const shape = adCopyJsonShape(input.merchantUrl, pageLinks);
+  const brand = input.merchantName.trim() || 'the brand';
   const merchantEvidence = resolveMerchantSeasonEvidence_(input);
   const seasonHint = nearbySeasonCopyHint(new Date(), input.countryCode, {
     merchantEvidence,
     siteScan: input.siteScan ?? (input.pageTextHints?.length ? 'ok' : 'unknown'),
   });
-  const raw = await askJson(
-    `Write Google search ads for ${input.merchantName}. Audience language: ${language}. Country: ${input.countryCode}. Use real brand tone; strong click and purchase intent.
-${seasonHint}`,
-    shape,
-    2400,
-    input.personaPrompt,
-  );
-  let draft = sanitizeDraftForReview(applyAdCopy(base, raw, pageLinks), base);
-  let errors = validateDraft(draft);
-  if (!errors.length) return draft;
+  const commonTask = `Write Google search ads for ${brand}. Audience language: ${language}. Country: ${input.countryCode}. Use real brand tone; strong click and purchase intent.
+${seasonHint}`;
 
-  const retryRaw = await askJson(
-    `Write Google search ads for ${input.merchantName}. Audience language: ${language}. Country: ${input.countryCode}.
-${seasonHint}`,
-    `Previous draft failed validation: ${errors.slice(0, 3).join('; ')}.
-${shape}
-Fix every limit and policy issue. Prefer shorter lines. Keep seasonal/holiday lines only when the season hint confirms merchant participation. Callouts may mention discounts/shipping; never use placeholders like $X or [link].`,
-    2200,
-    input.personaPrompt,
+  const done = new Set<AdCopyChunkId>();
+  const report = async (id: AdCopyChunkId) => {
+    done.add(id);
+    const pending = (Object.keys(CHUNK_LABEL) as AdCopyChunkId[])
+      .filter((key) => !done.has(key))
+      .map((key) => CHUNK_LABEL[key]);
+    const finished = [...done].map((key) => CHUNK_LABEL[key]).join('、');
+    const message = pending.length
+      ? `${finished}已生成，${pending.join('/')}生成中…`
+      : '文案各块已生成，正在校验…';
+    const progress = 45 + Math.round((done.size / 5) * 25);
+    await input.onProgress?.(message, progress);
+  };
+
+  const runChunk = async (
+    id: AdCopyChunkId,
+    shape: string,
+    maxTokens: number,
+  ): Promise<Record<string, unknown>> => {
+    try {
+      const raw = await askJson(commonTask, shape, maxTokens, input.personaPrompt);
+      await report(id);
+      return raw;
+    } catch (firstError) {
+      try {
+        const raw = await askJson(
+          `${commonTask}\nRetry this chunk only after a failure.`,
+          shape,
+          maxTokens,
+          input.personaPrompt,
+        );
+        await report(id);
+        return raw;
+      } catch (secondError) {
+        const detail = secondError instanceof Error ? secondError.message : String(secondError);
+        const first = firstError instanceof Error ? firstError.message : String(firstError);
+        throw new Error(`${CHUNK_LABEL[id]}生成失败：${detail || first}`);
+      }
+    }
+  };
+
+  const knownPages = pageLinks
+    .slice(0, 20)
+    .map((item) => `- ${item.url}${item.label ? ` (${item.label})` : ''}`)
+    .join('\n');
+  const headers = STRUCTURED_SNIPPET_HEADERS.join(', ');
+
+  const [headRaw, descRaw, calloutRaw, sitelinkRaw, extrasRaw] = await Promise.all([
+    runChunk(
+      'headlines',
+      `Return JSON only:
+{"headlines": string[${AD_COPY_LIMITS.headlineCount.prefer}], "keywords": string[1 to 8], "negativeKeywords": string[4 to 12], "translations": {"headlines": string[${AD_COPY_LIMITS.headlineCount.prefer}], "keywords": string[1 to 8]}}
+Hard limits: each headline <= ${AD_COPY_LIMITS.headline}. Exactly ${AD_COPY_LIMITS.headlineCount.prefer} unique headlines. Strong purchase intent; low repetition; match audience language. Seasonal/holiday names ONLY when the season hint marks CONFIRMED for THIS merchant. translations.headlines are Simplified Chinese glosses for review. Always include useful negativeKeywords (careers, login, free pdf, etc.).`,
+      900,
+    ),
+    runChunk(
+      'descriptions',
+      `Return JSON only:
+{"descriptions": string[${AD_COPY_LIMITS.descriptionCount.prefer}], "translations": {"descriptions": string[${AD_COPY_LIMITS.descriptionCount.prefer}]}}
+Hard limits: each description <= ${AD_COPY_LIMITS.description}. Exactly ${AD_COPY_LIMITS.descriptionCount.prefer} unique descriptions. Match audience language; no placeholders like $X. translations are Simplified Chinese glosses.`,
+      700,
+    ),
+    runChunk(
+      'callouts',
+      `Return JSON only:
+{"callouts": string[${AD_COPY_LIMITS.calloutCount.prefer}], "translations": {"callouts": string[${AD_COPY_LIMITS.calloutCount.prefer}]}}
+Hard limits: each callout <= ${AD_COPY_LIMITS.callout}. Exactly ${AD_COPY_LIMITS.calloutCount.prefer} unique callouts specific to this merchant. translations are Simplified Chinese glosses.`,
+      600,
+    ),
+    runChunk(
+      'sitelinks',
+      `Return JSON only:
+{"sitelinks": [{"linkText": string, "description1": string, "description2": string, "finalUrl": string}], "translations": {"sitelinks": string[${AD_COPY_LIMITS.sitelinkCount.prefer}]}}
+Exactly ${AD_COPY_LIMITS.sitelinkCount.prefer} sitelinks. linkText <= ${AD_COPY_LIMITS.sitelinkText}; each description <= ${AD_COPY_LIMITS.sitelinkDescription}; all fields required. One sitelink MUST use official site finalUrl ${input.merchantUrl} (or same-host root). Remaining finalUrls distinct https pages on same host. Avoid stock phrases (Official website, Shop now, Visit our site). Prefer purchase pages.
+${knownPages ? `Known on-site pages:\n${knownPages}` : ''}
+translations.sitelinks are Simplified Chinese glosses aligned to each sitelink.`,
+      900,
+    ),
+    runChunk(
+      'extras',
+      `Return JSON only:
+{"structuredSnippets": [{"header": string, "values": string[${AD_COPY_LIMITS.structuredValuesMin}+]}], "promotionAsset": {"enabled": boolean, "promotionTarget": string, "discountType": "PERCENT"|"MONETARY", "percentOff": number, "moneyAmountOff": string, "currencyCode": string, "languageCode": string, "finalUrl": string, "promotionCode": string, "ordersOverAmount": string, "occasion": string, "startDate": string, "endDate": string} | null, "translations": {"structuredSnippets": string[2], "promotion": string}}
+Pick exactly 2 structuredSnippets headers from [${headers}]. Each needs >= ${AD_COPY_LIMITS.structuredValuesMin} values, each <= ${AD_COPY_LIMITS.structuredValue}. promotionAsset.enabled=true only with concrete discount; else false/null. Leave startDate/endDate empty. translations.structuredSnippets: 2 Simplified Chinese gloss strings.`,
+      800,
+    ),
+  ]);
+
+  const mergedRaw: Record<string, unknown> = {
+    headlines: headRaw.headlines,
+    keywords: headRaw.keywords,
+    negativeKeywords: headRaw.negativeKeywords,
+    descriptions: descRaw.descriptions,
+    callouts: calloutRaw.callouts,
+    sitelinks: sitelinkRaw.sitelinks,
+    structuredSnippets: extrasRaw.structuredSnippets,
+    promotionAsset: extrasRaw.promotionAsset,
+    translations: {
+      headlines: (headRaw.translations as { headlines?: unknown } | undefined)?.headlines,
+      keywords: (headRaw.translations as { keywords?: unknown } | undefined)?.keywords,
+      descriptions: (descRaw.translations as { descriptions?: unknown } | undefined)?.descriptions,
+      callouts: (calloutRaw.translations as { callouts?: unknown } | undefined)?.callouts,
+      sitelinks: (sitelinkRaw.translations as { sitelinks?: unknown } | undefined)?.sitelinks,
+      structuredSnippets: (extrasRaw.translations as { structuredSnippets?: unknown } | undefined)?.structuredSnippets,
+      promotion: (extrasRaw.translations as { promotion?: unknown } | undefined)?.promotion,
+    },
+  };
+
+  let draft = sanitizeDraftForReview(
+    applyAdCopy(shell, mergedRaw, pageLinks, { padFromTemplate: false }),
+    shell,
+    { padFromFallback: false },
   );
-  draft = sanitizeDraftForReview(applyAdCopy(base, retryRaw, pageLinks), base);
-  // 仍有问题也不抛错：进入人工预览，不合规字段已尽量换成安全备选。
+
+  if (draft.headlines.length < AD_COPY_LIMITS.headlineCount.min) {
+    const retryHead = await runChunk(
+      'headlines',
+      `Return JSON only: {"headlines": string[${AD_COPY_LIMITS.headlineCount.prefer}], "translations": {"headlines": string[${AD_COPY_LIMITS.headlineCount.prefer}]}}
+Need at least ${AD_COPY_LIMITS.headlineCount.min} unique headlines, prefer ${AD_COPY_LIMITS.headlineCount.prefer}. Each <= ${AD_COPY_LIMITS.headline}.`,
+      900,
+    );
+    draft = sanitizeDraftForReview(
+      applyAdCopy(draft, { headlines: retryHead.headlines, translations: retryHead.translations }, pageLinks, {
+        padFromTemplate: false,
+      }),
+      shell,
+      { padFromFallback: false },
+    );
+  }
+  if (draft.descriptions.length < AD_COPY_LIMITS.descriptionCount.min) {
+    const retryDesc = await runChunk(
+      'descriptions',
+      `Return JSON only: {"descriptions": string[${AD_COPY_LIMITS.descriptionCount.prefer}], "translations": {"descriptions": string[${AD_COPY_LIMITS.descriptionCount.prefer}]}}
+Need at least ${AD_COPY_LIMITS.descriptionCount.min} unique descriptions. Each <= ${AD_COPY_LIMITS.description}.`,
+      700,
+    );
+    draft = sanitizeDraftForReview(
+      applyAdCopy(draft, { descriptions: retryDesc.descriptions, translations: retryDesc.translations }, pageLinks, {
+        padFromTemplate: false,
+      }),
+      shell,
+      { padFromFallback: false },
+    );
+  }
+
+  if (draft.headlines.length < AD_COPY_LIMITS.headlineCount.min) {
+    throw new Error(`标题生成不足（${draft.headlines.length}/${AD_COPY_LIMITS.headlineCount.min}），请重试`);
+  }
+  if (draft.descriptions.length < AD_COPY_LIMITS.descriptionCount.min) {
+    throw new Error(`描述生成不足（${draft.descriptions.length}/${AD_COPY_LIMITS.descriptionCount.min}），请重试`);
+  }
+
+  // 站内链接「尚未验证」由 generate 随后 autoVerify；此处不因此整单失败
+  const errors = validateDraft(draft).filter((message) => !/尚未验证/.test(message));
+  if (errors.length) {
+    throw new Error(`文案校验未通过：${errors.slice(0, 3).join('；')}`);
+  }
   return draft;
 }
 
@@ -346,23 +495,28 @@ export function parseModelJson(text: string): Record<string, unknown> {
 }
 
 /**
- * 把模型文案套进草稿。超长截断到规范上限，条数不够时用示例草稿补齐。
- * 站内链接落地页会去重并优先落到爬到的同站内链。
+ * 把模型文案套进草稿。超长截断到规范上限。
+ * padFromTemplate=false（默认）：不用示例句凑数；true 仅兼容旧测试/未开 AI 合并。
  */
 export function applyAdCopy(
   base: AdDraft,
   raw: Record<string, unknown>,
   pageLinks: Array<{ url: string; label?: string }> = [],
+  options?: { padFromTemplate?: boolean },
 ): AdDraft {
+  const padFromTemplate = options?.padFromTemplate === true;
   const limits = AD_COPY_LIMITS;
-  const headlines = uniqueNonEmpty([
-    ...textList(raw.headlines).map((text) => fitAdText(text, limits.headline)),
-    ...base.headlines,
-  ]).slice(0, limits.headlineCount.max);
-  const descriptions = uniqueNonEmpty([
-    ...textList(raw.descriptions).map((text) => fitAdText(text, limits.description)),
-    ...base.descriptions,
-  ]).slice(0, limits.descriptionCount.max);
+  const modelHeadlines = textList(raw.headlines).map((text) => fitAdText(text, limits.headline));
+  const modelDescriptions = textList(raw.descriptions).map((text) => fitAdText(text, limits.description));
+  const modelCallouts = textList(raw.callouts).map((text) => fitAdText(text, limits.callout));
+  const headlines = uniqueNonEmpty(
+    padFromTemplate ? [...modelHeadlines, ...base.headlines] : modelHeadlines.length ? modelHeadlines : base.headlines,
+  ).slice(0, limits.headlineCount.max);
+  const descriptions = uniqueNonEmpty(
+    padFromTemplate
+      ? [...modelDescriptions, ...base.descriptions]
+      : modelDescriptions.length ? modelDescriptions : base.descriptions,
+  ).slice(0, limits.descriptionCount.max);
   const keywords = textList(raw.keywords)
     .map((text) => stripKeywordDecorations(text).slice(0, 80))
     .filter(Boolean)
@@ -373,27 +527,27 @@ export function applyAdCopy(
     .filter(Boolean)
     .slice(0, 12)
     .map((text) => ({ text, matchType: 'BROAD' as const }));
-  const callouts = uniqueNonEmpty([
-    ...textList(raw.callouts).map((text) => fitAdText(text, limits.callout)),
-    ...base.callouts,
-  ]).slice(0, limits.calloutCount.prefer);
+  const callouts = uniqueNonEmpty(
+    padFromTemplate ? [...modelCallouts, ...base.callouts] : modelCallouts.length ? modelCallouts : base.callouts,
+  ).slice(0, limits.calloutCount.prefer);
+  const modelSitelinks = sitelinkList(raw.sitelinks);
   const sitelinks = ensureCompleteSitelinks(
-    [
-      ...sitelinkList(raw.sitelinks),
-      ...base.sitelinks,
-    ].slice(0, limits.sitelinkCount.prefer),
+    (padFromTemplate ? [...modelSitelinks, ...base.sitelinks] : modelSitelinks).slice(0, limits.sitelinkCount.prefer),
     base.merchantUrl,
-    base.sitelinks,
+    padFromTemplate ? base.sitelinks : [],
     pageLinks,
   );
-  const structuredSnippets = structuredSnippetList(raw.structuredSnippets, base.structuredSnippets);
+  const structuredSnippets = structuredSnippetList(
+    raw.structuredSnippets,
+    padFromTemplate ? base.structuredSnippets : [],
+  );
   const promotion = typeof raw.promotion === 'string' ? raw.promotion.trim().slice(0, 120) : base.promotion;
   const promotionAsset = parsePromotionAsset(raw.promotionAsset, base);
   const nextKeywords = keywords.length ? keywords : base.keywords;
-  const nextCallouts = callouts.length ? callouts : base.callouts;
-  const nextSnippets = structuredSnippets.length ? structuredSnippets : base.structuredSnippets;
+  const nextCallouts = callouts;
+  const nextSnippets = structuredSnippets.length ? structuredSnippets : (padFromTemplate ? base.structuredSnippets : []);
   const nextSitelinks = sitelinks;
-  const translations = parseTranslations(raw.translations, {
+  const parsedTranslations = parseTranslations(raw.translations, {
     headlines,
     descriptions,
     callouts: nextCallouts,
@@ -402,9 +556,12 @@ export function applyAdCopy(
     structuredSnippets: nextSnippets,
     promotion,
   });
+  const translations = padFromTemplate
+    ? (parsedTranslations ?? base.translations)
+    : mergeTranslations_(base.translations, parsedTranslations);
 
-  if (headlines.length < limits.headlineCount.min) throw new Error('模型标题不足，补齐后仍不够');
-  if (descriptions.length < limits.descriptionCount.min) throw new Error('模型描述不足，补齐后仍不够');
+  if (headlines.length < limits.headlineCount.min) throw new Error('模型标题不足');
+  if (descriptions.length < limits.descriptionCount.min) throw new Error('模型描述不足');
 
   return {
     ...base,
@@ -419,6 +576,22 @@ export function applyAdCopy(
     promotionAsset,
     translations,
     imageUrls: base.imageUrls ?? [],
+  };
+}
+
+function mergeTranslations_(
+  prev: AdDraft['translations'] | undefined,
+  next: AdDraft['translations'] | undefined,
+): AdDraft['translations'] | undefined {
+  if (!prev && !next) return undefined;
+  return {
+    headlines: next?.headlines?.length ? next.headlines : prev?.headlines,
+    descriptions: next?.descriptions?.length ? next.descriptions : prev?.descriptions,
+    callouts: next?.callouts?.length ? next.callouts : prev?.callouts,
+    sitelinks: next?.sitelinks?.length ? next.sitelinks : prev?.sitelinks,
+    keywords: next?.keywords?.length ? next.keywords : prev?.keywords,
+    structuredSnippets: next?.structuredSnippets?.length ? next.structuredSnippets : prev?.structuredSnippets,
+    promotion: next?.promotion || prev?.promotion,
   };
 }
 
@@ -655,7 +828,7 @@ async function askJson(
       { role: 'system', content: system },
       { role: 'user', content: `${task}\n${shape}` },
     ],
-    { maxTokens },
+    { maxTokens, timeoutMs: 90000 },
   );
   try {
     return parseModelJson(first);
@@ -665,7 +838,7 @@ async function askJson(
         { role: 'system', content: system },
         { role: 'user', content: `${task}\n${shape}\nThe previous reply was not valid JSON. Return one JSON object and nothing else.` },
       ],
-      { maxTokens },
+      { maxTokens, timeoutMs: 90000 },
     );
     return parseModelJson(second);
   }

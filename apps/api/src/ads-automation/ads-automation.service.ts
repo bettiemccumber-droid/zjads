@@ -2069,6 +2069,15 @@ export class AdsAutomationService implements OnModuleInit {
             pageLinks,
             pageTextHints: siteContext.pageTextHints,
             siteScan: siteContext.siteScan,
+            onProgress: async (message, progress) => {
+              await this.prisma.adJob.update({
+                where: { id: jobId },
+                data: {
+                  progressMessage: message,
+                  ...(typeof progress === 'number' ? { progress } : {}),
+                },
+              });
+            },
           })
         : buildSampleDraft({
             merchantName: input.merchantName,

@@ -89,12 +89,15 @@ const base = buildSampleDraft({
 const draft = applyAdCopy(
   base,
   parseModelJson(`\`\`\`json
-{"headlines":["Gậy golf Acegolfs","Xem Acegolfs","Acegolfs hôm nay","${'x'.repeat(40)}"],"descriptions":["Xem gậy và phụ kiện Acegolfs.","Các mẫu đang bán tại Acegolfs."],"keywords":["acegolfs"],"sitelinks":[{"linkText":"Xem ngay","description1":"Gậy golf","description2":"Phụ kiện"}]}
+{"headlines":["Gậy golf Acegolfs","Xem Acegolfs","Acegolfs hôm nay","${'x'.repeat(40)}"],"descriptions":["Xem gậy và phụ kiện Acegolfs.","Các mẫu đang bán tại Acegolfs."],"keywords":["acegolfs"],"sitelinks":[{"linkText":"Xem ngay","description1":"Gậy golf","description2":"Phụ kiện","finalUrl":"https://example.com/"},{"linkText":"Mua ngay","description1":"Phu kien","description2":"Gậy mới","finalUrl":"https://example.com/shop"},{"linkText":"Bo suu tap","description1":"Xem them","description2":"Lua chon","finalUrl":"https://example.com/collections"},{"linkText":"Ban chay","description1":"Top picks","description2":"Hot items","finalUrl":"https://example.com/best"},{"linkText":"Uu dai","description1":"Sale now","description2":"Save more","finalUrl":"https://example.com/sale"},{"linkText":"Lien he","description1":"Support","description2":"Help desk","finalUrl":"https://example.com/help"}],"callouts":["Chinh hang","Giao nhanh","Bao hanh","Mua online","Lua chon nhieu","Thanh toan an toan","Hang moi","Dat hang"]}
 \`\`\``),
+  [],
+  { padFromTemplate: false },
 );
 assert.ok(draft.sitelinks.every((link) => !link.verified), '生成后站内链接默认未验证');
 assert.deepStrictEqual(validateDraft(withVerifiedSitelinks(draft)), []);
 assert.ok(draft.headlines.length >= 3);
+assert.ok(!draft.headlines.some((text) => /^Explore /i.test(text)), 'AI 路径不应拼入 Explore 模板句');
 assert.strictEqual(draft.merchantUrl, 'https://example.com/');
 assert.strictEqual(draft.dailyBudgetUsd, '3.00');
 assert.strictEqual(draft.sitelinks.length, 6);
@@ -106,20 +109,45 @@ assert.strictEqual(normalizePageKey(draft.sitelinks[0].finalUrl), normalizePageK
 
 const longDesc = `Discover travel deals and experiences with Klook across Australia including tours activities and attractions you can book today with flexible options for every traveler.`;
 assert.ok(longDesc.length > 90);
-const repaired = applyAdCopy(base, {
-  headlines: ['Klook AU', 'Book Klook', 'Klook Trips', 'x'.repeat(40)],
-  descriptions: [longDesc],
-  keywords: ['klook'],
-  callouts: ['Official Site', 'Shop Online'],
-  structuredSnippets: [{ header: 'TYPES', values: ['Tours', 'Tickets', 'Activities', 'Transfers'] }],
-});
+const repaired = applyAdCopy(
+  base,
+  {
+    headlines: ['Klook AU', 'Book Klook', 'Klook Trips', 'x'.repeat(40)],
+    descriptions: [longDesc, 'Book tours and tickets with Klook today.'],
+    keywords: ['klook'],
+    callouts: ['Official Site', 'Shop Online'],
+    structuredSnippets: [
+      { header: 'TYPES', values: ['Tours', 'Tickets', 'Activities', 'Transfers'] },
+      { header: 'Styles', values: ['Family', 'Adventure', 'City', 'Day trips'] },
+    ],
+  },
+  [],
+  { padFromTemplate: false },
+);
 assert.deepStrictEqual(validateDraft(withVerifiedSitelinks(repaired)), []);
 assert.ok(repaired.descriptions.every((text) => text.length <= 90));
 assert.ok(repaired.descriptions.length >= 2);
 assert.ok(repaired.headlines.length >= 3);
 assert.ok(repaired.callouts.length >= 1);
+assert.ok(!repaired.headlines.some((text) => /New Arrivals/i.test(text)));
 assert.strictEqual(repaired.structuredSnippets.length, 2);
 assert.strictEqual(repaired.structuredSnippets[0].header, 'Types');
+
+const noPadSanitize = sanitizeDraftForReview(
+  {
+    ...base,
+    headlines: ['Brand One', 'Brand Two', 'Brand Three'],
+    descriptions: ['Desc one for the brand store.', 'Desc two with clear shipping info.'],
+    callouts: ['Trusted Brand'],
+    sitelinks: base.sitelinks.slice(0, 2),
+    translations: undefined,
+  },
+  base,
+  { padFromFallback: false },
+);
+assert.strictEqual(noPadSanitize.headlines.length, 3);
+assert.ok(!noPadSanitize.headlines.some((text) => /Explore |New Arrivals|Picks/i.test(text)));
+assert.ok((noPadSanitize.translations?.headlines?.length ?? 0) === 0);
 
 const dirty = {
   ...base,

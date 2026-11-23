@@ -728,9 +728,16 @@ function keepSitelinkField_(
 }
 
 /**
- * 生成后把不合规字段替换成示例草稿里的安全文案，保证能进入人工预览，而不是整单失败。
+ * 生成后清洗不合规字段。
+ * padFromFallback=true（默认）：用示例草稿补齐，方便未开 AI 时进预览。
+ * padFromFallback=false：只用草稿自身行，不用 Explore/新品 等模板凑数。
  */
-export function sanitizeDraftForReview(draft: AdDraft, fallback: AdDraft): AdDraft {
+export function sanitizeDraftForReview(
+  draft: AdDraft,
+  fallback: AdDraft,
+  options?: { padFromFallback?: boolean },
+): AdDraft {
+  const padFromFallback = options?.padFromFallback !== false;
   const limits = AD_COPY_LIMITS;
   const fillLines = (
     primary: string[],
@@ -742,7 +749,8 @@ export function sanitizeDraftForReview(draft: AdDraft, fallback: AdDraft): AdDra
     const used = new Set<string>();
     const out: string[] = [];
     const maxLen = kind === 'callout' ? limits.callout : kind === 'description' ? limits.description : limits.headline;
-    for (const line of [...primary, ...reserve]) {
+    const pool = padFromFallback ? [...primary, ...reserve] : [...primary];
+    for (const line of pool) {
       if (out.length >= max) break;
       const text = softenExcessiveUppercase(line.trim());
       if (isUnsafeAdText(text, kind)) continue;
@@ -751,6 +759,7 @@ export function sanitizeDraftForReview(draft: AdDraft, fallback: AdDraft): AdDra
       used.add(key);
       out.push(text);
     }
+    if (!padFromFallback) return out.slice(0, max);
     const safeFallback = kind === 'callout' ? 'Shop Online' : 'Official Site';
     let guard = 0;
     while (out.length < min && guard < min + 8) {
@@ -783,24 +792,29 @@ export function sanitizeDraftForReview(draft: AdDraft, fallback: AdDraft): AdDra
     limits.descriptionCount.max,
     'description',
   ).map((text) => text.slice(0, limits.description));
+  const calloutMin = padFromFallback
+    ? Math.min(limits.calloutCount.prefer, fallback.callouts.length || limits.calloutCount.prefer)
+    : 0;
   const callouts = fillLines(
     draft.callouts,
     fallback.callouts,
-    Math.min(limits.calloutCount.prefer, fallback.callouts.length || limits.calloutCount.prefer),
+    calloutMin,
     limits.calloutCount.prefer,
     'callout',
   ).map((text) => text.slice(0, limits.callout));
 
   const merchantHome = draft.merchantUrl || fallback.merchantUrl;
-  const sitelinkSource = (draft.sitelinks.length >= limits.sitelinkCount.prefer
-    ? draft.sitelinks
-    : [...draft.sitelinks, ...fallback.sitelinks]
+  const sitelinkSource = (
+    padFromFallback && draft.sitelinks.length < limits.sitelinkCount.prefer
+      ? [...draft.sitelinks, ...fallback.sitelinks]
+      : draft.sitelinks
   ).slice(0, limits.sitelinkCount.prefer);
   const sitelinks = ensureCompleteSitelinks(
     assignUniqueSitelinkUrls(
       sitelinkSource.map((link, index) => {
-        const fallbackLink = fallback.sitelinks[index] || fallback.sitelinks[0];
-        // 只在空或硬违规时换兜底，保留模型按商家写的活文案（含合理促销语）
+        const fallbackLink = padFromFallback
+          ? (fallback.sitelinks[index] || fallback.sitelinks[0])
+          : undefined;
         const linkText = keepSitelinkField_(
           softenExcessiveUppercase(link.linkText),
           fallbackLink?.linkText,
@@ -829,12 +843,12 @@ export function sanitizeDraftForReview(draft: AdDraft, fallback: AdDraft): AdDra
       merchantHome,
     ),
     merchantHome,
-    fallback.sitelinks,
+    padFromFallback ? fallback.sitelinks : [],
   );
 
   const structuredSnippets = (draft.structuredSnippets?.length
     ? draft.structuredSnippets
-    : fallback.structuredSnippets
+    : (padFromFallback ? fallback.structuredSnippets : [])
   )
     .map((row) => ({
       header: normalizeStructuredSnippetHeader(row.header) || row.header,
@@ -847,28 +861,30 @@ export function sanitizeDraftForReview(draft: AdDraft, fallback: AdDraft): AdDra
     .slice(0, limits.structuredCategories);
   const snippets = structuredSnippets.length === limits.structuredCategories
     ? structuredSnippets
-    : fallback.structuredSnippets;
+    : (padFromFallback ? fallback.structuredSnippets : structuredSnippets);
 
   const promotion = draft.promotion?.trim() && !isUnsafeAdText(draft.promotion, 'general')
     ? draft.promotion.trim().slice(0, 120)
     : '';
   const promotionAsset = draft.promotionAsset?.enabled
     ? draft.promotionAsset
-    : (fallback.promotionAsset ?? null);
+    : (padFromFallback ? (fallback.promotionAsset ?? null) : null);
 
   return {
     ...fallback,
     ...draft,
     headlines,
     descriptions,
-    keywords: draft.keywords.length ? draft.keywords : fallback.keywords,
-    negativeKeywords: draft.negativeKeywords.length ? draft.negativeKeywords : fallback.negativeKeywords,
+    keywords: draft.keywords.length ? draft.keywords : (padFromFallback ? fallback.keywords : draft.keywords),
+    negativeKeywords: draft.negativeKeywords.length
+      ? draft.negativeKeywords
+      : (padFromFallback ? fallback.negativeKeywords : draft.negativeKeywords),
     callouts,
     sitelinks: sitelinks.slice(0, limits.sitelinkCount.max),
     structuredSnippets: snippets,
     promotion,
     promotionAsset,
-    translations: draft.translations ?? fallback.translations,
+    translations: draft.translations ?? (padFromFallback ? fallback.translations : undefined),
     merchantUrl: draft.merchantUrl || fallback.merchantUrl,
     geoTargetId: draft.geoTargetId || fallback.geoTargetId,
     languageCode: draft.languageCode || fallback.languageCode,
@@ -1410,7 +1426,8 @@ export function ensureCompleteSitelinks(
 ): AdSitelink[] {
   const prefer = AD_COPY_LIMITS.sitelinkCount.prefer;
   const padded = [...sitelinks];
-  while (padded.length < prefer) {
+  // 无 fallback 时不凑条数（AI 路径）；有示例草稿时才补到 prefer
+  while (padded.length < prefer && fallback.length > 0) {
     const seed = fallback[padded.length] || fallback[0] || {
       linkText: 'Shop now',
       description1: 'Browse online',

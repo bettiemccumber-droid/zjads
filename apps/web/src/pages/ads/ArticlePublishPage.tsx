@@ -1,9 +1,10 @@
 import { useEffect, useRef, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { Alert, Button, Card, Divider, Form, Input, Result, Select, Space, Spin, Steps, Tag, Typography, message } from 'antd';
-import { FileTextOutlined, LinkOutlined, UserOutlined, WarningOutlined } from '@ant-design/icons';
+import { CheckCircleFilled, FileTextOutlined, LinkOutlined, UserOutlined, WarningOutlined } from '@ant-design/icons';
 import { api, type ApiResult } from '../../api/client';
 import PersonaLibraryModal from './PersonaLibraryModal';
+import './ArticlePublishPage.css';
 
 interface ChannelAccount {
   id: number;
@@ -586,7 +587,7 @@ export default function ArticlePublishPage() {
           <Spin spinning={generating} tip="正在按投放国家生成文章，请稍候...">
             <Typography.Text strong>选择文章配图（已选 {selectedImageUrls.length} 条）</Typography.Text>
             <Typography.Paragraph type="secondary">
-              只保留能打开的图；裂图会自动剔除。没有抓到的话，可以从电脑上传。
+              默认不勾选，请点选要用的图；裂图会自动剔除。没有抓到的话，可以从电脑上传。
             </Typography.Paragraph>
             <input
               ref={uploadRef}
@@ -600,7 +601,7 @@ export default function ArticlePublishPage() {
               }}
             />
             <Button style={{ marginBottom: 12 }} onClick={() => uploadRef.current?.click()}>上传图片</Button>
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 12 }}>
+            <div className="article-image-grid">
               {images.map((image) => {
                 const selected = selectedImageUrls.includes(image.url);
                 return (
@@ -608,34 +609,27 @@ export default function ArticlePublishPage() {
                     key={image.url}
                     type="button"
                     title={image.alt || image.url}
+                    className={`article-image-tile${selected ? ' is-selected' : ''}`}
                     onClick={() => setSelectedImageUrls((current) => (
                       current.includes(image.url) ? current.filter((item) => item !== image.url) : [...current, image.url]
                     ))}
-                    style={{
-                      height: 110,
-                      padding: 0,
-                      borderRadius: 8,
-                      overflow: 'hidden',
-                      border: selected ? '2px solid #1677ff' : '1px solid #f0f0f0',
-                      background: '#f5f5f5',
-                      cursor: 'pointer',
-                    }}
                   >
                     <img
                       src={image.url}
                       alt={image.alt || '商家配图'}
                       referrerPolicy="no-referrer"
-                      onLoad={() => {
-                        setSelectedImageUrls((current) => (
-                          current.includes(image.url) ? current : [...current, image.url].slice(0, 8)
-                        ));
-                      }}
                       onError={() => {
                         setImages((current) => current.filter((item) => item.url !== image.url));
                         setSelectedImageUrls((current) => current.filter((url) => url !== image.url));
                       }}
-                      style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }}
                     />
+                    {selected ? (
+                      <span className="article-image-check" aria-hidden>
+                        <CheckCircleFilled />
+                      </span>
+                    ) : (
+                      <span className="article-image-hint">点击选择</span>
+                    )}
                   </button>
                 );
               })}

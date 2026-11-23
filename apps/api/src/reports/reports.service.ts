@@ -1860,7 +1860,16 @@ export class ReportsService {
       },
     });
 
-    const { days, totals } = aggregatePlatformDaily(rows, q.startDate, q.endDate);
+    const { days, totals } = aggregatePlatformDaily(
+      rows.map((row) => ({
+        clickDate: row.clickDate,
+        clicks: row.clicks,
+        performanceOrders: row.performanceOrders,
+        performanceCommission: Number(row.performanceCommission),
+      })),
+      q.startDate,
+      q.endDate,
+    );
     return {
       platformCode,
       startDate: q.startDate,

@@ -4,13 +4,9 @@ import {
   Alert,
   Button,
   Card,
-  Col,
   DatePicker,
   Empty,
-  Row,
   Select,
-  Space,
-  Statistic,
   Table,
   Typography,
   message,
@@ -22,6 +18,7 @@ import { useAuth } from '../hooks/useAuth';
 import { employeeDefaultDateRange } from '../utils/date-range.util';
 import { parseScopedViewUserId } from '../utils/team-scope.util';
 import { OPS_PLATFORM_SHORT, opsPlatformShort } from '../utils/opsPlatform';
+import './PlatformDailyPage.css';
 
 const { RangePicker } = DatePicker;
 
@@ -66,6 +63,28 @@ const EMPTY_TOTALS = {
   rejected: 0,
   profit: 0,
 };
+
+function formatMoney(value: number): string {
+  return value.toLocaleString('en-US', {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  });
+}
+
+function MoneyCell({
+  value,
+  kind,
+}: {
+  value: number;
+  kind: 'cost' | 'commission' | 'rejected' | 'profit';
+}) {
+  const neg = kind === 'profit' && value < 0;
+  return (
+    <span className={`pd-num pd-money-${kind}${neg ? ' is-neg' : ''}`}>
+      {formatMoney(value)}
+    </span>
+  );
+}
 
 /**
  * 平台按天 P&L：广告点击/花费 + 联盟订单佣金/拒付。
@@ -154,42 +173,47 @@ export default function PlatformDailyPage() {
   }, [load]);
 
   const columns: ColumnsType<PlatformDailyDay> = [
-    { title: '日期', dataIndex: 'date', width: 120 },
+    {
+      title: '日期',
+      dataIndex: 'date',
+      width: 120,
+      render: (value: string) => <span className="pd-date">{value}</span>,
+    },
     {
       title: '点击',
       dataIndex: 'clicks',
       align: 'right',
-      render: (value: number) => value.toLocaleString(),
+      render: (value: number) => <span className="pd-num">{value.toLocaleString()}</span>,
     },
     {
       title: '订单',
       dataIndex: 'orders',
       align: 'right',
-      render: (value: number) => value.toLocaleString(),
+      render: (value: number) => <span className="pd-num">{value.toLocaleString()}</span>,
     },
     {
       title: '花费 ($)',
       dataIndex: 'cost',
       align: 'right',
-      render: (value: number) => value.toFixed(2),
+      render: (value: number) => <MoneyCell value={value} kind="cost" />,
     },
     {
       title: '佣金 ($)',
       dataIndex: 'commission',
       align: 'right',
-      render: (value: number) => value.toFixed(2),
+      render: (value: number) => <MoneyCell value={value} kind="commission" />,
     },
     {
       title: '拒付 ($)',
       dataIndex: 'rejected',
       align: 'right',
-      render: (value: number) => value.toFixed(2),
+      render: (value: number) => <MoneyCell value={value} kind="rejected" />,
     },
     {
       title: '利润 ($)',
       dataIndex: 'profit',
       align: 'right',
-      render: (value: number) => value.toFixed(2),
+      render: (value: number) => <MoneyCell value={value} kind="profit" />,
     },
   ];
 
@@ -205,65 +229,74 @@ export default function PlatformDailyPage() {
       || day.profit !== 0,
   );
 
+  const metrics = [
+    { key: 'clicks', label: '总点击', value: totals.clicks.toLocaleString(), className: 'pd-metric--clicks' },
+    { key: 'orders', label: '总订单', value: totals.orders.toLocaleString(), className: 'pd-metric--orders' },
+    { key: 'cost', label: '总花费', value: `$${formatMoney(totals.cost)}`, className: 'pd-metric--cost' },
+    {
+      key: 'commission',
+      label: '总佣金',
+      value: `$${formatMoney(totals.commission)}`,
+      className: 'pd-metric--commission',
+    },
+    {
+      key: 'rejected',
+      label: '总拒付',
+      value: `$${formatMoney(totals.rejected)}`,
+      className: 'pd-metric--rejected',
+    },
+    {
+      key: 'profit',
+      label: '总利润',
+      value: `$${formatMoney(totals.profit)}`,
+      className: `pd-metric--profit${totals.profit < 0 ? ' is-neg' : ''}`,
+    },
+  ] as const;
+
+  const rangeLabel = data ? `${data.startDate} ~ ${data.endDate}` : `${dateParams.startDate} ~ ${dateParams.endDate}`;
+
   return (
-    <div>
-      <Typography.Title level={4} style={{ marginTop: 0 }}>
-        {viewUserId && isAdmin ? `平台日报（${viewUsername}）` : '平台日报'}
-      </Typography.Title>
-      <Typography.Paragraph type="secondary">
-        按平台查看每天点击、订单、花费、佣金、拒付与利润。点击/花费来自已导入的广告系列日报（按联盟序号归属平台）；订单/佣金/拒付来自已同步入库的联盟订单（与「数据采集」同源）。利润 = 佣金 − 拒付 − 花费。
-      </Typography.Paragraph>
+    <div className="platform-daily-page">
+      <div className="pd-header">
+        <div>
+          <Typography.Title level={4}>
+            {viewUserId && isAdmin ? `平台日报（${viewUsername}）` : '平台日报'}
+          </Typography.Title>
+          <p className="pd-header-desc">
+            点击/花费来自广告系列日报；订单/佣金/拒付来自联盟订单。利润 = 佣金 − 拒付 − 花费。
+          </p>
+        </div>
+      </div>
 
-      <Card style={{ marginBottom: 16 }}>
-        <Space wrap>
-          <Select
-            style={{ minWidth: 180 }}
-            value={platformCode}
-            options={platformOptions}
-            onChange={setPlatformCode}
-            showSearch
-            optionFilterProp="label"
-          />
-          <RangePicker value={range} onChange={(value) => value && setRange(value as [Dayjs, Dayjs])} />
-          <Button type="primary" loading={loading} onClick={() => void load()}>
-            查询
-          </Button>
-          <Link to={viewUserId ? `/dashboard?userId=${viewUserId}` : '/dashboard'}>去数据采集</Link>
-        </Space>
-      </Card>
+      <div className="pd-toolbar">
+        <Select
+          style={{ minWidth: 180 }}
+          value={platformCode}
+          options={platformOptions}
+          onChange={setPlatformCode}
+          showSearch
+          optionFilterProp="label"
+        />
+        <RangePicker value={range} onChange={(value) => value && setRange(value as [Dayjs, Dayjs])} />
+        <Button type="primary" loading={loading} onClick={() => void load()}>
+          查询
+        </Button>
+        <Link
+          className="pd-toolbar-link"
+          to={viewUserId ? `/dashboard?userId=${viewUserId}` : '/dashboard'}
+        >
+          去数据采集
+        </Link>
+      </div>
 
-      <Row gutter={[16, 16]} style={{ marginBottom: 16 }}>
-        <Col xs={12} sm={8} md={4}>
-          <Card>
-            <Statistic title="总点击" value={totals.clicks} />
-          </Card>
-        </Col>
-        <Col xs={12} sm={8} md={4}>
-          <Card>
-            <Statistic title="总订单" value={totals.orders} />
-          </Card>
-        </Col>
-        <Col xs={12} sm={8} md={4}>
-          <Card>
-            <Statistic title="总花费" prefix="$" value={totals.cost} precision={2} />
-          </Card>
-        </Col>
-        <Col xs={12} sm={8} md={4}>
-          <Card>
-            <Statistic title="总佣金" prefix="$" value={totals.commission} precision={2} />
-          </Card>
-        </Col>
-        <Col xs={12} sm={8} md={4}>
-          <Card>
-            <Statistic title="总拒付" prefix="$" value={totals.rejected} precision={2} />
-          </Card>
-        </Col>
-        <Col xs={12} sm={8} md={4}>
-          <Card>
-            <Statistic title="总利润" prefix="$" value={totals.profit} precision={2} />
-          </Card>
-        </Col>
-      </Row>
+      <div className="pd-metrics">
+        {metrics.map((item) => (
+          <div key={item.key} className={`pd-metric ${item.className}`}>
+            <div className="pd-metric-label">{item.label}</div>
+            <div className="pd-metric-value">{item.value}</div>
+          </div>
+        ))}
+      </div>
 
       {!hasAnySignal && !loading ? (
         <Alert
@@ -289,9 +322,15 @@ export default function PlatformDailyPage() {
         />
       ) : null}
 
-      <Card title={`${opsPlatformShort(platformCode)} · 按天明细`}>
+      <Card
+        className="pd-table-card"
+        title={`${opsPlatformShort(platformCode)} · 按天明细`}
+        extra={<Typography.Text type="secondary" style={{ fontSize: 12 }}>{rangeLabel}</Typography.Text>}
+      >
         <Table
+          className="pd-table"
           rowKey="date"
+          size="middle"
           loading={loading}
           columns={columns}
           dataSource={days}
@@ -302,12 +341,24 @@ export default function PlatformDailyPage() {
             <Table.Summary fixed>
               <Table.Summary.Row>
                 <Table.Summary.Cell index={0}>合计</Table.Summary.Cell>
-                <Table.Summary.Cell index={1} align="right">{totals.clicks.toLocaleString()}</Table.Summary.Cell>
-                <Table.Summary.Cell index={2} align="right">{totals.orders.toLocaleString()}</Table.Summary.Cell>
-                <Table.Summary.Cell index={3} align="right">{totals.cost.toFixed(2)}</Table.Summary.Cell>
-                <Table.Summary.Cell index={4} align="right">{totals.commission.toFixed(2)}</Table.Summary.Cell>
-                <Table.Summary.Cell index={5} align="right">{totals.rejected.toFixed(2)}</Table.Summary.Cell>
-                <Table.Summary.Cell index={6} align="right">{totals.profit.toFixed(2)}</Table.Summary.Cell>
+                <Table.Summary.Cell index={1} align="right">
+                  <span className="pd-num">{totals.clicks.toLocaleString()}</span>
+                </Table.Summary.Cell>
+                <Table.Summary.Cell index={2} align="right">
+                  <span className="pd-num">{totals.orders.toLocaleString()}</span>
+                </Table.Summary.Cell>
+                <Table.Summary.Cell index={3} align="right">
+                  <MoneyCell value={totals.cost} kind="cost" />
+                </Table.Summary.Cell>
+                <Table.Summary.Cell index={4} align="right">
+                  <MoneyCell value={totals.commission} kind="commission" />
+                </Table.Summary.Cell>
+                <Table.Summary.Cell index={5} align="right">
+                  <MoneyCell value={totals.rejected} kind="rejected" />
+                </Table.Summary.Cell>
+                <Table.Summary.Cell index={6} align="right">
+                  <MoneyCell value={totals.profit} kind="profit" />
+                </Table.Summary.Cell>
               </Table.Summary.Row>
             </Table.Summary>
           )}

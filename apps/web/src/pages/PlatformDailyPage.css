@@ -1,0 +1,232 @@
+.platform-daily-page {
+  --pd-ink: #0f172a;
+  --pd-muted: #64748b;
+  --pd-line: #e8edf3;
+  --pd-surface: #ffffff;
+  --pd-panel: #f4f7fb;
+  --pd-accent: #1677ff;
+  --pd-cost: #475569;
+  --pd-commission: #0f766e;
+  --pd-rejected: #b42318;
+  --pd-profit-pos: #047857;
+  --pd-profit-neg: #b42318;
+}
+
+.platform-daily-page .pd-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 12px 24px;
+  margin-bottom: 16px;
+}
+
+.platform-daily-page .pd-header h4 {
+  margin: 0 0 4px;
+  color: var(--pd-ink);
+  letter-spacing: 0.01em;
+}
+
+.platform-daily-page .pd-header-desc {
+  margin: 0;
+  max-width: 52rem;
+  color: var(--pd-muted);
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.platform-daily-page .pd-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px 12px;
+  margin-bottom: 16px;
+  padding: 12px 14px;
+  background: var(--pd-surface);
+  border: 1px solid var(--pd-line);
+  border-radius: 10px;
+}
+
+.platform-daily-page .pd-toolbar-link {
+  margin-left: 4px;
+  font-size: 13px;
+}
+
+.platform-daily-page .pd-metrics {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 10px;
+  margin-bottom: 16px;
+}
+
+@media (max-width: 1100px) {
+  .platform-daily-page .pd-metrics {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 640px) {
+  .platform-daily-page .pd-metrics {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+.platform-daily-page .pd-metric {
+  position: relative;
+  padding: 14px 14px 12px;
+  background: var(--pd-surface);
+  border: 1px solid var(--pd-line);
+  border-radius: 10px;
+  overflow: hidden;
+}
+
+.platform-daily-page .pd-metric::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 3px;
+  background: var(--pd-accent);
+}
+
+.platform-daily-page .pd-metric-label {
+  margin-bottom: 6px;
+  color: var(--pd-muted);
+  font-size: 12px;
+  line-height: 1.2;
+}
+
+.platform-daily-page .pd-metric-value {
+  color: var(--pd-ink);
+  font-size: 22px;
+  font-weight: 650;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.02em;
+  line-height: 1.15;
+}
+
+.platform-daily-page .pd-metric--clicks::before {
+  background: #3b82f6;
+}
+
+.platform-daily-page .pd-metric--orders::before {
+  background: #6366f1;
+}
+
+.platform-daily-page .pd-metric--cost::before {
+  background: var(--pd-cost);
+}
+
+.platform-daily-page .pd-metric--cost .pd-metric-value {
+  color: var(--pd-cost);
+}
+
+.platform-daily-page .pd-metric--commission::before {
+  background: var(--pd-commission);
+}
+
+.platform-daily-page .pd-metric--commission .pd-metric-value {
+  color: var(--pd-commission);
+}
+
+.platform-daily-page .pd-metric--rejected::before {
+  background: var(--pd-rejected);
+}
+
+.platform-daily-page .pd-metric--rejected .pd-metric-value {
+  color: var(--pd-rejected);
+}
+
+.platform-daily-page .pd-metric--profit::before {
+  background: var(--pd-profit-pos);
+}
+
+.platform-daily-page .pd-metric--profit.is-neg::before {
+  background: var(--pd-profit-neg);
+}
+
+.platform-daily-page .pd-metric--profit .pd-metric-value {
+  color: var(--pd-profit-pos);
+}
+
+.platform-daily-page .pd-metric--profit.is-neg .pd-metric-value {
+  color: var(--pd-profit-neg);
+}
+
+.platform-daily-page .pd-table-card {
+  border: 1px solid var(--pd-line);
+  border-radius: 10px;
+  overflow: hidden;
+}
+
+.platform-daily-page .pd-table-card .ant-card-head {
+  min-height: 48px;
+  padding: 0 16px;
+  background: linear-gradient(180deg, #f8fafc 0%, #ffffff 100%);
+  border-bottom: 1px solid var(--pd-line);
+}
+
+.platform-daily-page .pd-table-card .ant-card-head-title {
+  padding: 12px 0;
+  color: var(--pd-ink);
+  font-weight: 600;
+}
+
+.platform-daily-page .pd-table-card .ant-card-body {
+  padding: 0;
+}
+
+.platform-daily-page .pd-table .ant-table-thead > tr > th {
+  background: var(--pd-panel) !important;
+  color: var(--pd-muted);
+  font-size: 12px;
+  font-weight: 600;
+  border-bottom: 1px solid var(--pd-line) !important;
+}
+
+.platform-daily-page .pd-table .ant-table-tbody > tr > td {
+  font-variant-numeric: tabular-nums;
+  border-bottom: 1px solid #f0f3f7;
+}
+
+.platform-daily-page .pd-table .ant-table-tbody > tr:hover > td {
+  background: #f7faff !important;
+}
+
+.platform-daily-page .pd-table .ant-table-summary > tr > td {
+  background: #f8fafc;
+  border-top: 1px solid var(--pd-line);
+  font-weight: 650;
+  font-variant-numeric: tabular-nums;
+}
+
+.platform-daily-page .pd-num {
+  font-variant-numeric: tabular-nums;
+}
+
+.platform-daily-page .pd-money-cost {
+  color: var(--pd-cost);
+}
+
+.platform-daily-page .pd-money-commission {
+  color: var(--pd-commission);
+}
+
+.platform-daily-page .pd-money-rejected {
+  color: var(--pd-rejected);
+}
+
+.platform-daily-page .pd-money-profit {
+  color: var(--pd-profit-pos);
+  font-weight: 600;
+}
+
+.platform-daily-page .pd-money-profit.is-neg {
+  color: var(--pd-profit-neg);
+}
+
+.platform-daily-page .pd-date {
+  color: var(--pd-ink);
+  font-weight: 500;
+}

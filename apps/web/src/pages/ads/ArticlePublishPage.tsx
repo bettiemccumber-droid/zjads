@@ -205,6 +205,7 @@ export default function ArticlePublishPage() {
   const [crawling, setCrawling] = useState(false);
   const [imageAttempt, setImageAttempt] = useState(0);
   const [retryUrl, setRetryUrl] = useState('');
+  const [pasteImageUrl, setPasteImageUrl] = useState('');
   const uploadRef = useRef<HTMLInputElement>(null);
   const [preview, setPreview] = useState<ArticlePreview | null>(null);
   /** 预览页可改的跟踪链接；发布时带回后端。 */
@@ -274,11 +275,35 @@ export default function ArticlePublishPage() {
         message.warning('图片太大，请换一张小一些的');
         return;
       }
-      setImages((current) => [...current, ...urls.map((url) => ({ url, alt: '上传的图片' }))].slice(0, 8));
-      setSelectedImageUrls((current) => [...current, ...urls].filter((url, index, all) => all.indexOf(url) === index).slice(0, 8));
+      setImages((current) => [...current, ...urls.map((url) => ({ url, alt: '上传的图片' }))].slice(0, 20));
+      setSelectedImageUrls((current) => [...current, ...urls].filter((url, index, all) => all.indexOf(url) === index).slice(0, 20));
     } catch {
       message.error('这张图片读不出来');
     }
+  };
+
+  /**
+   * 粘贴图片直链加入候选并勾选（与广告选图一致；不依赖爬取是否成功）。
+   */
+  const addImageByUrl = () => {
+    const url = pasteImageUrl.trim();
+    if (!/^https?:\/\//i.test(url)) {
+      message.warning('请粘贴以 http 或 https 开头的图片地址');
+      return;
+    }
+    if (/\.(svg)(\?|$)/i.test(url) || url.toLowerCase().includes('image/svg')) {
+      message.warning('暂不支持 SVG，请用 jpg / png / webp 地址');
+      return;
+    }
+    setImages((current) => {
+      if (current.some((item) => item.url === url)) return current;
+      return [...current, { url, alt: 'URL 图片' }].slice(0, 20);
+    });
+    setSelectedImageUrls((current) => (
+      current.includes(url) ? current : [...current, url].slice(0, 20)
+    ));
+    setPasteImageUrl('');
+    message.success('已添加图片 URL');
   };
 
   const currentPayload = (trackUrl?: string) => ({
@@ -587,7 +612,7 @@ export default function ArticlePublishPage() {
           <Spin spinning={generating} tip="正在按投放国家生成文章，请稍候...">
             <Typography.Text strong>选择文章配图（已选 {selectedImageUrls.length} 条）</Typography.Text>
             <Typography.Paragraph type="secondary">
-              默认不勾选，请点选要用的图；裂图会自动剔除。没有抓到的话，可以从电脑上传。
+              默认不勾选，请点选要用的图；裂图会自动剔除。爬不到时也可本地上传，或像广告选图一样粘贴图片 URL。
             </Typography.Paragraph>
             <input
               ref={uploadRef}
@@ -621,6 +646,7 @@ export default function ArticlePublishPage() {
                       onError={() => {
                         setImages((current) => current.filter((item) => item.url !== image.url));
                         setSelectedImageUrls((current) => current.filter((url) => url !== image.url));
+                        message.warning('这张图打不开，已从列表去掉');
                       }}
                     />
                     {selected ? (
@@ -634,9 +660,18 @@ export default function ArticlePublishPage() {
                 );
               })}
             </div>
+            <Space.Compact style={{ width: '100%', maxWidth: 640, marginTop: 12 }}>
+              <Input
+                placeholder="或粘贴图片 URL（https://...）"
+                value={pasteImageUrl}
+                onChange={(event) => setPasteImageUrl(event.target.value)}
+                onPressEnter={addImageByUrl}
+              />
+              <Button type="primary" onClick={addImageByUrl}>+ 添加 URL</Button>
+            </Space.Compact>
             {!images.length ? (
               <Typography.Paragraph type="secondary" style={{ marginTop: 12 }}>
-                当前没有可用配图，请上传后再生成，或返回上一步换产品页重试。
+                当前没有可用配图，请上传、粘贴图片 URL，或返回上一步换产品页重试。
               </Typography.Paragraph>
             ) : null}
             <Space style={{ marginTop: 16 }}>

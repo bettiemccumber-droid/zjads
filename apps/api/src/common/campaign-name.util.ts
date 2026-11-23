@@ -30,6 +30,21 @@ export function parseCampaignName(name: string): ParsedCampaignName {
 }
 
 /**
+ * 联盟序号前缀 → 系统 platformCode（广告归属 / 账号兜底共用）
+ */
+export function platformCodeFromAlias(alias: string): string {
+  const prefix = (alias || '').toLowerCase();
+  if (prefix.startsWith('lh')) return 'linkhaitao';
+  if (prefix.startsWith('pm')) return 'partnermatic';
+  if (prefix.startsWith('lb')) return 'linkbux';
+  if (prefix.startsWith('rw')) return 'rewardoo';
+  if (prefix.startsWith('ui')) return 'ultrainfluence';
+  if (prefix.startsWith('cg')) return 'collabglow';
+  if (prefix.startsWith('fs')) return 'famesta';
+  return '';
+}
+
+/**
  * 从广告系列联盟序号推断平台名（用于商家汇总补全 platformName）
  */
 export function inferPlatformNameFromAlias(alias: string): string {

@@ -10,7 +10,7 @@ import axios from 'axios';
 import { CryptoService } from '../common/crypto.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { MerchantsService } from '../merchants/merchants.service';
-import { parseCampaignName } from '../common/campaign-name.util';
+import { parseCampaignName, platformCodeFromAlias } from '../common/campaign-name.util';
 import {
   AdCopyTranslations,
   AdDraft,
@@ -3036,21 +3036,6 @@ function campaignMerchantParts(campaignName: string): { name: string; countryCod
   const name = parts.length >= 3 ? parts[2] : '';
   const countryCode = parts.length >= 4 && /^[A-Za-z]{2}$/.test(parts[3]) ? parts[3].toUpperCase() : 'US';
   return { name, countryCode };
-}
-
-/**
- * 联盟序号前缀对应平台代码，用来在没有精确账号时找唯一账号。
- */
-function platformCodeFromAlias(alias: string): string {
-  const prefix = alias.toLowerCase();
-  if (prefix.startsWith('lh')) return 'linkhaitao';
-  if (prefix.startsWith('pm')) return 'partnermatic';
-  if (prefix.startsWith('lb')) return 'linkbux';
-  if (prefix.startsWith('rw')) return 'rewardoo';
-  if (prefix.startsWith('ui')) return 'ultrainfluence';
-  if (prefix.startsWith('cg')) return 'collabglow';
-  if (prefix.startsWith('fs')) return 'famesta';
-  return '';
 }
 
 /**

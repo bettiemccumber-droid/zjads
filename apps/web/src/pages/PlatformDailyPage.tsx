@@ -29,14 +29,24 @@ type PlatformDailyDay = {
   date: string;
   clicks: number;
   orders: number;
+  cost: number;
   commission: number;
+  rejected: number;
+  profit: number;
 };
 
 type PlatformDailyResult = {
   platformCode: string;
   startDate: string;
   endDate: string;
-  totals: { clicks: number; orders: number; commission: number };
+  totals: {
+    clicks: number;
+    orders: number;
+    cost: number;
+    commission: number;
+    rejected: number;
+    profit: number;
+  };
   days: PlatformDailyDay[];
   accountCount: number;
 };
@@ -48,8 +58,17 @@ const FALLBACK_PLATFORMS: PlatformOption[] = Object.entries(OPS_PLATFORM_SHORT).
   label: `${short}（${value}）`,
 }));
 
+const EMPTY_TOTALS = {
+  clicks: 0,
+  orders: 0,
+  cost: 0,
+  commission: 0,
+  rejected: 0,
+  profit: 0,
+};
+
 /**
- * 平台按天佣金：只读展示已采集日报，不改动数据采集页。
+ * 平台按天 P&L：广告点击/花费 + 联盟订单佣金/拒付。
  */
 export default function PlatformDailyPage() {
   const { user } = useAuth();
@@ -135,7 +154,7 @@ export default function PlatformDailyPage() {
   }, [load]);
 
   const columns: ColumnsType<PlatformDailyDay> = [
-    { title: '日期', dataIndex: 'date', width: 140 },
+    { title: '日期', dataIndex: 'date', width: 120 },
     {
       title: '点击',
       dataIndex: 'clicks',
@@ -149,16 +168,42 @@ export default function PlatformDailyPage() {
       render: (value: number) => value.toLocaleString(),
     },
     {
-      title: '预估佣金 ($)',
+      title: '花费 ($)',
+      dataIndex: 'cost',
+      align: 'right',
+      render: (value: number) => value.toFixed(2),
+    },
+    {
+      title: '佣金 ($)',
       dataIndex: 'commission',
+      align: 'right',
+      render: (value: number) => value.toFixed(2),
+    },
+    {
+      title: '拒付 ($)',
+      dataIndex: 'rejected',
+      align: 'right',
+      render: (value: number) => value.toFixed(2),
+    },
+    {
+      title: '利润 ($)',
+      dataIndex: 'profit',
       align: 'right',
       render: (value: number) => value.toFixed(2),
     },
   ];
 
-  const totals = data?.totals ?? { clicks: 0, orders: 0, commission: 0 };
+  const totals = data?.totals ?? EMPTY_TOTALS;
   const days = data?.days ?? [];
-  const hasAnySignal = days.some((day) => day.clicks > 0 || day.orders > 0 || day.commission > 0);
+  const hasAnySignal = days.some(
+    (day) =>
+      day.clicks > 0
+      || day.orders > 0
+      || day.cost > 0
+      || day.commission > 0
+      || day.rejected > 0
+      || day.profit !== 0,
+  );
 
   return (
     <div>
@@ -166,7 +211,7 @@ export default function PlatformDailyPage() {
         {viewUserId && isAdmin ? `平台日报（${viewUsername}）` : '平台日报'}
       </Typography.Title>
       <Typography.Paragraph type="secondary">
-        按平台查看每天预估佣金。订单与佣金来自已同步入库的联盟订单，点击来自联盟点击日报（与「数据采集」同源）。
+        按平台查看每天点击、订单、花费、佣金、拒付与利润。点击/花费来自已导入的广告系列日报（按联盟序号归属平台）；订单/佣金/拒付来自已同步入库的联盟订单（与「数据采集」同源）。利润 = 佣金 − 拒付 − 花费。
       </Typography.Paragraph>
 
       <Card style={{ marginBottom: 16 }}>
@@ -187,20 +232,35 @@ export default function PlatformDailyPage() {
         </Space>
       </Card>
 
-      <Row gutter={16} style={{ marginBottom: 16 }}>
-        <Col xs={24} sm={8}>
+      <Row gutter={[16, 16]} style={{ marginBottom: 16 }}>
+        <Col xs={12} sm={8} md={4}>
           <Card>
             <Statistic title="总点击" value={totals.clicks} />
           </Card>
         </Col>
-        <Col xs={24} sm={8}>
+        <Col xs={12} sm={8} md={4}>
           <Card>
             <Statistic title="总订单" value={totals.orders} />
           </Card>
         </Col>
-        <Col xs={24} sm={8}>
+        <Col xs={12} sm={8} md={4}>
           <Card>
-            <Statistic title="总预估佣金" prefix="$" value={totals.commission} precision={2} />
+            <Statistic title="总花费" prefix="$" value={totals.cost} precision={2} />
+          </Card>
+        </Col>
+        <Col xs={12} sm={8} md={4}>
+          <Card>
+            <Statistic title="总佣金" prefix="$" value={totals.commission} precision={2} />
+          </Card>
+        </Col>
+        <Col xs={12} sm={8} md={4}>
+          <Card>
+            <Statistic title="总拒付" prefix="$" value={totals.rejected} precision={2} />
+          </Card>
+        </Col>
+        <Col xs={12} sm={8} md={4}>
+          <Card>
+            <Statistic title="总利润" prefix="$" value={totals.profit} precision={2} />
           </Card>
         </Col>
       </Row>
@@ -210,7 +270,7 @@ export default function PlatformDailyPage() {
           type="info"
           showIcon
           style={{ marginBottom: 16 }}
-          message={data?.accountCount === 0 ? '当前用户下没有该平台账号' : '这个区间还没有订单或点击数据'}
+          message={data?.accountCount === 0 ? '当前用户下没有该平台账号' : '这个区间还没有订单或广告数据'}
           description={(
             <span>
               {data?.accountCount === 0
@@ -221,7 +281,7 @@ export default function PlatformDailyPage() {
                     {' '}
                     <Link to={viewUserId ? `/dashboard?userId=${viewUserId}` : '/dashboard'}>数据采集</Link>
                     {' '}
-                    勾选该平台账号并同步对应日期；同步后再回来查询。
+                    同步联盟订单，并确认广告系列日报已导入对应日期；然后再回来查询。
                   </>
                 )}
             </span>
@@ -237,13 +297,17 @@ export default function PlatformDailyPage() {
           dataSource={days}
           pagination={{ pageSize: 15, showSizeChanger: true, showTotal: (total) => `共 ${total} 天` }}
           locale={{ emptyText: <Empty description="暂无数据" /> }}
+          scroll={{ x: 720 }}
           summary={() => (
             <Table.Summary fixed>
               <Table.Summary.Row>
                 <Table.Summary.Cell index={0}>合计</Table.Summary.Cell>
                 <Table.Summary.Cell index={1} align="right">{totals.clicks.toLocaleString()}</Table.Summary.Cell>
                 <Table.Summary.Cell index={2} align="right">{totals.orders.toLocaleString()}</Table.Summary.Cell>
-                <Table.Summary.Cell index={3} align="right">{totals.commission.toFixed(2)}</Table.Summary.Cell>
+                <Table.Summary.Cell index={3} align="right">{totals.cost.toFixed(2)}</Table.Summary.Cell>
+                <Table.Summary.Cell index={4} align="right">{totals.commission.toFixed(2)}</Table.Summary.Cell>
+                <Table.Summary.Cell index={5} align="right">{totals.rejected.toFixed(2)}</Table.Summary.Cell>
+                <Table.Summary.Cell index={6} align="right">{totals.profit.toFixed(2)}</Table.Summary.Cell>
               </Table.Summary.Row>
             </Table.Summary>
           )}

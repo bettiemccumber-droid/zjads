@@ -14,7 +14,11 @@ import {
   campaignCoversMerchantAffiliate,
   isOrphanAffiliateCampaign,
 } from '../common/campaign-affiliate-attribution.util';
-import { parseCampaignName, inferPlatformNameFromAlias } from '../common/campaign-name.util';
+import {
+  parseCampaignName,
+  inferPlatformNameFromAlias,
+  platformCodeFromAlias,
+} from '../common/campaign-name.util';
 import { resolveCampaignGroupKey } from '../common/campaign-group.util';
 import { suggestOperation } from '../common/operation-suggest.util';
 import { AuthUser, resolveOwnerUserId } from '../common/ownership.util';
@@ -1808,8 +1812,10 @@ export class ReportsService {
   }
 
   /**
-   * 平台按天佣金/点击/订单。
-   * 订单+佣金：affiliate_order（RW 用 click daily 的 performance*）；点击：click daily。
+   * 平台按天 P&L。
+   * 点击/花费：ad_campaign_daily（联盟序号归属平台）；
+   * 订单/佣金：affiliate_order（RW 用 click daily performance*）；
+   * 拒付：订单状态桶；利润 = 佣金 − 拒付 − 花费。
    */
   async platformDaily(
     user: AuthUser,
@@ -1839,47 +1845,91 @@ export class ReportsService {
         ownerUserId: ownerId,
         platform: { code: platformCode },
       },
-      select: { id: true },
+      select: { id: true, affiliateAlias: true },
     });
     const accountIds = accounts.map((item) => item.id);
     if (!accountIds.length) return empty(0);
 
+    const aliasSet = new Set(
+      accounts
+        .map((item) => (item.affiliateAlias || '').trim().toLowerCase())
+        .filter(Boolean),
+    );
+
     const usePerformanceMetrics = platformCode === 'rewardoo';
     const dateRange = this.adDateRange(q.startDate, q.endDate);
 
-    const clickRows = await this.prisma.affiliateMerchantClickDaily.findMany({
+    const adRowsRaw = await this.prisma.adCampaignDaily.findMany({
       where: {
-        channelAccountId: { in: accountIds },
-        clickDate: dateRange,
+        ownerUserId: ownerId,
+        date: dateRange,
       },
       select: {
-        clickDate: true,
+        date: true,
         clicks: true,
-        performanceOrders: true,
-        performanceCommission: true,
+        cost: true,
+        campaignName: true,
+        affiliateAlias: true,
       },
     });
 
-    let orderRows: Array<{ orderDate: Date; orderKey: string; commission: number }> = [];
-    if (!usePerformanceMetrics) {
-      const orders = await this.prisma.affiliateOrder.findMany({
+    const adRows = adRowsRaw
+      .filter((ad) => {
+        const parsed = parseCampaignName(ad.campaignName);
+        const alias = (ad.affiliateAlias || parsed.affiliateAlias || '').toLowerCase();
+        if (!alias) return false;
+        if (aliasSet.has(alias)) return true;
+        return platformCodeFromAlias(alias) === platformCode;
+      })
+      .map((ad) => ({
+        date: ad.date,
+        clicks: ad.clicks,
+        cost: Number(ad.cost),
+      }));
+
+    const orders = await this.prisma.affiliateOrder.findMany({
+      where: {
+        channelAccountId: { in: accountIds },
+        orderDate: dateRange,
+      },
+      select: {
+        channelAccountId: true,
+        externalOrderId: true,
+        commission: true,
+        orderDate: true,
+        rawPayload: true,
+        normalizedStatus: true,
+      },
+    });
+
+    const orderRows = orders.map((order) => ({
+      orderDate: order.orderDate,
+      orderKey: `${order.channelAccountId}|${dedupeAffiliateOrderRecord(order)}`,
+      commission: Number(order.commission),
+      rejected: resolveOrderCommissionBuckets(order).rejected,
+    }));
+
+    let clickRows: Array<{
+      clickDate: Date;
+      performanceOrders: number;
+      performanceCommission: number;
+    }> = [];
+    if (usePerformanceMetrics) {
+      const rows = await this.prisma.affiliateMerchantClickDaily.findMany({
         where: {
           channelAccountId: { in: accountIds },
-          orderDate: dateRange,
+          clickDate: dateRange,
         },
         select: {
-          channelAccountId: true,
-          externalOrderId: true,
-          commission: true,
-          orderDate: true,
-          rawPayload: true,
-          channelAccount: { select: { platform: { select: { code: true } } } },
+          clickDate: true,
+          performanceOrders: true,
+          performanceCommission: true,
         },
       });
-      orderRows = orders.map((order) => ({
-        orderDate: order.orderDate,
-        orderKey: `${order.channelAccountId}|${dedupeAffiliateOrderRecord(order)}`,
-        commission: Number(order.commission),
+      clickRows = rows.map((row) => ({
+        clickDate: row.clickDate,
+        performanceOrders: row.performanceOrders,
+        performanceCommission: Number(row.performanceCommission),
       }));
     }
 
@@ -1888,12 +1938,8 @@ export class ReportsService {
       endDate: q.endDate,
       usePerformanceMetrics,
       orderRows,
-      clickRows: clickRows.map((row) => ({
-        clickDate: row.clickDate,
-        clicks: row.clicks,
-        performanceOrders: row.performanceOrders,
-        performanceCommission: Number(row.performanceCommission),
-      })),
+      clickRows,
+      adRows,
     });
 
     return {

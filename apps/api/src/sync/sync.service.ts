@@ -58,6 +58,7 @@ export class SyncService implements OnModuleInit {
     if (rows.length > 0) {
       console.log(`[sync] 启动续跑 ${rows.length} 名员工的未完成采集队列`);
     }
+    await this.resumeOrphanPendingQueues();
   }
 
   /**
@@ -342,6 +343,7 @@ export class SyncService implements OnModuleInit {
   async listRecentJobs(user: AuthUser, limit = 5, ownerUserId?: number) {
     await this.recoverStaleJobs();
     const filterOwnerId = isAdmin(user) && ownerUserId != null ? ownerUserId : user.id;
+    await this.resumeOrphanPendingQueues([filterOwnerId]);
     return this.prisma.syncJob.findMany({
       where: { ownerUserId: filterOwnerId },
       orderBy: { createdAt: 'desc' },
@@ -382,7 +384,7 @@ export class SyncService implements OnModuleInit {
       },
     });
 
-    return this.prisma.syncJob.update({
+    const updated = await this.prisma.syncJob.update({
       where: { id: jobId },
       data: {
         status: SyncJobStatus.failed,
@@ -394,6 +396,31 @@ export class SyncService implements OnModuleInit {
         items: { include: { channelAccount: { include: { platform: true } } } },
       },
     });
+
+    // 取消后继续跑同员工后续 pending，避免饿死
+    this.kickOwnerSyncQueue(job.ownerUserId);
+    return updated;
+  }
+
+  /**
+   * 有 pending 但无 running 时重新踢队列（部署/取消后遗留的孤儿等待任务）
+   */
+  private async resumeOrphanPendingQueues(ownerUserIds?: number[]) {
+    const pendingJobs = await this.prisma.syncJob.findMany({
+      where: {
+        status: SyncJobStatus.pending,
+        ...(ownerUserIds?.length ? { ownerUserId: { in: ownerUserIds } } : {}),
+      },
+      select: { ownerUserId: true },
+      distinct: ['ownerUserId'],
+    });
+    for (const { ownerUserId } of pendingJobs) {
+      const running = await this.prisma.syncJob.count({
+        where: { ownerUserId, status: SyncJobStatus.running },
+      });
+      if (running > 0) continue;
+      this.kickOwnerSyncQueue(ownerUserId);
+    }
   }
 
   async runJob(jobId: number) {
@@ -708,6 +735,9 @@ export class SyncService implements OnModuleInit {
       },
     });
     if (!job) throw new NotFoundException('任务不存在');
+    if (job.status === SyncJobStatus.pending) {
+      await this.resumeOrphanPendingQueues([job.ownerUserId]);
+    }
     return job;
   }
 }

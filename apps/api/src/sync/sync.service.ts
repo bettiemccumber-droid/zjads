@@ -12,6 +12,7 @@ import { CollectorsService } from '../collectors/collectors.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { AdSourcesService } from '../ad-sources/ad-sources.service';
 import { AlertsService } from '../alerts/alerts.service';
+import { pickAccountsForAffiliateSync } from '../common/sync-account-pick.util';
 import { ensureSyncJobIdCapacity } from './sync-job-id.util';
 
 /** 超过此时长仍为 running 视为卡住（服务重启或点击采集异常） */
@@ -297,10 +298,13 @@ export class SyncService implements OnModuleInit {
   }
 
   /**
-   * 按所选账号或平台筛选；仅保留已接入采集器的平台
+   * 按所选账号或平台筛选；仅保留已接入采集器的平台。
+   * LH 同联盟序号多内容站：只同步其中一个主账号，避免佣金重复入库。
    */
-  private filterAccountsForSync(
-    accounts: { id: number; platform: { code: string } }[],
+  private filterAccountsForSync<
+    T extends { id: number; affiliateAlias?: string | null; platform: { code: string } },
+  >(
+    accounts: T[],
     filter?: { channelAccountIds?: number[]; platformCodes?: string[] },
   ) {
     let list = accounts.filter((a) => isCollectorImplemented(a.platform.code));
@@ -319,7 +323,7 @@ export class SyncService implements OnModuleInit {
       }
     }
 
-    return list;
+    return pickAccountsForAffiliateSync(list);
   }
 
   /**

@@ -44,3 +44,27 @@ export function dedupeAffiliateOrderRecord(o: {
   }
   return dedupeAffiliateOrderKey(o.externalOrderId);
 }
+
+/**
+ * 报表/佣金汇总用的订单去重键。
+ * LinkHaitao：同 alias 多渠道账号可能入库同一批单，跨 channelAccount 按平台+单号去重。
+ * 其它平台：仍按渠道账号隔离（PM 同行拆分后同账号内可合并加总）。
+ */
+export function affiliateOrderMetricsDedupeKey(o: {
+  channelAccountId: number;
+  externalOrderId: string;
+  rawPayload?: unknown;
+  channelAccount?: { platform?: { code?: string } };
+}): string {
+  const platformCode = o.channelAccount?.platform?.code || '';
+  const orderId = dedupeAffiliateOrderRecord(o);
+  if (platformCode === 'linkhaitao') {
+    return `linkhaitao|${orderId}`;
+  }
+  return `${o.channelAccountId}|${orderId}`;
+}
+
+/** LH 跨账号撞到同一单号时不再累加佣金（取先到的一份） */
+export function shouldAccumulateCommissionOnDedupeHit(platformCode: string): boolean {
+  return platformCode !== 'linkhaitao';
+}

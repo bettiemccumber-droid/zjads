@@ -1,6 +1,9 @@
 import { Injectable } from '@nestjs/common';
 import axios from 'axios';
-import { dedupeAffiliateOrderRecord } from '../common/order-dedupe.util';
+import {
+  affiliateOrderMetricsDedupeKey,
+  shouldAccumulateCommissionOnDedupeHit,
+} from '../common/order-dedupe.util';
 import { resolveOrderCommissionBuckets } from '../common/order-commission-buckets.util';
 import {
   filterRowsByCampaignStatusMode,
@@ -122,14 +125,18 @@ export class ReportsService {
       }
     >();
 
-    for (const o of orders) {
+    const orderedOrders = [...orders].sort((a, b) => a.channelAccountId - b.channelAccountId);
+    for (const o of orderedOrders) {
       const alias = (o.channelAccount.affiliateAlias || '').toLowerCase();
       const merchantKey = `${o.merchantId ?? ''}|${alias}`;
-      const orderKey = `${o.channelAccountId}|${dedupeAffiliateOrderRecord(o)}`;
+      const orderKey = affiliateOrderMetricsDedupeKey(o);
+      const platformCode = o.channelAccount.platform.code;
       const comm = Number(o.commission);
       const existing = orderAgg.get(orderKey);
       if (existing) {
-        existing.commission += comm;
+        if (shouldAccumulateCommissionOnDedupeHit(platformCode)) {
+          existing.commission += comm;
+        }
       } else {
         orderAgg.set(orderKey, {
           merchantKey,
@@ -137,7 +144,7 @@ export class ReportsService {
           merchantName: o.merchantName ?? '',
           affiliateAlias: alias,
           platformName: o.channelAccount.platform.name,
-          platformCode: o.channelAccount.platform.code,
+          platformCode,
           commission: comm,
         });
       }
@@ -717,14 +724,20 @@ export class ReportsService {
 
     const orderSeenByKey = new Set<string>();
     const orderSeenByMerchant = new Set<string>();
-    for (const o of orders) {
+    const orderedOrders = [...orders].sort((a, b) => a.channelAccountId - b.channelAccountId);
+    for (const o of orderedOrders) {
       const merchantId = o.merchantId ?? '';
       const alias = (o.channelAccount.affiliateAlias || '').toLowerCase();
       const merchantKey = `${merchantId}|${alias}`;
-      const orderKey = `${o.channelAccountId}|${dedupeAffiliateOrderRecord(o)}`;
+      const orderKey = affiliateOrderMetricsDedupeKey(o);
       const comm = Number(o.commission);
       const isRw = o.channelAccount.platform?.code === 'rewardoo';
+      const isLh = o.channelAccount.platform?.code === 'linkhaitao';
       const rejected = resolveOrderCommissionBuckets(o).rejected;
+
+      if (!isRw && orderSeenByKey.has(orderKey) && isLh) {
+        continue;
+      }
 
       ensure(byKey, merchantKey).rejectedCommission += rejected;
       ensure(byMerchantId, merchantId).rejectedCommission += rejected;
@@ -750,13 +763,35 @@ export class ReportsService {
       include: { channelAccount: { include: { platform: true } } },
     });
 
+    // LH：同日同商家多渠道账号取 max，再按日累加（避免双采把点击翻倍）
+    const lhClickMaxByKeyDay = new Map<string, number>();
+    const lhClickMaxByMerchantDay = new Map<string, number>();
     for (const c of clickRows) {
       if (isLbClickPseudoMerchant(c.merchantId) || isRwClickPseudoMerchant(c.merchantId)) continue;
       const merchantId = c.merchantId;
       const alias = (c.channelAccount.affiliateAlias || '').toLowerCase();
       const merchantKey = `${merchantId}|${alias}`;
+      if (c.channelAccount.platform?.code === 'linkhaitao') {
+        const dateStr = formatCalendarDateUtc(c.clickDate);
+        const keyDay = `${merchantKey}|${dateStr}`;
+        const midDay = `${merchantId}|${dateStr}`;
+        lhClickMaxByKeyDay.set(keyDay, Math.max(lhClickMaxByKeyDay.get(keyDay) ?? 0, c.clicks));
+        lhClickMaxByMerchantDay.set(
+          midDay,
+          Math.max(lhClickMaxByMerchantDay.get(midDay) ?? 0, c.clicks),
+        );
+        continue;
+      }
       ensure(byKey, merchantKey).affiliateClicks += c.clicks;
       ensure(byMerchantId, merchantId).affiliateClicks += c.clicks;
+    }
+    for (const [keyDay, clicks] of lhClickMaxByKeyDay) {
+      const merchantKey = keyDay.slice(0, keyDay.lastIndexOf('|'));
+      ensure(byKey, merchantKey).affiliateClicks += clicks;
+    }
+    for (const [midDay, clicks] of lhClickMaxByMerchantDay) {
+      const merchantId = midDay.slice(0, midDay.lastIndexOf('|'));
+      ensure(byMerchantId, merchantId).affiliateClicks += clicks;
     }
 
     this.overlayRwPerformanceDaily(clickRows, byKey, undefined, byMerchantId);
@@ -797,17 +832,23 @@ export class ReportsService {
 
     const orderSeenByKey = new Set<string>();
     const orderSeenByMerchantDay = new Set<string>();
-    for (const o of orders) {
+    const orderedOrders = [...orders].sort((a, b) => a.channelAccountId - b.channelAccountId);
+    for (const o of orderedOrders) {
       const merchantId = o.merchantId ?? '';
       if (!merchantId) continue;
       const alias = (o.channelAccount.affiliateAlias || '').toLowerCase();
       const dateStr = o.orderDate.toISOString().slice(0, 10);
       const dayKey = `${merchantId}|${alias}|${dateStr}`;
       const merchantDayKey = `${merchantId}|${dateStr}`;
-      const orderKey = `${o.channelAccountId}|${dedupeAffiliateOrderRecord(o)}`;
+      const orderKey = affiliateOrderMetricsDedupeKey(o);
       const comm = Number(o.commission);
       const isRw = o.channelAccount.platform?.code === 'rewardoo';
+      const isLh = o.channelAccount.platform?.code === 'linkhaitao';
       const rejected = resolveOrderCommissionBuckets(o).rejected;
+
+      if (!isRw && orderSeenByKey.has(orderKey) && isLh) {
+        continue;
+      }
 
       ensureKey(byKey, dayKey).rejectedCommission += rejected;
       ensureKey(byMerchantDay, merchantDayKey).rejectedCommission += rejected;
@@ -817,8 +858,8 @@ export class ReportsService {
         ensureKey(byMerchantDay, merchantDayKey).commission += comm;
       }
 
-      if (!isRw && !orderSeenByKey.has(`${dayKey}|${orderKey}`)) {
-        orderSeenByKey.add(`${dayKey}|${orderKey}`);
+      if (!isRw && !orderSeenByKey.has(orderKey)) {
+        orderSeenByKey.add(orderKey);
         ensureKey(byKey, dayKey).orderCount += 1;
       }
       const midOrderKey = `${merchantDayKey}|${orderKey}`;
@@ -843,6 +884,13 @@ export class ReportsService {
       const dateStr = formatCalendarDateUtc(c.clickDate);
       const dayKey = `${merchantId}|${alias}|${dateStr}`;
       const merchantDayKey = `${merchantId}|${dateStr}`;
+      if (c.channelAccount.platform?.code === 'linkhaitao') {
+        const curKey = ensureKey(byKey, dayKey);
+        curKey.affiliateClicks = Math.max(curKey.affiliateClicks, c.clicks);
+        const curMid = ensureKey(byMerchantDay, merchantDayKey);
+        curMid.affiliateClicks = Math.max(curMid.affiliateClicks, c.clicks);
+        continue;
+      }
       ensureKey(byKey, dayKey).affiliateClicks += c.clicks;
       ensureKey(byMerchantDay, merchantDayKey).affiliateClicks += c.clicks;
     }
@@ -1899,15 +1947,25 @@ export class ReportsService {
         orderDate: true,
         rawPayload: true,
         normalizedStatus: true,
+        channelAccount: { select: { platform: { select: { code: true } } } },
       },
+      orderBy: { channelAccountId: 'asc' },
     });
 
-    const orderRows = orders.map((order) => ({
-      orderDate: order.orderDate,
-      orderKey: `${order.channelAccountId}|${dedupeAffiliateOrderRecord(order)}`,
-      commission: Number(order.commission),
-      rejected: resolveOrderCommissionBuckets(order).rejected,
-    }));
+    const seenLhOrders = new Set<string>();
+    const orderRows = orders.flatMap((order) => {
+      const orderKey = affiliateOrderMetricsDedupeKey(order);
+      if (platformCode === 'linkhaitao') {
+        if (seenLhOrders.has(orderKey)) return [];
+        seenLhOrders.add(orderKey);
+      }
+      return [{
+        orderDate: order.orderDate,
+        orderKey,
+        commission: Number(order.commission),
+        rejected: resolveOrderCommissionBuckets(order).rejected,
+      }];
+    });
 
     let clickRows: Array<{
       clickDate: Date;

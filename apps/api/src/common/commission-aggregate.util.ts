@@ -1,7 +1,11 @@
 import { NormalizedStatus } from '@prisma/client';
 import { isCollectorImplemented } from '../collectors/collectors.registry';
 import { commissionAlertMerchantId } from './commission-alert-key.util';
-import { dedupeAffiliateOrderRecord } from './order-dedupe.util';
+import {
+  affiliateOrderMetricsDedupeKey,
+  dedupeAffiliateOrderRecord,
+  shouldAccumulateCommissionOnDedupeHit,
+} from './order-dedupe.util';
 import {
   orderHasRejectedCommission,
   resolveOrderCommissionBuckets,
@@ -110,13 +114,16 @@ export function aggregateAffiliateOrders(
     }
   >();
 
-  for (const o of orders) {
+  // LH 跨账号去重时优先保留 id 较小的主渠道账号（与采集挑选一致）
+  const ordered = [...orders].sort((a, b) => a.channelAccountId - b.channelAccountId);
+
+  for (const o of ordered) {
     const mid = o.merchantId ?? '';
     if (!mid) continue;
 
     const platformCode = o.channelAccount.platform.code;
     const alias = (o.channelAccount.affiliateAlias || '').toLowerCase();
-    const dedupeKey = `${o.channelAccountId}|${dedupeAffiliateOrderRecord(o)}`;
+    const dedupeKey = affiliateOrderMetricsDedupeKey(o);
     const merchantKey = groupByChannelAccount
       ? `${mid}|${platformCode}|${o.channelAccountId}`
       : `${mid}|${platformCode}|${alias}`;
@@ -125,10 +132,12 @@ export function aggregateAffiliateOrders(
 
     const existing = orderAgg.get(dedupeKey);
     if (existing) {
-      existing.totalCommission += comm;
-      existing.confirmedCommission += buckets.approved;
-      existing.pendingCommission += buckets.pending;
-      existing.rejectedCommission += buckets.rejected;
+      if (shouldAccumulateCommissionOnDedupeHit(platformCode)) {
+        existing.totalCommission += comm;
+        existing.confirmedCommission += buckets.approved;
+        existing.pendingCommission += buckets.pending;
+        existing.rejectedCommission += buckets.rejected;
+      }
       if (orderHasRejectedCommission(o)) existing.hasRejected = true;
       if (!existing.merchantName && o.merchantName) existing.merchantName = o.merchantName;
       continue;

@@ -71,11 +71,24 @@ export async function completeModelGoChat(
 
 /**
  * 把接口错误翻成给员工看的话。不把密钥或整段响应带出去。
+ * 余额不足只认明确文案；限流/quota 单独提示，避免有余额却显示「请充值」。
  */
 export function explainModelGoError(status: number, body: unknown): string {
   const text = JSON.stringify(body ?? '').slice(0, 400);
   if (status === 401) return 'AI 密钥无效，请在控制台重新建一把并更新服务器配置';
-  if (status === 402 || /insufficient|balance|quota|credit|余额/i.test(text)) return 'AI 余额不足，请先在控制台充值';
+  if (status === 429 || /rate\s*limit|too many requests|请求过(于|度)频繁|并发超/i.test(text)) {
+    return 'AI 请求过于频繁，请稍后重试';
+  }
+  // 单独的 quota 常是限流额度，不是钱包余额
+  if (/quota[_\s-]?exceed|exceeded?\s+quota|usage\s+quota/i.test(text)) {
+    return 'AI 请求额度受限，请稍后重试';
+  }
+  if (
+    status === 402
+    || /余额不足|请充值|please\s+(top\s*up|recharge)|insufficient\s+(account\s+)?(balance|credit|funds)|out\s+of\s+credits?/i.test(text)
+  ) {
+    return 'AI 余额不足，请先在控制台充值';
+  }
   if (status === 403) return '当前密钥不允许调用这个模型，请换成可用的模型名';
   const detail = errorDetail(body);
   if (detail) return `AI 调用失败：${detail}`;

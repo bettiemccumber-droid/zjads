@@ -52,6 +52,11 @@ export function buildCreateCampaignPayload(input: {
       targetContentNetwork: false,
       targetPartnerSearchNetwork: false,
     },
+    // 所在地：只触达位于/经常身处目标地区的用户（不用「所在地或兴趣」）
+    geoTargetTypeSetting: {
+      positiveGeoTargetType: 'PRESENCE',
+      negativeGeoTargetType: 'PRESENCE',
+    },
     containsEuPoliticalAdvertising: 'DOES_NOT_CONTAIN_EU_POLITICAL_ADVERTISING',
   };
   if (input.draft.finalUrlSuffix) {

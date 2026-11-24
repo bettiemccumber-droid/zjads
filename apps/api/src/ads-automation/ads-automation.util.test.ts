@@ -70,6 +70,12 @@ const payload = buildCreateCampaignPayload({
   draft,
 });
 const operations = payload.mutateOperations as Array<Record<string, { create: Record<string, unknown> }>>;
+const campaignOp = operations.find((item) => item.campaignOperation);
+assert.deepStrictEqual(
+  (campaignOp?.campaignOperation.create as { geoTargetTypeSetting?: unknown }).geoTargetTypeSetting,
+  { positiveGeoTargetType: 'PRESENCE', negativeGeoTargetType: 'PRESENCE' },
+  '地理定向默认「所在地」而非「所在地或兴趣」',
+);
 const ad = operations.find((item) => item.adGroupAdOperation);
 assert.deepStrictEqual(ad?.adGroupAdOperation.create.ad, {
   finalUrls: ['https://www.agjeansoutlet.com/'],

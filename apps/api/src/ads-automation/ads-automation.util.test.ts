@@ -147,10 +147,17 @@ const businessOps = (withBusiness.mutateOperations as Array<Record<string, unkno
   .filter((item) => item.assetOperation || item.campaignAssetOperation);
 assert.ok(
   businessOps.some((item) => {
-    const create = (item.assetOperation as { create?: { businessNameAsset?: { businessName?: string } } } | undefined)?.create;
-    return create?.businessNameAsset?.businessName === 'Vietnam Airlines';
+    const create = (item.assetOperation as { create?: { textAsset?: { text?: string } } } | undefined)?.create;
+    return create?.textAsset?.text === 'Vietnam Airlines';
   }),
-  '有商家名称时应创建 BUSINESS_NAME 资产',
+  '有商家名称时应创建 textAsset',
+);
+assert.ok(
+  businessOps.some((item) => {
+    const create = (item.campaignAssetOperation as { create?: { fieldType?: string } } | undefined)?.create;
+    return create?.fieldType === 'BUSINESS_NAME';
+  }),
+  '商家名称应以 BUSINESS_NAME 挂到系列',
 );
 const withoutBusiness = buildCreateCampaignPayload({
   customerId: '130-512-5178',
@@ -159,8 +166,8 @@ const withoutBusiness = buildCreateCampaignPayload({
 });
 assert.ok(
   !(withoutBusiness.mutateOperations as Array<Record<string, unknown>>).some((item) => {
-    const create = (item.assetOperation as { create?: { businessNameAsset?: unknown } } | undefined)?.create;
-    return Boolean(create?.businessNameAsset);
+    const create = (item.campaignAssetOperation as { create?: { fieldType?: string } } | undefined)?.create;
+    return create?.fieldType === 'BUSINESS_NAME';
   }),
   '空商家名称不提交 BUSINESS_NAME 资产',
 );

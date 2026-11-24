@@ -208,6 +208,7 @@ export function buildCreateCampaignPayload(input: {
     max: 5,
   }));
 
+  // 商家名称是 TextAsset，再以 BUSINESS_NAME 挂到系列（无 businessNameAsset 字段）
   const businessName = (input.draft.businessName ?? '').trim().slice(0, 25);
   if (businessName) {
     const asset = `customers/${customerId}/assets/-90`;
@@ -215,7 +216,7 @@ export function buildCreateCampaignPayload(input: {
       assetOperation: {
         create: {
           resourceName: asset,
-          businessNameAsset: { businessName },
+          textAsset: { text: businessName },
         },
       },
     });

@@ -17,6 +17,8 @@ export const AD_COPY_LIMITS = {
   /** 生成默认 2 类；提交不强制条数。 */
   structuredCategories: 2,
   structuredValuesMin: 3,
+  /** Google 搜索广告「商家名称」资产；可空，有值时最长 25。 */
+  businessName: 25,
 } as const;
 
 /**
@@ -125,6 +127,11 @@ export interface AdDraft {
   cpcBidCeilingUsd: string;
   languageCode: string;
   geoTargetId: string;
+  /**
+   * Google Ads 商家名称资产（可选）。空则不提交，由 Google 按网址用占位名。
+   * 有值时最长 25 字符。
+   */
+  businessName?: string;
   /** 搜索广告图片素材 URL（可选；有则建议含接近正方形）。 */
   imageUrls?: string[];
   /** 商家商标 LOGO URL（可选；接近正方形）。 */
@@ -445,6 +452,8 @@ export function buildSampleDraft(input: {
     promotionAsset: null,
     merchantUrl: input.merchantUrl,
     finalUrlSuffix: '',
+    // 默认可填商家名；员工可清空，空值也能提交
+    businessName: stripKeywordDecorations(input.merchantName).slice(0, AD_COPY_LIMITS.businessName),
     bidding: input.bidding === 'MANUAL_CPC' ? 'MANUAL_CPC' : 'MAXIMIZE_CLICKS',
     dailyBudgetUsd: input.dailyBudgetUsd?.trim() || '3.00',
     cpcBidCeilingUsd: input.cpcBidCeilingUsd?.trim() || '',
@@ -551,6 +560,12 @@ export function validateDraft(draft: AdDraft): string[] {
   }
   errors.push(...validatePromotionAsset(draft.promotionAsset, draft.merchantUrl));
   if (!/^https?:\/\//i.test(draft.merchantUrl)) errors.push('商家网址需要以 http 或 https 开头');
+  const businessName = (draft.businessName ?? '').trim();
+  if (businessName.length > limits.businessName) {
+    errors.push(`商家名称最多 ${limits.businessName} 个字符（可留空）`);
+  } else if (businessName) {
+    errors.push(...policyHits(businessName, '商家名称', { allowPromo: true }));
+  }
   if (draft.finalUrlSuffix.startsWith('?') || draft.finalUrlSuffix.startsWith('&')) {
     errors.push('网址后缀不要以 ? 或 & 开头');
   }
@@ -886,6 +901,10 @@ export function sanitizeDraftForReview(
     promotionAsset,
     translations: draft.translations ?? (padFromFallback ? fallback.translations : undefined),
     merchantUrl: draft.merchantUrl || fallback.merchantUrl,
+    // 空字符串表示明确不填；undefined 时才回落到示例默认
+    businessName: draft.businessName !== undefined
+      ? draft.businessName.trim().slice(0, limits.businessName)
+      : (fallback.businessName ?? '').trim().slice(0, limits.businessName),
     geoTargetId: draft.geoTargetId || fallback.geoTargetId,
     languageCode: draft.languageCode || fallback.languageCode,
     bidding: draft.bidding || fallback.bidding,

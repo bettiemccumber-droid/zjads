@@ -105,6 +105,45 @@ assert.deepStrictEqual(
   '宣传信息与结构化摘要可为空',
 );
 assert.deepStrictEqual(
+  validateDraft(withVerifiedSitelinks({ ...draft, businessName: '' })),
+  [],
+  '商家名称可留空提交',
+);
+assert.ok(
+  validateDraft(withVerifiedSitelinks({ ...draft, businessName: 'x'.repeat(26) })).some((msg) => /商家名称/.test(msg)),
+  '商家名称超长应拦截',
+);
+assert.ok(
+  draft.businessName && draft.businessName.length <= 25,
+  '样例草稿默认带上截断后的商家名称',
+);
+const withBusiness = buildCreateCampaignPayload({
+  customerId: '130-512-5178',
+  campaignName: 'test-business-name',
+  draft: { ...draft, businessName: 'Vietnam Airlines' },
+});
+const businessOps = (withBusiness.mutateOperations as Array<Record<string, unknown>>)
+  .filter((item) => item.assetOperation || item.campaignAssetOperation);
+assert.ok(
+  businessOps.some((item) => {
+    const create = (item.assetOperation as { create?: { businessNameAsset?: { businessName?: string } } } | undefined)?.create;
+    return create?.businessNameAsset?.businessName === 'Vietnam Airlines';
+  }),
+  '有商家名称时应创建 BUSINESS_NAME 资产',
+);
+const withoutBusiness = buildCreateCampaignPayload({
+  customerId: '130-512-5178',
+  campaignName: 'test-no-business-name',
+  draft: { ...draft, businessName: '' },
+});
+assert.ok(
+  !(withoutBusiness.mutateOperations as Array<Record<string, unknown>>).some((item) => {
+    const create = (item.assetOperation as { create?: { businessNameAsset?: unknown } } | undefined)?.create;
+    return Boolean(create?.businessNameAsset);
+  }),
+  '空商家名称不提交 BUSINESS_NAME 资产',
+);
+assert.deepStrictEqual(
   validateDraft(withVerifiedSitelinks({
     ...draft,
     structuredSnippets: [{ header: 'Types', values: ['A', 'B'] }],

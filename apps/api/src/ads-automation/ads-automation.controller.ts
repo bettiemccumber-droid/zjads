@@ -199,6 +199,11 @@ class DraftPatchBody implements Partial<AdDraft> {
   @IsString()
   merchantUrl?: string;
 
+  /** 可选；空字符串表示不提交商家名称资产 */
+  @IsOptional()
+  @IsString()
+  businessName?: string;
+
   @IsOptional()
   @IsString()
   finalUrlSuffix?: string;

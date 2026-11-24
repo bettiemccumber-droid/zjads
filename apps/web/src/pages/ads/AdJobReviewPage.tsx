@@ -100,6 +100,8 @@ interface AdDraft {
   cpcBidCeilingUsd: string;
   languageCode: string;
   geoTargetId: string;
+  /** Google Ads 商家名称；可空，最长 25 */
+  businessName?: string;
   imageUrls?: string[];
   logoUrls?: string[];
 }
@@ -293,6 +295,7 @@ function emptyDraft(): AdDraft {
     promotionAsset: null,
     translations: {},
     merchantUrl: '',
+    businessName: '',
     finalUrlSuffix: '',
     bidding: 'MAXIMIZE_CLICKS',
     dailyBudgetUsd: '3.00',
@@ -1947,6 +1950,18 @@ export default function AdJobReviewPage() {
                   <Tag color="orange">{draft.languageCode || 'en'}</Tag>
                 </div>
                 <Form layout="vertical">
+                  <Form.Item
+                    label="商家名称（选填）"
+                    extra="对应 Google Ads「商家名称」资产。可留空提交；有值时最长 25 字，宜与网址或认证广告客户名一致。"
+                  >
+                    <Input
+                      value={draft.businessName ?? ''}
+                      maxLength={25}
+                      showCount
+                      placeholder="可留空；留空则由 Google 按网址使用占位名称"
+                      onChange={(event) => setDraft({ ...draft, businessName: event.target.value })}
+                    />
+                  </Form.Item>
                   <Form.Item label="落地页 URL">
                     <Space.Compact style={{ width: '100%' }}>
                       <Input

@@ -208,6 +208,24 @@ export function buildCreateCampaignPayload(input: {
     max: 5,
   }));
 
+  const businessName = (input.draft.businessName ?? '').trim().slice(0, 25);
+  if (businessName) {
+    const asset = `customers/${customerId}/assets/-90`;
+    operations.push({
+      assetOperation: {
+        create: {
+          resourceName: asset,
+          businessNameAsset: { businessName },
+        },
+      },
+    });
+    operations.push({
+      campaignAssetOperation: {
+        create: { asset, campaign, fieldType: 'BUSINESS_NAME' },
+      },
+    });
+  }
+
   operations.push({
     adGroupAdOperation: {
       create: {

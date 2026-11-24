@@ -73,6 +73,72 @@ export function normalizeStructuredSnippetHeader(raw: string): string {
   return alias ?? '';
 }
 
+/**
+ * 无 AI / 兜底时按商家名与网址粗选两类结构化摘要（避免永远 Types+Styles）。
+ */
+export function suggestStructuredSnippetsForMerchant(input: {
+  merchantName: string;
+  merchantUrl: string;
+  pageHints?: string[];
+}): AdStructuredSnippet[] {
+  const hay = `${input.merchantName} ${input.merchantUrl} ${(input.pageHints ?? []).join(' ')}`.toLowerCase();
+  const pair = (a: AdStructuredSnippet, b: AdStructuredSnippet): AdStructuredSnippet[] => [a, b];
+
+  if (/airline|airport|flight|avia|airways|travel|hotel|resort|booking|tourism|destination|villa|airlines/.test(hay)) {
+    return pair(
+      { header: 'Destinations', values: ['Domestic', 'International', 'City breaks', 'Beach'] },
+      { header: 'Types', values: ['Flights', 'Packages', 'Economy', 'Business'] },
+    );
+  }
+  if (/hotel|resort|inn|hostel|amenities|spa/.test(hay)) {
+    return pair(
+      { header: 'Amenities', values: ['Wi-Fi', 'Breakfast', 'Pool', 'Parking'] },
+      { header: 'Types', values: ['Rooms', 'Suites', 'Family', 'Business'] },
+    );
+  }
+  if (/university|college|course|school|academy|degree|edu/.test(hay)) {
+    return pair(
+      { header: 'Courses', values: ['Beginner', 'Advanced', 'Online', 'Certificate'] },
+      { header: 'Types', values: ['Programs', 'Workshops', 'Tutorials', 'Classes'] },
+    );
+  }
+  if (/insurance|coverage|policy|assure/.test(hay)) {
+    return pair(
+      { header: 'Insurance coverage', values: ['Auto', 'Home', 'Travel', 'Life'] },
+      { header: 'Types', values: ['Plans', 'Quotes', 'Claims', 'Renewal'] },
+    );
+  }
+  if (/phone|laptop|camera|electronics|gadget|model|tech|robot|vacuum/.test(hay)) {
+    return pair(
+      { header: 'Models', values: ['Flagship', 'Compact', 'Pro', 'Lite'] },
+      { header: 'Types', values: ['Devices', 'Accessories', 'Kits', 'Upgrades'] },
+    );
+  }
+  if (/service|repair|plumb|clean|consult|agency|moving|storage/.test(hay)) {
+    return pair(
+      { header: 'Service catalog', values: ['Standard', 'Premium', 'Same-day', 'On-site'] },
+      { header: 'Types', values: ['Services', 'Packages', 'Support', 'Plans'] },
+    );
+  }
+  if (/brand|outlet|marketplace|multi.?brand|boutique/.test(hay)) {
+    return pair(
+      { header: 'Brands', values: ['Featured', 'Premium', 'Popular', 'New'] },
+      { header: 'Types', values: ['Collections', 'Essentials', 'Limited', 'Seasonal'] },
+    );
+  }
+  if (/fashion|apparel|clothing|shoe|dress|wear|style|jeans/.test(hay)) {
+    return pair(
+      { header: 'Styles', values: ['Casual', 'Classic', 'Modern', 'Everyday'] },
+      { header: 'Types', values: ['Apparel', 'Accessories', 'Footwear', 'Essentials'] },
+    );
+  }
+  // 通用电商：Types + Brands 比永远 Styles 更中性
+  return pair(
+    { header: 'Types', values: ['Bestsellers', 'New arrivals', 'Essentials', 'Deals'] },
+    { header: 'Brands', values: ['Featured', 'Top picks', 'Popular', 'Exclusive'] },
+  );
+}
+
 /** 人工核对用的中文译文（不提交 Google）。 */
 export interface AdCopyTranslations {
   headlines?: string[];
@@ -307,6 +373,10 @@ export function buildSampleDraft(input: {
   cpcBidCeilingUsd?: string;
 }): AdDraft {
   const brand = stripKeywordDecorations(input.merchantName).slice(0, 30) || 'Brand';
+  const structuredSeed = suggestStructuredSnippetsForMerchant({
+    merchantName: input.merchantName,
+    merchantUrl: input.merchantUrl,
+  });
   const headlines = [
     `${brand} Official`,
     `Shop ${brand}`,
@@ -369,7 +439,7 @@ export function buildSampleDraft(input: {
       ],
       sitelinks: ['立即选购', '新品上市', '热销榜', '系列合集', '优惠专区', '开始购物'],
       keywords: [`${brand} 相关词`],
-      structuredSnippets: ['类型一, 类型二, 类型三, 类型四', '风格一, 风格二, 风格三, 风格四'],
+      structuredSnippets: structuredSeed.map((row) => row.values.join(', ')),
     },
     keywords: [{ text: brand.toLowerCase().slice(0, 80), matchType: 'PHRASE' }],
     imageUrls: [],
@@ -444,10 +514,7 @@ export function buildSampleDraft(input: {
       'New Arrivals',
       'Order Online',
     ].map((text) => text.slice(0, AD_COPY_LIMITS.callout)),
-    structuredSnippets: [
-      { header: 'Types', values: ['Apparel', 'Accessories', 'Footwear', 'Essentials'] },
-      { header: 'Styles', values: ['Casual', 'Classic', 'Modern', 'Everyday'] },
-    ],
+    structuredSnippets: structuredSeed,
     promotion: '',
     promotionAsset: null,
     merchantUrl: input.merchantUrl,

@@ -9,9 +9,25 @@ import {
   isCustomerEligible,
   isMerchantHomepageUrl,
   softenExcessiveUppercase,
+  suggestStructuredSnippetsForMerchant,
   usdToMicros,
   validateDraft,
 } from './ads-automation.util';
+
+const airlineSnippets = suggestStructuredSnippetsForMerchant({
+  merchantName: 'Vietnam Airlines',
+  merchantUrl: 'https://www.vietnamairlines.com/',
+});
+assert.deepStrictEqual(
+  airlineSnippets.map((row) => row.header),
+  ['Destinations', 'Types'],
+  '航司应优先 Destinations + Types',
+);
+const fashionSnippets = suggestStructuredSnippetsForMerchant({
+  merchantName: 'AG Jeans Outlet',
+  merchantUrl: 'https://www.agjeansoutlet.com/',
+});
+assert.ok(fashionSnippets.some((row) => row.header === 'Styles' || row.header === 'Types'));
 
 const draft = buildSampleDraft({
   merchantName: 'AG Jeans Outlet',
@@ -19,6 +35,11 @@ const draft = buildSampleDraft({
   countryCode: 'US',
   languageCode: 'en',
 });
+assert.ok(
+  !draft.structuredSnippets.every((row) => row.header === 'Types' || row.header === 'Styles')
+    || draft.structuredSnippets.some((row) => row.header === 'Styles'),
+  '服饰样例应偏向 Styles/Types，而非固定 Brands 占位',
+);
 const withVerifiedSitelinks = <T extends { sitelinks: Array<{ verified: boolean }> }>(value: T): T => ({
   ...value,
   sitelinks: value.sitelinks.map((link) => ({ ...link, verified: true })),

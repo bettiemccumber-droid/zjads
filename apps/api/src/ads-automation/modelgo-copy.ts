@@ -67,19 +67,18 @@ export function audienceLanguage(countryCode: string, languageCode: string): str
   return `the language coded ${language} for readers in ${country || 'the target country'}`;
 }
 
-type AdCopyChunkId = 'headlines' | 'descriptions' | 'callouts' | 'sitelinks' | 'extras';
+/** 三路并行：标题、描述、扩展（站内链接+宣传+结构化） */
+type AdCopyChunkId = 'headlines' | 'descriptions' | 'extensions';
 
 const CHUNK_LABEL: Record<AdCopyChunkId, string> = {
   headlines: '标题',
   descriptions: '描述',
-  callouts: '宣传语',
-  sitelinks: '站内链接',
-  extras: '结构化与促销',
+  extensions: '站内链接/宣传/结构化',
 };
 
 /**
- * 按投放国家并行分块生成广告草稿。预算、出价和最终网址仍用本地设置。
- * AI 路径不用示例模板凑数；某块失败只重试该块一次。
+ * 按投放国家并行分块生成广告草稿（3 路，降低上游并发）。
+ * 预算、出价和最终网址仍用本地设置。AI 路径不用示例模板凑数；某块失败只重试该块一次。
  */
 export async function writeAdCopy(input: {
   merchantName: string;
@@ -120,7 +119,7 @@ ${seasonHint}`;
     const message = pending.length
       ? `${finished}已生成，${pending.join('/')}生成中…`
       : '文案各块已生成，正在校验…';
-    const progress = 45 + Math.round((done.size / 5) * 25);
+    const progress = 45 + Math.round((done.size / 3) * 25);
     await input.onProgress?.(message, progress);
   };
 
@@ -157,7 +156,7 @@ ${seasonHint}`;
     .join('\n');
   const headers = STRUCTURED_SNIPPET_HEADERS.join(', ');
 
-  const [headRaw, descRaw, calloutRaw, sitelinkRaw, extrasRaw] = await Promise.all([
+  const [headRaw, descRaw, extRaw] = await Promise.all([
     runChunk(
       'headlines',
       `Return JSON only:
@@ -173,27 +172,15 @@ Hard limits: each description <= ${AD_COPY_LIMITS.description}. Exactly ${AD_COP
       700,
     ),
     runChunk(
-      'callouts',
+      'extensions',
       `Return JSON only:
-{"callouts": string[${AD_COPY_LIMITS.calloutCount.prefer}], "translations": {"callouts": string[${AD_COPY_LIMITS.calloutCount.prefer}]}}
-Hard limits: each callout <= ${AD_COPY_LIMITS.callout}. Exactly ${AD_COPY_LIMITS.calloutCount.prefer} unique callouts specific to this merchant. translations are Simplified Chinese glosses.`,
-      600,
-    ),
-    runChunk(
-      'sitelinks',
-      `Return JSON only:
-{"sitelinks": [{"linkText": string, "description1": string, "description2": string, "finalUrl": string}], "translations": {"sitelinks": string[${AD_COPY_LIMITS.sitelinkCount.prefer}]}}
-Exactly ${AD_COPY_LIMITS.sitelinkCount.prefer} sitelinks. linkText <= ${AD_COPY_LIMITS.sitelinkText}; each description <= ${AD_COPY_LIMITS.sitelinkDescription}; all fields required. One sitelink MUST use official site finalUrl ${input.merchantUrl} (or same-host root). Remaining finalUrls distinct https pages on same host. Avoid stock phrases (Official website, Shop now, Visit our site). Prefer purchase pages.
+{"callouts": string[${AD_COPY_LIMITS.calloutCount.prefer}], "sitelinks": [{"linkText": string, "description1": string, "description2": string, "finalUrl": string}], "structuredSnippets": [{"header": string, "values": string[${AD_COPY_LIMITS.structuredValuesMin}+]}], "promotionAsset": {"enabled": boolean, "promotionTarget": string, "discountType": "PERCENT"|"MONETARY", "percentOff": number, "moneyAmountOff": string, "currencyCode": string, "languageCode": string, "finalUrl": string, "promotionCode": string, "ordersOverAmount": string, "occasion": string, "startDate": string, "endDate": string} | null, "translations": {"callouts": string[${AD_COPY_LIMITS.calloutCount.prefer}], "sitelinks": string[${AD_COPY_LIMITS.sitelinkCount.prefer}], "structuredSnippets": string[2], "promotion": string}}
+Callouts: exactly ${AD_COPY_LIMITS.calloutCount.prefer}, each <= ${AD_COPY_LIMITS.callout}, merchant-specific.
+Sitelinks: exactly ${AD_COPY_LIMITS.sitelinkCount.prefer}. linkText <= ${AD_COPY_LIMITS.sitelinkText}; each description <= ${AD_COPY_LIMITS.sitelinkDescription}; all fields required. One sitelink MUST use official site finalUrl ${input.merchantUrl} (or same-host root). Remaining finalUrls distinct https pages on same host. Avoid stock phrases (Official website, Shop now, Visit our site). Prefer purchase pages.
 ${knownPages ? `Known on-site pages:\n${knownPages}` : ''}
-translations.sitelinks are Simplified Chinese glosses aligned to each sitelink.`,
-      900,
-    ),
-    runChunk(
-      'extras',
-      `Return JSON only:
-{"structuredSnippets": [{"header": string, "values": string[${AD_COPY_LIMITS.structuredValuesMin}+]}], "promotionAsset": {"enabled": boolean, "promotionTarget": string, "discountType": "PERCENT"|"MONETARY", "percentOff": number, "moneyAmountOff": string, "currencyCode": string, "languageCode": string, "finalUrl": string, "promotionCode": string, "ordersOverAmount": string, "occasion": string, "startDate": string, "endDate": string} | null, "translations": {"structuredSnippets": string[2], "promotion": string}}
-Pick exactly 2 structuredSnippets headers from [${headers}]. Each needs >= ${AD_COPY_LIMITS.structuredValuesMin} values, each <= ${AD_COPY_LIMITS.structuredValue}. promotionAsset.enabled=true only with concrete discount; else false/null. Leave startDate/endDate empty. translations.structuredSnippets: 2 Simplified Chinese gloss strings.`,
-      800,
+Structured: exactly 2 structuredSnippets headers from [${headers}]. Each needs >= ${AD_COPY_LIMITS.structuredValuesMin} values, each <= ${AD_COPY_LIMITS.structuredValue}. promotionAsset.enabled=true only with concrete discount; else false/null. Leave startDate/endDate empty.
+translations.* are Simplified Chinese glosses aligned to each list.`,
+      1600,
     ),
   ]);
 
@@ -202,18 +189,18 @@ Pick exactly 2 structuredSnippets headers from [${headers}]. Each needs >= ${AD_
     keywords: headRaw.keywords,
     negativeKeywords: headRaw.negativeKeywords,
     descriptions: descRaw.descriptions,
-    callouts: calloutRaw.callouts,
-    sitelinks: sitelinkRaw.sitelinks,
-    structuredSnippets: extrasRaw.structuredSnippets,
-    promotionAsset: extrasRaw.promotionAsset,
+    callouts: extRaw.callouts,
+    sitelinks: extRaw.sitelinks,
+    structuredSnippets: extRaw.structuredSnippets,
+    promotionAsset: extRaw.promotionAsset,
     translations: {
       headlines: (headRaw.translations as { headlines?: unknown } | undefined)?.headlines,
       keywords: (headRaw.translations as { keywords?: unknown } | undefined)?.keywords,
       descriptions: (descRaw.translations as { descriptions?: unknown } | undefined)?.descriptions,
-      callouts: (calloutRaw.translations as { callouts?: unknown } | undefined)?.callouts,
-      sitelinks: (sitelinkRaw.translations as { sitelinks?: unknown } | undefined)?.sitelinks,
-      structuredSnippets: (extrasRaw.translations as { structuredSnippets?: unknown } | undefined)?.structuredSnippets,
-      promotion: (extrasRaw.translations as { promotion?: unknown } | undefined)?.promotion,
+      callouts: (extRaw.translations as { callouts?: unknown } | undefined)?.callouts,
+      sitelinks: (extRaw.translations as { sitelinks?: unknown } | undefined)?.sitelinks,
+      structuredSnippets: (extRaw.translations as { structuredSnippets?: unknown } | undefined)?.structuredSnippets,
+      promotion: (extRaw.translations as { promotion?: unknown } | undefined)?.promotion,
     },
   };
 

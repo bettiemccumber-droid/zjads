@@ -33,4 +33,20 @@ assert.equal(
   '不应把任意 credit 当成余额不足',
 );
 
+assert.equal(
+  explainModelGoError(403, { error: { message: 'group not allowed for this token' } }),
+  'AI 调用被拒绝（403）：group not allowed for this token',
+  '403 应带上上游原句，不武断说成换模型',
+);
+
+assert.equal(
+  explainModelGoError(403, { error: { message: 'model not allowed for this key' } }),
+  'AI 调用被拒绝（403）：model not allowed for this key',
+);
+
+assert.equal(
+  explainModelGoError(403, {}),
+  'AI 调用被拒绝（403），请稍后重试',
+);
+
 console.log('modelgo.client.test.ts: ok');

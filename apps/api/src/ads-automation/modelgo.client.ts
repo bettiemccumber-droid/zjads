@@ -89,7 +89,13 @@ export function explainModelGoError(status: number, body: unknown): string {
   ) {
     return 'AI 余额不足，请先在控制台充值';
   }
-  if (status === 403) return '当前密钥不允许调用这个模型，请换成可用的模型名';
+  if (status === 403) {
+    // 403 原因很多（白名单/分组/网关等），不要武断说成「换模型」
+    const detail403 = errorDetail(body);
+    return detail403
+      ? `AI 调用被拒绝（403）：${detail403}`
+      : 'AI 调用被拒绝（403），请稍后重试';
+  }
   const detail = errorDetail(body);
   if (detail) return `AI 调用失败：${detail}`;
   return `AI 调用失败（${status}）`;

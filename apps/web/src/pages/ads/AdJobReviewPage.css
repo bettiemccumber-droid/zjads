@@ -300,6 +300,22 @@ textarea.ad-review__input--over.ant-input {
   border-bottom-color: #ffa39e !important;
 }
 
+.ad-review__sitelink--unverified:not(.ad-review__sitelink--over) {
+  border-color: #ffe58f !important;
+  background: #fffbe6 !important;
+}
+
+.ad-review__sitelink-verify {
+  margin: 0 0 8px;
+  font-size: 12px;
+  color: #389e0d;
+  line-height: 1.4;
+}
+
+.ad-review__sitelink-verify--fail {
+  color: #ad6800;
+}
+
 .ad-review__snippet--over {
   border: 2px solid #ff4d4f !important;
   background: #fff1f0 !important;

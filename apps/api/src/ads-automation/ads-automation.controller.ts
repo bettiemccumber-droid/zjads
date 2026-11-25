@@ -23,6 +23,7 @@ import {
   IsBoolean,
   IsIn,
   IsInt,
+  IsNumber,
   IsOptional,
   IsString,
   ValidateNested,
@@ -145,6 +146,18 @@ class SitelinkBody implements AdSitelink {
 
   @IsBoolean()
   verified!: boolean;
+
+  @IsOptional()
+  @IsString()
+  verifyMessage?: string;
+
+  @IsOptional()
+  @IsNumber()
+  verifyStatus?: number;
+
+  @IsOptional()
+  @IsBoolean()
+  manuallyVerified?: boolean;
 }
 
 class DraftPatchBody implements Partial<AdDraft> {

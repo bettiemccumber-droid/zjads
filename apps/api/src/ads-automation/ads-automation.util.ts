@@ -228,6 +228,12 @@ export interface AdSitelink {
   description2: string;
   finalUrl: string;
   verified: boolean;
+  /** 最近一次探测说明（成功/失败原因）。 */
+  verifyMessage?: string;
+  /** 最近一次探测 HTTP 状态（无响应为 0）。 */
+  verifyStatus?: number;
+  /** 人工确认可达（拦截站等探测失败时用）。 */
+  manuallyVerified?: boolean;
 }
 
 /**
@@ -597,8 +603,8 @@ export function validateDraft(draft: AdDraft): string[] {
   const sitelinkUrlKeys = new Set<string>();
   draft.sitelinks.forEach((link, index) => {
     if (!link.linkText.trim()) errors.push(`站内链接 ${index + 1} 需要填写文案`);
-    if (!link.verified) {
-      errors.push(`站内链接 ${index + 1} 尚未验证，请点「验证」或等自动验证通过`);
+    if (!link.verified && !link.manuallyVerified) {
+      errors.push(`站内链接 ${index + 1} 尚未验证，请点「验证」、人工标记可达，或提交时确认继续`);
     }
     if (adTextLen(link.linkText) > limits.sitelinkText) {
       errors.push(`站内链接 ${index + 1} 文案超过 ${limits.sitelinkText} 个字符`);
@@ -933,41 +939,46 @@ export function sanitizeDraftForReview(
       ? [...draft.sitelinks, ...fallback.sitelinks]
       : draft.sitelinks
   ).slice(0, limits.sitelinkCount.prefer);
+  // 审核清洗没有单独 pageLinks：用草稿/模板已有落地页当真实池，避免把已分配 URL 清成只剩官网
+  const knownSitelinkPages = [
+    ...sitelinkSource,
+    ...(padFromFallback ? fallback.sitelinks : []),
+  ]
+    .map((link) => ({ url: (link.finalUrl || '').trim(), label: link.linkText }))
+    .filter((item) => /^https?:\/\//i.test(item.url));
   const sitelinks = ensureCompleteSitelinks(
-    assignUniqueSitelinkUrls(
-      sitelinkSource.map((link, index) => {
-        const fallbackLink = padFromFallback
-          ? (fallback.sitelinks[index] || fallback.sitelinks[0])
-          : undefined;
-        const linkText = keepSitelinkField_(
-          softenExcessiveUppercase(link.linkText),
-          fallbackLink?.linkText,
-          'Shop now',
-          limits.sitelinkText,
-        );
-        const description1 = keepSitelinkField_(
-          softenExcessiveUppercase(link.description1),
-          fallbackLink?.description1,
-          'Browse online',
-          limits.sitelinkDescription,
-        );
-        const description2 = keepSitelinkField_(
-          softenExcessiveUppercase(link.description2),
-          fallbackLink?.description2,
-          'See more details',
-          limits.sitelinkDescription,
-        );
-        return {
-          ...link,
-          linkText,
-          description1,
-          description2,
-        };
-      }),
-      merchantHome,
-    ),
+    sitelinkSource.map((link, index) => {
+      const fallbackLink = padFromFallback
+        ? (fallback.sitelinks[index] || fallback.sitelinks[0])
+        : undefined;
+      const linkText = keepSitelinkField_(
+        softenExcessiveUppercase(link.linkText),
+        fallbackLink?.linkText,
+        'Shop now',
+        limits.sitelinkText,
+      );
+      const description1 = keepSitelinkField_(
+        softenExcessiveUppercase(link.description1),
+        fallbackLink?.description1,
+        'Browse online',
+        limits.sitelinkDescription,
+      );
+      const description2 = keepSitelinkField_(
+        softenExcessiveUppercase(link.description2),
+        fallbackLink?.description2,
+        'See more details',
+        limits.sitelinkDescription,
+      );
+      return {
+        ...link,
+        linkText,
+        description1,
+        description2,
+      };
+    }),
     merchantHome,
     padFromFallback ? fallback.sitelinks : [],
+    knownSitelinkPages,
   );
 
   // 允许 0～2 条；有内容时保留（含未填满 values），删光后不因 pad 强行补回
@@ -1458,8 +1469,9 @@ export function sitelinkPageScore(url: string, label = ''): number {
 }
 
 /**
- * 给站内链接分配互不相同的同站落地页。
- * 第 1 条固定为商家登记网址（官网）；其余用同站内页，不强行改成站点根路径。
+ * 给站内链接分配互不相同的真实落地页。
+ * 第 1 条固定官网；其余只用抓到的 pageLinks，禁止 invent 假路径。
+ * 真实页不够时少生成，而不是凑满。
  */
 export function assignUniqueSitelinkUrls(
   sitelinks: AdSitelink[],
@@ -1486,66 +1498,121 @@ export function assignUniqueSitelinkUrls(
     }))
     .filter((item): item is { url: string; label: string } => Boolean(item.url))
     .filter((item) => normalizePageKey(item.url) !== homeKey)
+    .filter((item, index, all) => {
+      const key = normalizePageKey(item.url);
+      return key && all.findIndex((row) => normalizePageKey(row.url) === key) === index;
+    })
     .sort((a, b) => sitelinkPageScore(b.url, b.label) - sitelinkPageScore(a.url, a.label));
+
+  const allowedKeys = new Set<string>([
+    ...(homeKey ? [homeKey] : []),
+    ...pool.map((item) => normalizePageKey(item.url)).filter(Boolean),
+  ]);
 
   const unused = () => pool.filter((item) => {
     const key = normalizePageKey(item.url);
     return key && !used.has(key);
   });
 
-  return sitelinks.map((link, index) => {
-    // 第 1 条优先用商家网址当官网；没有可用网址则按普通内页分配
+  const out: AdSitelink[] = [];
+  for (const [index, link] of sitelinks.entries()) {
+    // 第 1 条优先用商家网址当官网
     if (index === 0 && homeUrl && /^https?:\/\//i.test(homeUrl)) {
       if (homeKey) used.add(homeKey);
-      return {
+      out.push({
         ...link,
-        // 只补空，不覆盖模型已写的标题/描述；有内容时不硬截断
         linkText: link.linkText.trim() || 'Visit site'.slice(0, AD_COPY_LIMITS.sitelinkText),
         description1: link.description1.trim() || 'Browse the store'.slice(0, AD_COPY_LIMITS.sitelinkDescription),
         description2: link.description2.trim() || 'See what we offer'.slice(0, AD_COPY_LIMITS.sitelinkDescription),
         finalUrl: homeUrl,
         verified: false,
-      };
+        verifyMessage: undefined,
+        verifyStatus: undefined,
+        manuallyVerified: false,
+      });
+      continue;
     }
 
     const fromModel = sameHostUrl(link.finalUrl, merchantUrl);
     let chosen = '';
-    if (fromModel) {
+    const best = unused()[0];
+    const bestScore = best ? sitelinkPageScore(best.url, best.label) : -99;
+    const needle = link.linkText.trim().toLowerCase();
+    // 文案与抓站 label 对得上，且分数不差于当前最优购买页时才采用
+    if (needle) {
+      const matched = unused().find((item) => (
+        item.label.includes(needle)
+        || needle.includes(item.label)
+        || slugifyLabel(item.label) === slugifyLabel(needle)
+      ));
+      if (matched) {
+        const matchedScore = sitelinkPageScore(matched.url, matched.label);
+        if (!best || matchedScore >= bestScore || matchedScore >= 3) {
+          chosen = matched.url;
+        }
+      }
+    }
+    // 模型 URL 须在真实页池内；低分页（contact/about 等）有更好购买页时让位
+    if (!chosen && fromModel) {
       const key = normalizePageKey(fromModel);
-      if (key && !used.has(key)) {
+      if (key && !used.has(key) && allowedKeys.has(key)) {
         const modelScore = sitelinkPageScore(fromModel, link.linkText);
-        const better = unused().find((item) => sitelinkPageScore(item.url, item.label) >= 3 && sitelinkPageScore(item.url, item.label) > modelScore);
-        chosen = modelScore >= 0 || !better ? fromModel : better.url;
+        if (!best || modelScore >= bestScore || modelScore >= 3) {
+          chosen = fromModel;
+        }
       }
     }
     if (!chosen) {
-      const needle = link.linkText.trim().toLowerCase();
-      const matched = unused().find((item) => {
-        if (!needle) return false;
-        return item.label.includes(needle) || needle.includes(item.label) || slugifyLabel(item.label) === slugifyLabel(needle);
-      });
-      if (matched) chosen = matched.url;
+      if (best) chosen = best.url;
     }
     if (!chosen) {
-      const next = unused()[0];
-      if (next) chosen = next.url;
-    }
-    if (!chosen) {
-      chosen = inventSitelinkUrl(merchantUrl, link.linkText, used);
+      // 真实页用尽：不再 invent，直接丢掉多余站内链接
+      continue;
     }
     const key = normalizePageKey(chosen) || chosen;
     used.add(key);
-    return {
+    out.push({
       ...link,
       finalUrl: chosen,
-      // 生成时不自动算已验证，需人工点「标记已验证」
       verified: false,
-    };
-  });
+      verifyMessage: undefined,
+      verifyStatus: undefined,
+      manuallyVerified: false,
+    });
+  }
+  return out;
 }
 
 /**
- * 保证默认 6 条站内链接且字段填满；有商家网址时第 1 条优先指向它。
+ * 站内链接条数上限 = 官网 + 已抓内页数，且不超过 prefer。
+ * 无真实页时只保留官网 1 条，绝不编造路径凑满。
+ */
+export function maxRealSitelinkCount(
+  merchantUrl: string,
+  pageLinks: Array<{ url: string; label?: string }> = [],
+  prefer = AD_COPY_LIMITS.sitelinkCount.prefer,
+): number {
+  let homeOk = false;
+  try {
+    const url = new URL(merchantUrl);
+    homeOk = url.protocol === 'http:' || url.protocol === 'https:';
+  } catch {
+    homeOk = false;
+  }
+  const homeKey = homeOk ? normalizePageKey(merchantUrl) : '';
+  const uniquePages = new Set<string>();
+  for (const item of pageLinks) {
+    const absolute = sameHostUrl(item.url, merchantUrl);
+    const key = normalizePageKey(absolute);
+    if (key && key !== homeKey) uniquePages.add(key);
+  }
+  const available = (homeOk ? 1 : 0) + uniquePages.size;
+  if (!available) return 0;
+  return Math.min(prefer, Math.max(homeOk ? 1 : 0, available));
+}
+
+/**
+ * 保证站内链接字段填满；条数受真实页面池限制，有商家网址时第 1 条优先官网。
  */
 export function ensureCompleteSitelinks(
   sitelinks: AdSitelink[],
@@ -1554,9 +1621,13 @@ export function ensureCompleteSitelinks(
   pageLinks: Array<{ url: string; label?: string }> = [],
 ): AdSitelink[] {
   const prefer = AD_COPY_LIMITS.sitelinkCount.prefer;
+  const maxCount = maxRealSitelinkCount(merchantUrl, pageLinks, prefer);
+  // 无抓站结果时：AI 路径只保留已有条数再经分配压到官网；示例 fallback 仍可按 prefer 凑文案，但 URL 仍不会 invent
+  const target = pageLinks.length
+    ? maxCount
+    : (fallback.length ? Math.min(prefer, Math.max(1, maxCount || 1)) : Math.min(sitelinks.length || 1, Math.max(1, maxCount || 1)));
   const padded = [...sitelinks];
-  // 无 fallback 时不凑条数（AI 路径）；有示例草稿时才补到 prefer
-  while (padded.length < prefer && fallback.length > 0) {
+  while (padded.length < target && fallback.length > 0) {
     const seed = fallback[padded.length] || fallback[0] || {
       linkText: 'Shop now',
       description1: 'Browse online',
@@ -1566,11 +1637,10 @@ export function ensureCompleteSitelinks(
     };
     padded.push({ ...seed, verified: false });
   }
-  const filled = padded.slice(0, prefer).map((link, index) => {
+  const filled = padded.slice(0, Math.max(target, 1)).map((link, index) => {
     const seed = fallback[index] || fallback[0];
     return {
       ...link,
-      // 模型/人工已写内容不硬截断，避免与中文提示错位；仅空字段用短模板兜底
       linkText: link.linkText.trim()
         || (seed?.linkText || 'Shop now').slice(0, AD_COPY_LIMITS.sitelinkText),
       description1: link.description1.trim()
@@ -1597,17 +1667,6 @@ function sameHostUrl(candidate: string, merchantUrl: string): string {
   } catch {
     return '';
   }
-}
-
-function inventSitelinkUrl(merchantUrl: string, linkText: string, used: Set<string>): string {
-  const baseSlug = slugifyLabel(linkText) || 'page';
-  for (let attempt = 0; attempt < 20; attempt += 1) {
-    const slug = attempt === 0 ? baseSlug : `${baseSlug}-${attempt + 1}`;
-    const url = joinMerchantPath(merchantUrl, `/${slug}`);
-    const key = normalizePageKey(url);
-    if (key && !used.has(key) && key !== normalizePageKey(merchantUrl)) return url;
-  }
-  return joinMerchantPath(merchantUrl, `/${baseSlug}-${Date.now().toString(36)}`);
 }
 
 function slugifyLabel(value: string): string {

@@ -440,16 +440,17 @@ export interface LandingPageProbeResult {
   finalUrl: string;
   status: number;
   message: string;
+  /** ok | not_found | blocked | timeout | invalid | redirect | error */
+  reason?: string;
 }
 
 /**
- * 探测站内链接落地页是否真的能打开（公网 http/https）。
- * 跟随有限次跳转；200 成功；常见人机验证页按可达处理。
+ * 多方面探测落地页：跟随跳转、识别人机/WAF、区分 404 与拦截，给出可读原因。
  */
 export async function probeLandingPageUrl(pageUrl: string): Promise<LandingPageProbeResult> {
   const url = pageUrl.trim();
   if (!url) {
-    return { ok: false, url, finalUrl: '', status: 0, message: '网址为空' };
+    return { ok: false, url, finalUrl: '', status: 0, message: '网址为空', reason: 'invalid' };
   }
   let current = url;
   try {
@@ -464,19 +465,31 @@ export async function probeLandingPageUrl(pageUrl: string): Promise<LandingPageP
             url,
             finalUrl: current,
             status: response.status,
-            message: '跳转没有目标地址',
+            message: `跳转失败（HTTP ${response.status}，无 Location）`,
+            reason: 'redirect',
           };
         }
         current = new URL(location, current).toString();
         continue;
       }
       if (response.status >= 200 && response.status < 300) {
+        if (pageLooksUsable(response) || response.data.length > 0) {
+          return {
+            ok: true,
+            url,
+            finalUrl: current,
+            status: response.status,
+            message: hop > 0 ? `落地页可打开（经 ${hop} 次跳转）` : '落地页可打开',
+            reason: 'ok',
+          };
+        }
         return {
           ok: true,
           url,
           finalUrl: current,
           status: response.status,
-          message: '落地页可打开',
+          message: '服务器返回成功，但页面内容很少',
+          reason: 'ok',
         };
       }
       if (isBotChallenge(response.status, response.data)) {
@@ -485,7 +498,48 @@ export async function probeLandingPageUrl(pageUrl: string): Promise<LandingPageP
           url,
           finalUrl: current,
           status: response.status,
-          message: '页面有人机验证，已按可达处理',
+          message: `疑似人机/WAF 拦截（HTTP ${response.status}），已按可达处理`,
+          reason: 'blocked',
+        };
+      }
+      if (response.status === 404 || response.status === 410) {
+        return {
+          ok: false,
+          url,
+          finalUrl: current,
+          status: response.status,
+          message: `页面不存在（HTTP ${response.status}）`,
+          reason: 'not_found',
+        };
+      }
+      if (response.status === 401 || response.status === 403) {
+        return {
+          ok: false,
+          url,
+          finalUrl: current,
+          status: response.status,
+          message: `访问被拒绝（HTTP ${response.status}），可能需登录或 IP 被拦；可人工标记可达`,
+          reason: 'blocked',
+        };
+      }
+      if (response.status === 429 || response.status === 503) {
+        return {
+          ok: false,
+          url,
+          finalUrl: current,
+          status: response.status,
+          message: `服务暂不可用或限流（HTTP ${response.status}），稍后重试或人工确认`,
+          reason: 'blocked',
+        };
+      }
+      if (!response.status) {
+        return {
+          ok: false,
+          url,
+          finalUrl: current,
+          status: 0,
+          message: '无响应（超时或网络失败）',
+          reason: 'timeout',
         };
       }
       return {
@@ -493,17 +547,21 @@ export async function probeLandingPageUrl(pageUrl: string): Promise<LandingPageP
         url,
         finalUrl: current,
         status: response.status,
-        message: `打不开（HTTP ${response.status || '无响应'}）`,
+        message: `打不开（HTTP ${response.status}）`,
+        reason: 'error',
       };
     }
-    return { ok: false, url, finalUrl: current, status: 0, message: '跳转次数过多' };
+    return { ok: false, url, finalUrl: current, status: 0, message: '跳转次数过多', reason: 'redirect' };
   } catch (error) {
+    const message = error instanceof Error ? error.message : '探测失败';
+    const timeout = /timeout|ETIMEDOUT|ECONNABORTED|exceeded/i.test(message);
     return {
       ok: false,
       url,
       finalUrl: current,
       status: 0,
-      message: error instanceof Error ? error.message : '探测失败',
+      message: timeout ? `请求超时：${message}` : message,
+      reason: timeout ? 'timeout' : 'error',
     };
   }
 }
@@ -594,11 +652,14 @@ function pageLooksUsable(response: PageResponse): boolean {
 }
 
 /**
- * 验证页不是商家内容，不能从里面挑图片。
+ * 常见 CDN / WAF / 人机验证页。命中时探测按「可达」处理（浏览器里通常能过）。
  */
 function isBotChallenge(status: number, body: string): boolean {
-  if (status !== 403 && status !== 503 && status !== 429) return false;
-  return /Just a moment|cf-browser-verification|challenge-platform|Attention Required/i.test(body);
+  if (status !== 401 && status !== 403 && status !== 503 && status !== 429 && status !== 202) {
+    return false;
+  }
+  const sample = (body || '').slice(0, 8000);
+  return /Just a moment|cf-browser-verification|challenge-platform|Attention Required|cf-challenge|cloudflare|Enable JavaScript and cookies|Akamai|Access Denied|Request unsuccessful|distil|perimeterx|human.?verification|captcha|hcaptcha|recaptcha|Bot Detection|Security Check|checking your browser|ray id/i.test(sample);
 }
 
 /**

@@ -593,10 +593,17 @@ export class AdsAutomationService implements OnModuleInit {
     );
     return {
       ...draft,
-      sitelinks: draft.sitelinks.map((link, index) => ({
-        ...link,
-        verified: results[index]?.ok === true,
-      })),
+      sitelinks: draft.sitelinks.map((link, index) => {
+        const result = results[index];
+        const ok = result?.ok === true;
+        return {
+          ...link,
+          verified: ok || Boolean(link.manuallyVerified),
+          verifyMessage: result?.message,
+          verifyStatus: result?.status ?? 0,
+          manuallyVerified: Boolean(link.manuallyVerified),
+        };
+      }),
     };
   }
 

@@ -87,12 +87,19 @@ const base = buildSampleDraft({
   countryCode: 'VN',
   languageCode: 'vi',
 });
+const crawledPages = [
+  { url: 'https://example.com/shop', label: 'Shop' },
+  { url: 'https://example.com/collections', label: 'Collections' },
+  { url: 'https://example.com/best', label: 'Best sellers' },
+  { url: 'https://example.com/sale', label: 'Sale' },
+  { url: 'https://example.com/help', label: 'Help' },
+];
 const draft = applyAdCopy(
   base,
   parseModelJson(`\`\`\`json
 {"headlines":["Gậy golf Acegolfs","Xem Acegolfs","Acegolfs hôm nay","${'x'.repeat(40)}"],"descriptions":["Xem gậy và phụ kiện Acegolfs.","Các mẫu đang bán tại Acegolfs."],"keywords":["acegolfs"],"sitelinks":[{"linkText":"Xem ngay","description1":"Gậy golf","description2":"Phụ kiện","finalUrl":"https://example.com/"},{"linkText":"Mua ngay","description1":"Phu kien","description2":"Gậy mới","finalUrl":"https://example.com/shop"},{"linkText":"Bo suu tap","description1":"Xem them","description2":"Lua chon","finalUrl":"https://example.com/collections"},{"linkText":"Ban chay","description1":"Top picks","description2":"Hot items","finalUrl":"https://example.com/best"},{"linkText":"Uu dai","description1":"Sale now","description2":"Save more","finalUrl":"https://example.com/sale"},{"linkText":"Lien he","description1":"Support","description2":"Help desk","finalUrl":"https://example.com/help"}],"callouts":["Chinh hang","Giao nhanh","Bao hanh","Mua online","Lua chon nhieu","Thanh toan an toan","Hang moi","Dat hang"]}
 \`\`\``),
-  [],
+  crawledPages,
   { padFromTemplate: false },
 );
 assert.ok(draft.sitelinks.every((link) => !link.verified), '生成后站内链接默认未验证');
@@ -111,6 +118,14 @@ const sitelinkKeys = new Set(draft.sitelinks.map((link) => normalizePageKey(link
 assert.strictEqual(sitelinkKeys.size, draft.sitelinks.length);
 assert.ok(sitelinkKeys.has(normalizePageKey(draft.merchantUrl)), '有商家网址时优先放一条官网');
 assert.strictEqual(normalizePageKey(draft.sitelinks[0].finalUrl), normalizePageKey(draft.merchantUrl));
+const noCrawl = applyAdCopy(
+  base,
+  { sitelinks: draft.sitelinks.map(({ verified: _v, ...rest }) => ({ ...rest, verified: false })) },
+  [],
+  { padFromTemplate: false },
+);
+assert.strictEqual(noCrawl.sitelinks.length, 1, '无抓站页时只保留官网，不 invent');
+assert.strictEqual(normalizePageKey(noCrawl.sitelinks[0].finalUrl), normalizePageKey(draft.merchantUrl));
 
 const longDesc = `Discover travel deals and experiences with Klook across Australia including tours activities and attractions you can book today with flexible options for every traveler.`;
 assert.ok(longDesc.length > 90);
@@ -188,7 +203,7 @@ const withinLimits = applyAdCopy(
       { header: 'Styles', values: ['Family', 'Adventure', 'City'] },
     ],
   },
-  [],
+  crawledPages,
   { padFromTemplate: false },
 );
 assert.deepStrictEqual(validateDraft(withVerifiedSitelinks(withinLimits)), []);

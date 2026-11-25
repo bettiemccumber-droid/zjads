@@ -49,6 +49,13 @@ interface AdSitelink {
   description2: string;
   finalUrl: string;
   verified: boolean;
+  verifyMessage?: string;
+  verifyStatus?: number;
+  manuallyVerified?: boolean;
+}
+
+function sitelinkReachable(link: AdSitelink) {
+  return Boolean(link.verified || link.manuallyVerified);
 }
 
 interface AdStructuredSnippet {
@@ -826,12 +833,35 @@ export default function AdJobReviewPage() {
 
   const probeSitelinkUrls = async (urls: string[]) => {
     const res = await api.post<ApiResult<{
-      results: Array<{ ok: boolean; url: string; finalUrl: string; status: number; message: string }>;
+      results: Array<{
+        ok: boolean;
+        url: string;
+        finalUrl: string;
+        status: number;
+        message: string;
+        reason?: string;
+      }>;
     }>>('/ad-jobs/sitelinks/verify', { urls });
     if (!res.data.success) {
       throw new Error(res.data.message || '验证失败');
     }
     return res.data.data.results;
+  };
+
+  const markSitelinkManual = (index: number) => {
+    setDraft((prev) => {
+      const sitelinks = [...prev.sitelinks];
+      const current = sitelinks[index];
+      if (!current) return prev;
+      sitelinks[index] = {
+        ...current,
+        verified: true,
+        manuallyVerified: true,
+        verifyMessage: current.verifyMessage || '已人工确认可达',
+      };
+      return { ...prev, sitelinks };
+    });
+    message.success(`站内链接 ${index + 1} 已标记为可达`);
   };
 
   const verifySitelinkAt = async (index: number) => {
@@ -849,10 +879,14 @@ export default function AdJobReviewPage() {
         const sitelinks = [...prev.sitelinks];
         const current = sitelinks[index];
         if (!current) return prev;
+        const ok = Boolean(result?.ok);
         sitelinks[index] = {
           ...current,
-          finalUrl: result?.ok ? (result.finalUrl || current.finalUrl) : current.finalUrl,
-          verified: Boolean(result?.ok),
+          finalUrl: ok ? (result.finalUrl || current.finalUrl) : current.finalUrl,
+          verified: ok,
+          verifyMessage: result?.message,
+          verifyStatus: result?.status ?? 0,
+          manuallyVerified: ok ? false : current.manuallyVerified,
         };
         return { ...prev, sitelinks };
       });
@@ -873,7 +907,7 @@ export default function AdJobReviewPage() {
   const verifyAllSitelinks = async () => {
     const pending = draft.sitelinks
       .map((item, index) => ({ item, index }))
-      .filter(({ item }) => !item.verified && /^https?:\/\//i.test(item.finalUrl.trim()));
+      .filter(({ item }) => !sitelinkReachable(item) && /^https?:\/\//i.test(item.finalUrl.trim()));
     if (!pending.length) {
       message.warning('没有待验证的落地页');
       return;
@@ -889,15 +923,24 @@ export default function AdJobReviewPage() {
           const pendingItem = pending.find((row) => row.index === index);
           if (!pendingItem) return link;
           const result = byUrl.get(pendingItem.item.finalUrl.trim());
-          if (!result?.ok) {
-            if (result?.message) failMessages.push(`第 ${index + 1} 条：${result.message}`);
-            return link;
+          if (!result) return link;
+          if (!result.ok) {
+            if (result.message) failMessages.push(`第 ${index + 1} 条：${result.message}`);
+            return {
+              ...link,
+              verified: false,
+              verifyMessage: result.message,
+              verifyStatus: result.status ?? 0,
+            };
           }
           okCount += 1;
           return {
             ...link,
             finalUrl: result.finalUrl || link.finalUrl,
             verified: true,
+            verifyMessage: result.message,
+            verifyStatus: result.status ?? 0,
+            manuallyVerified: false,
           };
         });
         return { ...prev, sitelinks };
@@ -941,6 +984,44 @@ export default function AdJobReviewPage() {
     }
   };
 
+  const runPublish = async (payload: AdDraft) => {
+    if (!id) return;
+    setPublishing(true);
+    try {
+      const saved = await api.patch<ApiResult<AdJob>>(`/ad-jobs/${id}/draft`, payload);
+      if (!saved.data.success) {
+        message.error(saved.data.message || '保存草稿失败');
+        throw new Error('save failed');
+      }
+      const res = await api.post<ApiResult<AdJob>>(`/ad-jobs/${id}/publish`, {
+        mccCustomerId: selectedMcc,
+        customerId,
+        campaignName: campaignName.trim() || undefined,
+      });
+      if (!res.data.success) {
+        message.error(res.data.message || '发布失败');
+        throw new Error('publish failed');
+      }
+      setJob(res.data.data);
+      const nextDraft = res.data.data.draft ? hydrateDraft(res.data.data.draft) : payload;
+      if (res.data.data.draft) setDraft(nextDraft);
+      const submitted = res.data.data.campaign?.status === 'ENABLED';
+      message.success(submitted ? '已提交到 Google Ads，请继续发露出文' : '已写入待提交队列，请继续发露出文');
+      navigate(buildArticlePublishPath(res.data.data, nextDraft));
+    } catch (err) {
+      if (err instanceof Error && (err.message === 'save failed' || err.message === 'publish failed')) {
+        await loadJob().catch(() => undefined);
+        throw err;
+      }
+      const apiMessage = (err as { response?: { data?: { message?: string | string[] } } }).response?.data?.message;
+      message.error(Array.isArray(apiMessage) ? apiMessage.join('；') : apiMessage || '发布失败');
+      await loadJob().catch(() => undefined);
+      throw err;
+    } finally {
+      setPublishing(false);
+    }
+  };
+
   const confirmPublish = () => {
     if (!id || !editable) return;
     if (!selectedMcc || !isGoogleMccId(selectedMcc)) {
@@ -951,46 +1032,49 @@ export default function AdJobReviewPage() {
       message.warning('请先选择可投放的 CID');
       return;
     }
+    const unverified = draft.sitelinks
+      .map((item, index) => ({ item, index }))
+      .filter(({ item }) => !sitelinkReachable(item));
+    const publishBody = (
+      <div>
+        <div>{`将发布到 CID ${formatCustomerId(customerId)}。发布后不可在此页撤回。`}</div>
+        {unverified.length ? (
+          <div style={{ marginTop: 12, color: '#ad6800' }}>
+            <div>{`有 ${unverified.length} 条站内链接未通过探测，提交将按人工确认可达处理：`}</div>
+            <ul style={{ margin: '8px 0 0', paddingLeft: 18 }}>
+              {unverified.slice(0, 6).map(({ item, index }) => (
+                <li key={`uv-${index}`}>
+                  {`第 ${index + 1} 条${item.verifyMessage ? `：${item.verifyMessage}` : ''}`}
+                </li>
+              ))}
+            </ul>
+          </div>
+        ) : null}
+      </div>
+    );
     Modal.confirm({
-      title: '确认提交到 Google Ads？',
-      content: `将发布到 CID ${formatCustomerId(customerId)}。发布后不可在此页撤回。`,
-      okText: '提交到 Google Ads',
+      title: unverified.length ? '未验证站内链接，确认仍要提交？' : '确认提交到 Google Ads？',
+      content: publishBody,
+      okText: unverified.length ? '确认并提交' : '提交到 Google Ads',
+      okButtonProps: unverified.length ? { danger: true } : undefined,
       cancelText: '再看看',
       onOk: async () => {
-        setPublishing(true);
-        try {
-          const saved = await api.patch<ApiResult<AdJob>>(`/ad-jobs/${id}/draft`, draft);
-          if (!saved.data.success) {
-            message.error(saved.data.message || '保存草稿失败');
-            throw new Error('save failed');
-          }
-          const res = await api.post<ApiResult<AdJob>>(`/ad-jobs/${id}/publish`, {
-            mccCustomerId: selectedMcc,
-            customerId,
-            campaignName: campaignName.trim() || undefined,
-          });
-          if (!res.data.success) {
-            message.error(res.data.message || '发布失败');
-            throw new Error('publish failed');
-          }
-          setJob(res.data.data);
-          const nextDraft = res.data.data.draft ? hydrateDraft(res.data.data.draft) : draft;
-          if (res.data.data.draft) setDraft(nextDraft);
-          const submitted = res.data.data.campaign?.status === 'ENABLED';
-          message.success(submitted ? '已提交到 Google Ads，请继续发露出文' : '已写入待提交队列，请继续发露出文');
-          navigate(buildArticlePublishPath(res.data.data, nextDraft));
-        } catch (err) {
-          if (err instanceof Error && (err.message === 'save failed' || err.message === 'publish failed')) {
-            await loadJob().catch(() => undefined);
-            throw err;
-          }
-          const apiMessage = (err as { response?: { data?: { message?: string | string[] } } }).response?.data?.message;
-          message.error(Array.isArray(apiMessage) ? apiMessage.join('；') : apiMessage || '发布失败');
-          await loadJob().catch(() => undefined);
-          throw err;
-        } finally {
-          setPublishing(false);
+        let payload = draft;
+        if (unverified.length) {
+          const sitelinks = draft.sitelinks.map((link) => (
+            sitelinkReachable(link)
+              ? link
+              : {
+                ...link,
+                verified: true,
+                manuallyVerified: true,
+                verifyMessage: link.verifyMessage || '提交时人工确认可达',
+              }
+          ));
+          payload = { ...draft, sitelinks };
+          setDraft(payload);
         }
+        await runPublish(payload);
       },
     });
   };
@@ -1372,7 +1456,7 @@ export default function AdJobReviewPage() {
                   disabled={
                     verifyingSitelinkIndex != null
                     || !draft.sitelinks.length
-                    || draft.sitelinks.every((item) => item.verified)
+                    || draft.sitelinks.every((item) => sitelinkReachable(item))
                   }
                   onClick={() => void verifyAllSitelinks()}
                 >
@@ -1384,14 +1468,14 @@ export default function AdJobReviewPage() {
                 type="info"
                 showIcon
                 style={{ marginBottom: 12 }}
-                message="默认生成 6 条（第 1 条优先官网）。生成后会自动探测落地页；未通过的可再点「验证」。不合适可全部删除后再提交 Google Ads。"
+                message="只使用抓到的真实页面与官网，不会编造路径。生成后自动探测；失败会显示原因，也可人工标记可达。提交时若仍有未验证项会二次确认。"
               />
               {draft.sitelinks.map((link, index) => (
                 <Card
                   key={`sl-${index}`}
                   size="small"
                   type="inner"
-                  className={`ad-review__sitelink${sitelinkOver(link) ? ' ad-review__sitelink--over' : ''}`}
+                  className={`ad-review__sitelink${sitelinkOver(link) ? ' ad-review__sitelink--over' : ''}${!sitelinkReachable(link) ? ' ad-review__sitelink--unverified' : ''}`}
                   title={(
                     <Space size={8} wrap>
                       <span>{`站内链接 ${index + 1}${index === 0 ? '（优先官网）' : ''}`}</span>
@@ -1399,8 +1483,14 @@ export default function AdJobReviewPage() {
                     </Space>
                   )}
                   extra={(
-                    <Space>
-                      {link.verified ? <Tag color="success">已验证</Tag> : <Tag color="warning">未验证</Tag>}
+                    <Space wrap>
+                      {link.manuallyVerified ? (
+                        <Tag color="processing">人工确认</Tag>
+                      ) : link.verified ? (
+                        <Tag color="success">已验证</Tag>
+                      ) : (
+                        <Tag color="warning">未验证</Tag>
+                      )}
                       <Tooltip title="AI 重新生成这条站内链接文案">
                         <Button
                           type="text"
@@ -1423,8 +1513,20 @@ export default function AdJobReviewPage() {
                         }
                         onClick={() => void verifySitelinkAt(index)}
                       >
-                        {link.verified ? '重新验证' : '验证'}
+                        {sitelinkReachable(link) ? '重新验证' : '验证'}
                       </Button>
+                      {!sitelinkReachable(link) ? (
+                        <Tooltip title="探测失败但浏览器可打开时，可人工标记">
+                          <Button
+                            type="link"
+                            size="small"
+                            disabled={!editable}
+                            onClick={() => markSitelinkManual(index)}
+                          >
+                            标记可达
+                          </Button>
+                        </Tooltip>
+                      ) : null}
                       <Button
                         type="text"
                         size="small"
@@ -1440,6 +1542,12 @@ export default function AdJobReviewPage() {
                 >
                   {sitelinkOver(link) ? (
                     <div className="ad-review__field-over-tip">链接文字 ≤{SITELINK_TEXT_MAX}，两条描述各 ≤{SITELINK_DESC_MAX}，请改短</div>
+                  ) : null}
+                  {link.verifyMessage ? (
+                    <div className={`ad-review__sitelink-verify${sitelinkReachable(link) ? '' : ' ad-review__sitelink-verify--fail'}`}>
+                      {link.verifyMessage}
+                      {typeof link.verifyStatus === 'number' && link.verifyStatus > 0 ? `（HTTP ${link.verifyStatus}）` : ''}
+                    </div>
                   ) : null}
                   <Row gutter={[8, 8]}>
                     <Col span={8}>
@@ -1489,11 +1597,18 @@ export default function AdJobReviewPage() {
                     </Col>
                     <Col span={24}>
                       <Input
-                        placeholder="落地页 URL（需与其它站内链接不同）"
+                        placeholder="落地页 URL（需与其它站内链接不同；仅真实页面）"
                         value={link.finalUrl}
                         onChange={(event) => {
                           const sitelinks = [...draft.sitelinks];
-                          sitelinks[index] = { ...link, finalUrl: event.target.value, verified: false };
+                          sitelinks[index] = {
+                            ...link,
+                            finalUrl: event.target.value,
+                            verified: false,
+                            manuallyVerified: false,
+                            verifyMessage: undefined,
+                            verifyStatus: undefined,
+                          };
                           setDraft({ ...draft, sitelinks });
                         }}
                       />
@@ -1515,6 +1630,7 @@ export default function AdJobReviewPage() {
                         description2: '',
                         finalUrl: draft.merchantUrl,
                         verified: false,
+                        manuallyVerified: false,
                       },
                     ],
                   })}

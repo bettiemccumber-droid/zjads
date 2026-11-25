@@ -970,22 +970,23 @@ export function sanitizeDraftForReview(
     padFromFallback ? fallback.sitelinks : [],
   );
 
-  const structuredSnippets = (draft.structuredSnippets?.length
-    ? draft.structuredSnippets
-    : (padFromFallback ? fallback.structuredSnippets : [])
-  )
-    .map((row) => ({
-      header: normalizeStructuredSnippetHeader(row.header) || row.header,
-      values: row.values
-        .map((value) => softenExcessiveUppercase(value.trim()))
-        .filter((value) => value && !isUnsafeAdText(value, 'general'))
-        .slice(0, 10),
-    }))
-    .filter((row) => normalizeStructuredSnippetHeader(row.header) && row.values.length >= limits.structuredValuesMin)
+  // 允许 0～2 条；有内容时保留（含未填满 values），删光后不因 pad 强行补回
+  const fromDraft = (draft.structuredSnippets ?? [])
+    .map((row) => {
+      const header = normalizeStructuredSnippetHeader(row.header) || row.header;
+      return {
+        header,
+        values: row.values
+          .map((value) => softenExcessiveUppercase(value.trim()))
+          .filter((value) => value && !isUnsafeAdText(value, 'general'))
+          .slice(0, 10),
+      };
+    })
+    .filter((row) => Boolean(normalizeStructuredSnippetHeader(row.header)))
     .slice(0, limits.structuredCategories);
-  const snippets = structuredSnippets.length === limits.structuredCategories
-    ? structuredSnippets
-    : (padFromFallback ? fallback.structuredSnippets : structuredSnippets);
+  const snippets = fromDraft.length
+    ? fromDraft
+    : (padFromFallback ? fallback.structuredSnippets : []);
 
   const promotion = draft.promotion?.trim() && !isUnsafeAdText(draft.promotion, 'general')
     ? draft.promotion.trim().slice(0, 120)

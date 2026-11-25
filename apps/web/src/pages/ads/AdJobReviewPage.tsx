@@ -1766,23 +1766,53 @@ export default function AdJobReviewPage() {
               )}
             </Card>
 
-            <Card size="small" className="ad-review__card" title="结构化摘要">
+            <Card size="small" className="ad-review__card" title={`结构化摘要（${draft.structuredSnippets.length}）`}>
+              <div className="ad-review__hint" style={{ marginBottom: 8 }}>
+                可选附加信息，可全部删除；提交时不强制。
+              </div>
               <Space direction="vertical" style={{ width: '100%' }} size={8}>
-                {(draft.structuredSnippets.length ? draft.structuredSnippets : [{ header: 'Types', values: [] }]).map((snippet, index) => (
-                  <Card key={`s-${index}`} size="small" type="inner">
+                {draft.structuredSnippets.map((snippet, index) => (
+                  <Card
+                    key={`s-${index}`}
+                    size="small"
+                    type="inner"
+                    extra={(
+                      <Button
+                        type="text"
+                        size="small"
+                        danger
+                        disabled={!editable}
+                        icon={<DeleteOutlined />}
+                        aria-label="删除结构化摘要"
+                        onClick={() => {
+                          const structuredSnippets = draft.structuredSnippets.filter((_, i) => i !== index);
+                          const translations = draft.translations
+                            ? {
+                                ...draft.translations,
+                                structuredSnippets: (draft.translations.structuredSnippets ?? [])
+                                  .filter((_, i) => i !== index),
+                              }
+                            : draft.translations;
+                          setDraft({ ...draft, structuredSnippets, translations });
+                        }}
+                      />
+                    )}
+                  >
                     <Select
                       style={{ width: '100%', marginBottom: 8 }}
                       value={snippet.header}
+                      disabled={!editable}
                       options={SNIPPET_HEADERS.map((header) => ({ value: header, label: header }))}
                       onChange={(header) => {
-                        const structuredSnippets = [...(draft.structuredSnippets.length ? draft.structuredSnippets : [{ header: 'Types', values: [] }])];
+                        const structuredSnippets = [...draft.structuredSnippets];
                         structuredSnippets[index] = { ...structuredSnippets[index], header };
                         setDraft({ ...draft, structuredSnippets });
                       }}
                     />
                     <Input.TextArea
                       rows={2}
-                      placeholder="逗号或换行分隔，至少 4 个值"
+                      disabled={!editable}
+                      placeholder="逗号或换行分隔，至少 3 个值"
                       value={snippet.values.join(', ')}
                       onChange={(event) => {
                         const values = event.target.value
@@ -1790,7 +1820,7 @@ export default function AdJobReviewPage() {
                           .map((item) => item.trim())
                           .filter(Boolean)
                           .slice(0, 10);
-                        const structuredSnippets = [...(draft.structuredSnippets.length ? draft.structuredSnippets : [{ header: 'Types', values: [] }])];
+                        const structuredSnippets = [...draft.structuredSnippets];
                         structuredSnippets[index] = { ...structuredSnippets[index], values };
                         setDraft({ ...draft, structuredSnippets });
                       }}
@@ -1802,6 +1832,22 @@ export default function AdJobReviewPage() {
                     ) : null}
                   </Card>
                 ))}
+                {editable && draft.structuredSnippets.length < 2 ? (
+                  <Button
+                    type="dashed"
+                    block
+                    onClick={() => {
+                      const used = new Set(draft.structuredSnippets.map((row) => row.header));
+                      const header = SNIPPET_HEADERS.find((item) => !used.has(item)) || 'Types';
+                      setDraft({
+                        ...draft,
+                        structuredSnippets: [...draft.structuredSnippets, { header, values: [] }],
+                      });
+                    }}
+                  >
+                    + 添加结构化摘要
+                  </Button>
+                ) : null}
               </Space>
             </Card>
           </Col>

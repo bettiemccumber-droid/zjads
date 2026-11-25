@@ -291,6 +291,59 @@ function buildAdImageAssetOperations(input: {
 }
 
 /**
+ * 系列已创建后，单张补挂图片/商标（与创建报文分离，失败不影响系列）。
+ * tempAssetId 须为负数临时资源号。
+ */
+export function buildAttachCampaignImagePayload(input: {
+  customerId: string;
+  campaignResource: string;
+  image: { name: string; data: string };
+  fieldType: 'AD_IMAGE' | 'LOGO';
+  tempAssetId: number;
+}): Record<string, unknown> {
+  const customerId = input.customerId.replace(/-/g, '');
+  const tempId = input.tempAssetId < 0 ? input.tempAssetId : -Math.abs(input.tempAssetId || 301);
+  const asset = `customers/${customerId}/assets/${tempId}`;
+  const label = input.fieldType === 'LOGO' ? 'Logo' : 'Ad image';
+  return {
+    partialFailure: false,
+    validateOnly: false,
+    mutateOperations: [
+      {
+        assetOperation: {
+          create: {
+            resourceName: asset,
+            name: (input.image.name || label).slice(0, 128),
+            type: 'IMAGE',
+            imageAsset: { data: input.image.data },
+          },
+        },
+      },
+      {
+        campaignAssetOperation: {
+          create: {
+            asset,
+            campaign: input.campaignResource,
+            fieldType: input.fieldType,
+          },
+        },
+      },
+    ],
+  };
+}
+
+/** 补挂结果文案：已挂几张、跳过几张。 */
+export function describeMediaAttachResult(input: {
+  attached: number;
+  skipped: number;
+}): string {
+  if (input.attached <= 0 && input.skipped <= 0) return '';
+  if (input.attached > 0 && input.skipped <= 0) return `图片/商标已补挂 ${input.attached} 张`;
+  if (input.attached > 0) return `已挂 ${input.attached} 张图片/商标，跳过 ${input.skipped} 张`;
+  return `图片/商标未挂上（跳过 ${input.skipped} 张）`;
+}
+
+/**
  * 可选促销附加信息 → Google Ads PROMOTION asset。
  */
 function buildPromotionAssetOperations(input: {

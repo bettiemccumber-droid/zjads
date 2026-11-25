@@ -5,6 +5,7 @@ import {
   AdSitelink,
   AdStructuredSnippet,
   STRUCTURED_SNIPPET_HEADERS,
+  adTextLen,
   buildSampleDraft,
   ensureCompleteSitelinks,
   isUnsafeAdText,
@@ -283,8 +284,8 @@ function adCopyJsonShape(merchantUrl: string, pageLinks: Array<{ url: string; la
   return `Return JSON only:
 {"headlines": string[${AD_COPY_LIMITS.headlineCount.prefer}], "descriptions": string[${AD_COPY_LIMITS.descriptionCount.prefer}], "keywords": string[1 to 8], "negativeKeywords": string[4 to 12], "sitelinks": [{"linkText": string, "description1": string, "description2": string, "finalUrl": string}], "callouts": string[${AD_COPY_LIMITS.calloutCount.prefer}], "structuredSnippets": [{"header": string, "values": string[${AD_COPY_LIMITS.structuredValuesMin}+]}], "promotionAsset": {"enabled": boolean, "promotionTarget": string, "discountType": "PERCENT"|"MONETARY", "percentOff": number, "moneyAmountOff": string, "currencyCode": string, "languageCode": string, "finalUrl": string, "promotionCode": string, "ordersOverAmount": string, "occasion": string, "startDate": string, "endDate": string} | null, "translations": {"headlines": string[${AD_COPY_LIMITS.headlineCount.prefer}], "descriptions": string[${AD_COPY_LIMITS.descriptionCount.prefer}], "callouts": string[${AD_COPY_LIMITS.calloutCount.prefer}], "sitelinks": string[${AD_COPY_LIMITS.sitelinkCount.prefer}], "keywords": string[1 to 8], "structuredSnippets": string[2], "promotion": string}}
 
-Hard character limits (spaces/punctuation count):
-- headline <= ${AD_COPY_LIMITS.headline}
+Hard character limits (spaces/punctuation count — count carefully before return; do NOT write long then hope for truncation):
+- headline <= ${AD_COPY_LIMITS.headline} (prefer 18–28; never exceed ${AD_COPY_LIMITS.headline})
 - description <= ${AD_COPY_LIMITS.description}
 - callout <= ${AD_COPY_LIMITS.callout}
 - sitelink linkText <= ${AD_COPY_LIMITS.sitelinkText}; every sitelink must fill linkText, description1, description2, and finalUrl
@@ -292,6 +293,7 @@ Hard character limits (spaces/punctuation count):
 - Exactly one sitelink MUST use an official-site landing page as finalUrl: either ${merchantUrl} or the same-host site root (e.g. https://example.com/). Remaining sitelinks use distinct on-site pages.
 - each structured snippet value <= ${AD_COPY_LIMITS.structuredValue}
 - promotionTarget <= 20
+- If a phrase does not fit, rewrite a shorter phrase — never rely on cutting words mid-sentence.
 
 Content rules:
 - Exactly ${AD_COPY_LIMITS.headlineCount.prefer} unique headlines, ${AD_COPY_LIMITS.descriptionCount.prefer} descriptions, ${AD_COPY_LIMITS.calloutCount.prefer} callouts, exactly ${AD_COPY_LIMITS.sitelinkCount.prefer} fully filled sitelinks.
@@ -302,7 +304,7 @@ Content rules:
 - Never use more than 4 consecutive uppercase Latin letters (SHOPNOW is bad; Shop Now / FREE is ok). Avoid ALL-CAPS words longer than 4 letters.
 - Callouts and descriptions MAY mention discounts, free shipping, coupons, or sale language when plausible. Concrete % off / coupon codes still prefer promotionAsset when known.
 - promotionAsset: optional. Set enabled=true only when a concrete discount is known or strongly typical for this merchant; otherwise enabled=false or null. Use percentOff as whole percent (20 means 20%). moneyAmountOff is a decimal string. languageCode should match the ad language. finalUrl defaults to merchant URL if omitted. occasion may be empty or a real holiday occasion when applicable. Always leave startDate and endDate empty (operators set schedule manually later).
-- translations: required Simplified Chinese glosses for human review only (not sent to Google). Must include: headlines, descriptions, callouts, sitelinks, keywords (aligned to keywords[]), structuredSnippets (2 strings; each is comma-separated Chinese glosses for that snippet's values), and promotion if any.
+- translations: required Simplified Chinese glosses for human review only (not sent to Google). Must include: headlines, descriptions, callouts, sitelinks, keywords (aligned to keywords[]), structuredSnippets (2 strings; each is comma-separated Chinese glosses for that snippet's values), and promotion if any. translations.headlines[i] MUST mean the same as headlines[i] as finally written (within the character limit) — never gloss a longer unused draft.
 - structuredSnippets: pick exactly 2 DIFFERENT headers from [${headers}] that best fit THIS merchant (not a fixed Types+Styles habit). Examples: travel/airlines → Destinations + Types; hotels → Amenities + Destinations; multi-brand → Brands + Types; electronics → Models + Types; fashion own-brand → Styles + Types; services → Service catalog + Types. Use exact English header strings. Values must be merchant-specific (not Apparel/Casual filler). Each needs at least ${AD_COPY_LIMITS.structuredValuesMin} short values.
 - Always include useful negativeKeywords (careers, login, free pdf, etc.).
 - Ad final URL (RSA) stays ${merchantUrl}. No URLs inside headline/description/callout text.
@@ -485,7 +487,8 @@ export function parseModelJson(text: string): Record<string, unknown> {
 }
 
 /**
- * 把模型文案套进草稿。超长截断到规范上限。
+ * 把模型文案套进草稿。
+ * 标题/描述/宣传语不硬截断（保留与 translations 同义）；超限由审核红框 + validateDraft 处理。
  * padFromTemplate=false（默认）：不用示例句凑数；true 仅兼容旧测试/未开 AI 合并。
  */
 export function applyAdCopy(
@@ -496,9 +499,9 @@ export function applyAdCopy(
 ): AdDraft {
   const padFromTemplate = options?.padFromTemplate === true;
   const limits = AD_COPY_LIMITS;
-  const modelHeadlines = textList(raw.headlines).map((text) => fitAdText(text, limits.headline));
-  const modelDescriptions = textList(raw.descriptions).map((text) => fitAdText(text, limits.description));
-  const modelCallouts = textList(raw.callouts).map((text) => fitAdText(text, limits.callout));
+  const modelHeadlines = textList(raw.headlines).map((text) => normalizeAdLine(text));
+  const modelDescriptions = textList(raw.descriptions).map((text) => normalizeAdLine(text));
+  const modelCallouts = textList(raw.callouts).map((text) => normalizeAdLine(text));
   const headlines = uniqueNonEmpty(
     padFromTemplate ? [...modelHeadlines, ...base.headlines] : modelHeadlines.length ? modelHeadlines : base.headlines,
   ).slice(0, limits.headlineCount.max);
@@ -643,13 +646,20 @@ function parsePromotionAsset(value: unknown, base: AdDraft): AdPromotionAsset | 
   };
 }
 
+/** 规范化空白与过度大写；不截断。 */
+export function normalizeAdLine(value: string): string {
+  return softenExcessiveUppercase(value.trim().replace(/\s+/g, ' '));
+}
+
 /**
- * 截到 Google Ads 字数上限；尽量在空格处截断，避免半截单词。
+ * 截到 Google Ads 字数上限；尽量在空格处截断。
+ * 仅用于模板兜底/结构化短值等；主广告文案请用 normalizeAdLine，避免与中文提示错位。
  */
 export function fitAdText(value: string, max: number): string {
-  const text = softenExcessiveUppercase(value.trim().replace(/\s+/g, ' '));
-  if (text.length <= max) return text;
-  const sliced = text.slice(0, max);
+  const text = normalizeAdLine(value);
+  if (adTextLen(text) <= max) return text;
+  const chars = [...text];
+  const sliced = chars.slice(0, max).join('');
   const space = sliced.lastIndexOf(' ');
   if (space >= Math.floor(max * 0.6)) return sliced.slice(0, space).trim();
   return sliced.trim();
@@ -743,9 +753,9 @@ zh is a short Simplified Chinese gloss of the three fields for human review.`,
       500,
       input.personaPrompt,
     );
-    const linkText = softenExcessiveUppercase(fitAdText(String(raw.linkText ?? ''), AD_COPY_LIMITS.sitelinkText));
-    const description1 = softenExcessiveUppercase(fitAdText(String(raw.description1 ?? ''), AD_COPY_LIMITS.sitelinkDescription));
-    const description2 = softenExcessiveUppercase(fitAdText(String(raw.description2 ?? ''), AD_COPY_LIMITS.sitelinkDescription));
+    const linkText = normalizeAdLine(String(raw.linkText ?? ''));
+    const description1 = normalizeAdLine(String(raw.description1 ?? ''));
+    const description2 = normalizeAdLine(String(raw.description2 ?? ''));
     if (!linkText || !description1 || !description2) {
       throw new Error('模型没有返回完整的站内链接文案');
     }
@@ -775,12 +785,12 @@ ${seasonHint}
 Avoid duplicating these existing lines:
 ${avoid || '- (none)'}`,
     `Return JSON only: {"text": string, "zh": string}.
-Hard limit: text <= ${limit} characters (spaces/punctuation count). Strong click intent; specific to this merchant; no placeholders like $X or [link]; no more than 4 consecutive uppercase Latin letters.
-zh is a short Simplified Chinese gloss for human review.`,
+Hard limit: text <= ${limit} characters (spaces/punctuation count). Prefer rewriting shorter over long phrases. Strong click intent; specific to this merchant; no placeholders like $X or [link]; no more than 4 consecutive uppercase Latin letters.
+zh must gloss the exact text you return (same meaning), Simplified Chinese for human review.`,
     400,
     input.personaPrompt,
   );
-  const text = softenExcessiveUppercase(fitAdText(String(raw.text ?? ''), limit));
+  const text = normalizeAdLine(String(raw.text ?? ''));
   if (!text) throw new Error('模型没有返回文案');
   const unsafeKind = input.kind === 'headline' || input.kind === 'description' || input.kind === 'callout'
     ? input.kind
@@ -791,6 +801,7 @@ zh is a short Simplified Chinese gloss for human review.`,
   if (input.siblings.some((item) => item.trim().toLowerCase() === text.toLowerCase())) {
     throw new Error('生成结果与现有文案重复，请再试一次');
   }
+  // 超限不硬截断：保留原文与 zh 同义，由审核页标红；发布仍会被 validate 拦住
   return {
     text,
     zh: typeof raw.zh === 'string' ? raw.zh.trim() : undefined,
@@ -851,13 +862,13 @@ function sitelinkList(value: unknown): AdDraft['sitelinks'] {
     .map((item) => {
       if (!item || typeof item !== 'object') return null;
       const linkText = typeof (item as { linkText?: unknown }).linkText === 'string'
-        ? fitAdText((item as { linkText: string }).linkText, AD_COPY_LIMITS.sitelinkText)
+        ? normalizeAdLine((item as { linkText: string }).linkText)
         : '';
       const description1 = typeof (item as { description1?: unknown }).description1 === 'string'
-        ? fitAdText((item as { description1: string }).description1, AD_COPY_LIMITS.sitelinkDescription)
+        ? normalizeAdLine((item as { description1: string }).description1)
         : '';
       const description2 = typeof (item as { description2?: unknown }).description2 === 'string'
-        ? fitAdText((item as { description2: string }).description2, AD_COPY_LIMITS.sitelinkDescription)
+        ? normalizeAdLine((item as { description2: string }).description2)
         : '';
       const finalUrl = typeof (item as { finalUrl?: unknown }).finalUrl === 'string'
         ? (item as { finalUrl: string }).finalUrl.trim()

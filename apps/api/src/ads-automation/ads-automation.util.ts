@@ -21,6 +21,11 @@ export const AD_COPY_LIMITS = {
   businessName: 25,
 } as const;
 
+/** 与审核页字数一致：按 Unicode 码点计（空格标点各 1）。 */
+export function adTextLen(text: string): number {
+  return [...text].length;
+}
+
 /**
  * Google 结构化摘要 header。mutate 必须用英文原文，不能用 TYPES 这类枚举名。
  * @see https://developers.google.com/google-ads/api/reference/data/structured-snippet-headers
@@ -540,7 +545,8 @@ export function validateDraft(draft: AdDraft): string[] {
   }
   const headlineSet = new Set<string>();
   draft.headlines.forEach((text, index) => {
-    if (text.trim().length === 0 || text.length > limits.headline) {
+    const len = adTextLen(text.trim());
+    if (len === 0 || adTextLen(text) > limits.headline) {
       errors.push(`标题 ${index + 1} 需在 1 到 ${limits.headline} 个字符`);
     }
     const key = text.trim().toLowerCase();
@@ -552,7 +558,8 @@ export function validateDraft(draft: AdDraft): string[] {
     errors.push(`描述需要 ${limits.descriptionCount.min} 到 ${limits.descriptionCount.max} 条`);
   }
   draft.descriptions.forEach((text, index) => {
-    if (text.trim().length === 0 || text.length > limits.description) {
+    const len = adTextLen(text.trim());
+    if (len === 0 || adTextLen(text) > limits.description) {
       errors.push(`描述 ${index + 1} 需在 1 到 ${limits.description} 个字符`);
     }
     errors.push(...policyHits(text, `描述 ${index + 1}`, { allowPromo: true }));
@@ -571,13 +578,16 @@ export function validateDraft(draft: AdDraft): string[] {
     if (!link.verified) {
       errors.push(`站内链接 ${index + 1} 尚未验证，请点「验证」或等自动验证通过`);
     }
-    if (link.linkText.length > limits.sitelinkText) {
+    if (adTextLen(link.linkText) > limits.sitelinkText) {
       errors.push(`站内链接 ${index + 1} 文案超过 ${limits.sitelinkText} 个字符`);
     }
     if (!link.description1.trim() || !link.description2.trim()) {
       errors.push(`站内链接 ${index + 1} 的两条描述都要填写`);
     }
-    if (link.description1.length > limits.sitelinkDescription || link.description2.length > limits.sitelinkDescription) {
+    if (
+      adTextLen(link.description1) > limits.sitelinkDescription
+      || adTextLen(link.description2) > limits.sitelinkDescription
+    ) {
       errors.push(`站内链接 ${index + 1} 说明行超过 ${limits.sitelinkDescription} 个字符`);
     }
     if (!/^https?:\/\//i.test(link.finalUrl)) {
@@ -606,7 +616,7 @@ export function validateDraft(draft: AdDraft): string[] {
     errors.push(`宣传信息最多 ${limits.calloutCount.max} 条`);
   }
   draft.callouts.forEach((text, index) => {
-    if (text.length > limits.callout) errors.push(`宣传信息 ${index + 1} 超过 ${limits.callout} 个字符`);
+    if (adTextLen(text) > limits.callout) errors.push(`宣传信息 ${index + 1} 超过 ${limits.callout} 个字符`);
     errors.push(...policyHits(text, `宣传信息 ${index + 1}`, { allowPromo: true }));
   });
   const snippets = draft.structuredSnippets ?? [];
@@ -617,7 +627,7 @@ export function validateDraft(draft: AdDraft): string[] {
       errors.push(`结构化摘要 ${index + 1} 类别不在允许列表中`);
     }
     values.forEach((value, valueIndex) => {
-      if (value.length > limits.structuredValue) {
+      if (adTextLen(value) > limits.structuredValue) {
         errors.push(`结构化摘要 ${index + 1} 第 ${valueIndex + 1} 个值超过 ${limits.structuredValue} 个字符`);
       }
     });
@@ -628,7 +638,7 @@ export function validateDraft(draft: AdDraft): string[] {
   errors.push(...validatePromotionAsset(draft.promotionAsset, draft.merchantUrl));
   if (!/^https?:\/\//i.test(draft.merchantUrl)) errors.push('商家网址需要以 http 或 https 开头');
   const businessName = (draft.businessName ?? '').trim();
-  if (businessName.length > limits.businessName) {
+  if (adTextLen(businessName) > limits.businessName) {
     errors.push(`商家名称最多 ${limits.businessName} 个字符（可留空）`);
   } else if (businessName) {
     // 品牌正式名可全大写（如 ABC HOME）；仍拦占位符/风险词
@@ -810,10 +820,11 @@ function keepSitelinkField_(
   hardFallback: string,
   maxLen: number,
 ): string {
+  // AI/人工主文案不硬截断，避免与中文提示错位；仅模板兜底时压到上限
   const text = primary.trim();
-  if (text && !isUnsafeAdText(text, 'sitelink')) return text.slice(0, maxLen);
+  if (text && !isUnsafeAdText(text, 'sitelink')) return text;
   const backup = (reserve ?? '').trim();
-  if (backup && !isUnsafeAdText(backup, 'sitelink')) return backup.slice(0, maxLen);
+  if (backup && !isUnsafeAdText(backup, 'sitelink')) return backup;
   return hardFallback.slice(0, maxLen);
 }
 
@@ -868,20 +879,21 @@ export function sanitizeDraftForReview(
     return out.slice(0, max);
   };
 
+  // 主文案不硬截断：超限留给审核页红框 + validateDraft；避免截断后与 translations 意思错位
   const headlines = fillLines(
     draft.headlines,
     fallback.headlines,
     limits.headlineCount.min,
     limits.headlineCount.max,
     'headline',
-  ).map((text) => text.slice(0, limits.headline));
+  );
   const descriptions = fillLines(
     draft.descriptions,
     fallback.descriptions,
     limits.descriptionCount.min,
     limits.descriptionCount.max,
     'description',
-  ).map((text) => text.slice(0, limits.description));
+  );
   const calloutMin = padFromFallback
     ? Math.min(limits.calloutCount.prefer, fallback.callouts.length || limits.calloutCount.prefer)
     : 0;
@@ -891,7 +903,7 @@ export function sanitizeDraftForReview(
     calloutMin,
     limits.calloutCount.prefer,
     'callout',
-  ).map((text) => text.slice(0, limits.callout));
+  );
 
   const merchantHome = draft.merchantUrl || fallback.merchantUrl;
   const sitelinkSource = (
@@ -1464,10 +1476,10 @@ export function assignUniqueSitelinkUrls(
       if (homeKey) used.add(homeKey);
       return {
         ...link,
-        // 只补空，不覆盖模型已写的标题/描述
-        linkText: (link.linkText.trim() || 'Visit site').slice(0, AD_COPY_LIMITS.sitelinkText),
-        description1: (link.description1.trim() || 'Browse the store').slice(0, AD_COPY_LIMITS.sitelinkDescription),
-        description2: (link.description2.trim() || 'See what we offer').slice(0, AD_COPY_LIMITS.sitelinkDescription),
+        // 只补空，不覆盖模型已写的标题/描述；有内容时不硬截断
+        linkText: link.linkText.trim() || 'Visit site'.slice(0, AD_COPY_LIMITS.sitelinkText),
+        description1: link.description1.trim() || 'Browse the store'.slice(0, AD_COPY_LIMITS.sitelinkDescription),
+        description2: link.description2.trim() || 'See what we offer'.slice(0, AD_COPY_LIMITS.sitelinkDescription),
         finalUrl: homeUrl,
         verified: false,
       };
@@ -1535,9 +1547,13 @@ export function ensureCompleteSitelinks(
     const seed = fallback[index] || fallback[0];
     return {
       ...link,
-      linkText: (link.linkText.trim() || seed?.linkText || 'Shop now').slice(0, AD_COPY_LIMITS.sitelinkText),
-      description1: (link.description1.trim() || seed?.description1 || 'Browse online').slice(0, AD_COPY_LIMITS.sitelinkDescription),
-      description2: (link.description2.trim() || seed?.description2 || 'See more details').slice(0, AD_COPY_LIMITS.sitelinkDescription),
+      // 模型/人工已写内容不硬截断，避免与中文提示错位；仅空字段用短模板兜底
+      linkText: link.linkText.trim()
+        || (seed?.linkText || 'Shop now').slice(0, AD_COPY_LIMITS.sitelinkText),
+      description1: link.description1.trim()
+        || (seed?.description1 || 'Browse online').slice(0, AD_COPY_LIMITS.sitelinkDescription),
+      description2: link.description2.trim()
+        || (seed?.description2 || 'See more details').slice(0, AD_COPY_LIMITS.sitelinkDescription),
     };
   });
   return assignUniqueSitelinkUrls(filled, merchantUrl, pageLinks);

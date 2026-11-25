@@ -1,5 +1,9 @@
 import assert from 'assert';
-import { buildCreateCampaignPayload } from './mutate-payload';
+import {
+  buildAttachCampaignImagePayload,
+  buildCreateCampaignPayload,
+  describeMediaAttachResult,
+} from './mutate-payload';
 import {
   affiliateKeywordDensity,
   annotateAffiliateKeywords,
@@ -216,5 +220,31 @@ const density = affiliateKeywordDensity(linked);
 assert.ok(density.keywords.length >= 2);
 assert.ok(density.ratio >= 0.05);
 assert.ok(linked.intro.join(' ').includes('[[affiliate:'));
+
+const attachPayload = buildAttachCampaignImagePayload({
+  customerId: '130-512-5178',
+  campaignResource: 'customers/1305125178/campaigns/99',
+  image: { name: 'ad-image-1', data: 'abc123' },
+  fieldType: 'AD_IMAGE',
+  tempAssetId: -301,
+});
+const attachOps = attachPayload.mutateOperations as Array<Record<string, unknown>>;
+assert.strictEqual(attachOps.length, 2);
+assert.deepStrictEqual(
+  (attachOps[0] as { assetOperation: { create: { resourceName: string } } }).assetOperation.create.resourceName,
+  'customers/1305125178/assets/-301',
+);
+assert.deepStrictEqual(
+  (attachOps[1] as { campaignAssetOperation: { create: { campaign: string; fieldType: string } } })
+    .campaignAssetOperation.create,
+  {
+    asset: 'customers/1305125178/assets/-301',
+    campaign: 'customers/1305125178/campaigns/99',
+    fieldType: 'AD_IMAGE',
+  },
+);
+assert.strictEqual(describeMediaAttachResult({ attached: 3, skipped: 0 }), '图片/商标已补挂 3 张');
+assert.strictEqual(describeMediaAttachResult({ attached: 2, skipped: 1 }), '已挂 2 张图片/商标，跳过 1 张');
+assert.strictEqual(describeMediaAttachResult({ attached: 0, skipped: 4 }), '图片/商标未挂上（跳过 4 张）');
 
 console.log('ads-automation.util.test.ts: ok');

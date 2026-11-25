@@ -355,11 +355,19 @@ function isEligible(row: AdsCustomer) {
   );
 }
 
+function textLen(text: string) {
+  return [...text].length;
+}
+
+function isOverLimit(text: string, max: number) {
+  return textLen(text) > max;
+}
+
 function charCount(text: string, max: number) {
-  const len = [...text].length;
+  const over = isOverLimit(text, max);
   return (
-    <span className={len > max ? 'ad-review__count ad-review__count--over' : 'ad-review__count'}>
-      {len}/{max}
+    <span className={over ? 'ad-review__count ad-review__count--over' : 'ad-review__count'}>
+      {textLen(text)}/{max}
     </span>
   );
 }
@@ -1025,12 +1033,13 @@ export default function AdJobReviewPage() {
           <Col xs={24} lg={14} xl={15} className={`ad-review__main${generating ? ' is-locked' : ''}`}>
             <Card size="small" className="ad-review__card" title={`广告标题（${draft.headlines.length || previewHeadlines.length}/15）`}>
               {previewHeadlines.map((text, index) => (
-                <div className="ad-review__row" key={`h-${index}`}>
+                <div className={`ad-review__row${isOverLimit(text, HEADLINE_MAX) ? ' ad-review__row--over' : ''}`} key={`h-${index}`}>
                   <div className="ad-review__row-index">{index + 1}</div>
                   <div className="ad-review__row-main">
                     <Input
                       value={text}
                       maxLength={40}
+                      status={isOverLimit(text, HEADLINE_MAX) ? 'error' : undefined}
                       disabled={!editable}
                       placeholder={generating && !text ? '生成中…' : undefined}
                       onChange={(event) => {
@@ -1082,12 +1091,13 @@ export default function AdJobReviewPage() {
 
             <Card size="small" className="ad-review__card" title={`广告描述（${draft.descriptions.length || previewDescriptions.length}/4）`}>
               {previewDescriptions.map((text, index) => (
-                <div className="ad-review__row" key={`d-${index}`}>
+                <div className={`ad-review__row${isOverLimit(text, DESC_MAX) ? ' ad-review__row--over' : ''}`} key={`d-${index}`}>
                   <div className="ad-review__row-index">{index + 1}</div>
                   <div className="ad-review__row-main">
                     <Input.TextArea
                       value={text}
                       autoSize={{ minRows: 1, maxRows: 3 }}
+                      status={isOverLimit(text, DESC_MAX) ? 'error' : undefined}
                       disabled={!editable}
                       placeholder={generating && !text ? '生成中…' : undefined}
                       onChange={(event) => {
@@ -1337,6 +1347,7 @@ export default function AdJobReviewPage() {
                       <Input
                         placeholder="链接文字"
                         value={link.linkText}
+                        status={isOverLimit(link.linkText, SITELINK_TEXT_MAX) ? 'error' : undefined}
                         onChange={(event) => {
                           const sitelinks = [...draft.sitelinks];
                           sitelinks[index] = { ...link, linkText: event.target.value };
@@ -1352,6 +1363,7 @@ export default function AdJobReviewPage() {
                       <Input
                         placeholder="描述 1"
                         value={link.description1}
+                        status={isOverLimit(link.description1, SITELINK_DESC_MAX) ? 'error' : undefined}
                         onChange={(event) => {
                           const sitelinks = [...draft.sitelinks];
                           sitelinks[index] = { ...link, description1: event.target.value };
@@ -1364,6 +1376,7 @@ export default function AdJobReviewPage() {
                       <Input
                         placeholder="描述 2"
                         value={link.description2}
+                        status={isOverLimit(link.description2, SITELINK_DESC_MAX) ? 'error' : undefined}
                         onChange={(event) => {
                           const sitelinks = [...draft.sitelinks];
                           sitelinks[index] = { ...link, description2: event.target.value };
@@ -1568,12 +1581,13 @@ export default function AdJobReviewPage() {
                 可写折扣、免运费、优惠等促销语；具体百分比优惠码更建议放下方促销栏。
               </div>
               {draft.callouts.map((text, index) => (
-                <div className="ad-review__row" key={`c-${index}`}>
+                <div className={`ad-review__row${isOverLimit(text, 25) ? ' ad-review__row--over' : ''}`} key={`c-${index}`}>
                   <div className="ad-review__row-index">{index + 1}</div>
                   <div className="ad-review__row-main">
                     <Input
                       value={text}
                       maxLength={25}
+                      status={isOverLimit(text, 25) ? 'error' : undefined}
                       onChange={(event) => {
                         const callouts = [...draft.callouts];
                         callouts[index] = event.target.value;

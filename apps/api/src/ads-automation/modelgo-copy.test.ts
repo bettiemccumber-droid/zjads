@@ -95,7 +95,11 @@ const draft = applyAdCopy(
   { padFromTemplate: false },
 );
 assert.ok(draft.sitelinks.every((link) => !link.verified), '生成后站内链接默认未验证');
-assert.deepStrictEqual(validateDraft(withVerifiedSitelinks(draft)), []);
+assert.ok(draft.headlines.some((text) => text.length > 30), '超长标题应保留原文，不硬截断');
+assert.ok(
+  validateDraft(withVerifiedSitelinks(draft)).some((msg) => /标题/.test(msg)),
+  '超长标题应由 validateDraft 拦住，而不是静默截断',
+);
 assert.ok(draft.headlines.length >= 3);
 assert.ok(!draft.headlines.some((text) => /^Explore /i.test(text)), 'AI 路径不应拼入 Explore 模板句');
 assert.strictEqual(draft.merchantUrl, 'https://example.com/');
@@ -109,10 +113,11 @@ assert.strictEqual(normalizePageKey(draft.sitelinks[0].finalUrl), normalizePageK
 
 const longDesc = `Discover travel deals and experiences with Klook across Australia including tours activities and attractions you can book today with flexible options for every traveler.`;
 assert.ok(longDesc.length > 90);
+const longZh = '探索澳大利亚各地可预订的旅游体验与景点，含行程、门票与灵活选项。';
 const repaired = applyAdCopy(
   base,
   {
-    headlines: ['Klook AU', 'Book Klook', 'Klook Trips', 'x'.repeat(40)],
+    headlines: ['Klook AU', 'Book Klook', 'Klook Trips', 'Black Friday Deals Today Extra'],
     descriptions: [longDesc, 'Book tours and tickets with Klook today.'],
     keywords: ['klook'],
     callouts: ['Official Site', 'Shop Online'],
@@ -120,18 +125,43 @@ const repaired = applyAdCopy(
       { header: 'TYPES', values: ['Tours', 'Tickets', 'Activities', 'Transfers'] },
       { header: 'Styles', values: ['Family', 'Adventure', 'City', 'Day trips'] },
     ],
+    translations: {
+      headlines: ['Klook 澳洲', '预订 Klook', 'Klook 行程', '黑色星期五优惠今日加码'],
+      descriptions: [longZh, '立即用 Klook 预订行程与门票。'],
+    },
   },
   [],
   { padFromTemplate: false },
 );
-assert.deepStrictEqual(validateDraft(withVerifiedSitelinks(repaired)), []);
-assert.ok(repaired.descriptions.every((text) => text.length <= 90));
+assert.strictEqual(repaired.descriptions[0], longDesc, '超长描述不硬截断，保留与译文同义的原文');
+assert.strictEqual(repaired.translations?.descriptions?.[0], longZh);
+assert.ok(repaired.headlines[3].includes('Black Friday'), '超长标题保留完整短语');
+assert.strictEqual(repaired.translations?.headlines?.[3], '黑色星期五优惠今日加码');
+assert.ok(validateDraft(withVerifiedSitelinks(repaired)).some((msg) => /描述|标题/.test(msg)));
 assert.ok(repaired.descriptions.length >= 2);
 assert.ok(repaired.headlines.length >= 3);
 assert.ok(repaired.callouts.length >= 1);
 assert.ok(!repaired.headlines.some((text) => /New Arrivals/i.test(text)));
 assert.strictEqual(repaired.structuredSnippets.length, 2);
 assert.strictEqual(repaired.structuredSnippets[0].header, 'Types');
+
+const withinLimits = applyAdCopy(
+  base,
+  {
+    headlines: ['Klook AU', 'Book Klook', 'Klook Trips'],
+    descriptions: ['Book tours and tickets with Klook today.', 'Explore top activities on Klook AU.'],
+    keywords: ['klook'],
+    callouts: ['Official Site', 'Shop Online'],
+    sitelinks: draft.sitelinks,
+    structuredSnippets: [
+      { header: 'Types', values: ['Tours', 'Tickets', 'Activities'] },
+      { header: 'Styles', values: ['Family', 'Adventure', 'City'] },
+    ],
+  },
+  [],
+  { padFromTemplate: false },
+);
+assert.deepStrictEqual(validateDraft(withVerifiedSitelinks(withinLimits)), []);
 
 const noPadSanitize = sanitizeDraftForReview(
   {

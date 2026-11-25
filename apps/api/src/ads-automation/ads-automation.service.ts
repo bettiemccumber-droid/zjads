@@ -38,7 +38,11 @@ import { resolveAdLanguage } from './market-language';
 import { AdCopyFieldKind, rewriteAdField, writeAdCopy, writeArticle } from './modelgo-copy';
 import { modelGoConfig } from './modelgo.client';
 import { fetchPublicImageBuffer, prepareAdImageAssets } from './ad-image-assets';
-import { buildCreateCampaignPayload } from './mutate-payload';
+import {
+  buildAttachCampaignImagePayload,
+  buildCreateCampaignPayload,
+  describeMediaAttachResult,
+} from './mutate-payload';
 import {
   GoogleAdsClient,
   GoogleAdsCredentials,
@@ -2698,9 +2702,31 @@ export class AdsAutomationService implements OnModuleInit {
       }
       const resources = readCreatedResources(data);
       if (!resources.campaign) throw new Error('Google Ads 没有返回广告系列编号');
+      // 整包带图失败后已无图建好系列：再逐张补挂，坏图跳过，好图留下
+      let attach = { attached: 0, skipped: 0, skipReasons: [] as string[] };
+      if (mediaSkipped && (imageAssets.length > 0 || logoAssets.length > 0)) {
+        attach = await this.attachCampaignMediaBestEffort(
+          campaign.customerId,
+          resources.campaign,
+          imageAssets,
+          logoAssets,
+          creds,
+        );
+      }
+      const attachNote = describeMediaAttachResult(attach);
       const doneMessage = mediaSkipped
-        ? `已在 Google Ads 创建系列 ${resources.campaign}（图片/商标未挂上，系列已正常创建）`
+        ? attachNote
+          ? `已在 Google Ads 创建系列 ${resources.campaign}（${attachNote}）`
+          : `已在 Google Ads 创建系列 ${resources.campaign}（图片/商标未挂上，系列已正常创建）`
         : `已在 Google Ads 创建系列 ${resources.campaign}`;
+      const mediaWarn =
+        mediaSkipped && attach.attached <= 0
+          ? '图片或商标素材被拒，系列已创建成功，可稍后补图'
+          : mediaSkipped && attach.skipped > 0
+            ? `部分图片未挂上（已挂 ${attach.attached}，跳过 ${attach.skipped}）${
+                attach.skipReasons[0] ? `：${attach.skipReasons[0]}` : ''
+              }`
+            : null;
       await this.prisma.$transaction(async (tx) => {
         await tx.adAutomationCampaign.update({
           where: { id: campaign.id },
@@ -2715,7 +2741,7 @@ export class AdsAutomationService implements OnModuleInit {
           data: {
             status: 'SENT',
             sentAt: new Date(),
-            errorMessage: mediaSkipped ? '图片或商标素材被拒，已跳过素材后创建成功' : null,
+            errorMessage: mediaWarn,
           },
         });
         await tx.adJob.update({
@@ -2723,8 +2749,13 @@ export class AdsAutomationService implements OnModuleInit {
           data: {
             status: 'COMPLETED',
             progress: 100,
-            progressMessage: mediaSkipped ? '已提交到 Google Ads（图片未挂上）' : '已提交到 Google Ads',
-            errorMessage: mediaSkipped ? '图片或商标素材被拒，系列已创建成功，可稍后补图' : null,
+            progressMessage:
+              mediaSkipped && attach.attached <= 0
+                ? '已提交到 Google Ads（图片未挂上）'
+                : mediaSkipped && attach.skipped > 0
+                  ? `已提交到 Google Ads（部分图片已挂 ${attach.attached}/${attach.attached + attach.skipped}）`
+                  : '已提交到 Google Ads',
+            errorMessage: mediaWarn,
           },
         });
         await tx.adJobEvent.create({
@@ -2770,6 +2801,62 @@ export class AdsAutomationService implements OnModuleInit {
       });
       throw new BadRequestException(message);
     }
+  }
+
+  /**
+   * 系列已存在时逐张补挂图片/商标：成功留下，失败跳过，不抛错拖垮创建结果。
+   */
+  private async attachCampaignMediaBestEffort(
+    customerId: string,
+    campaignResource: string,
+    images: Array<{ name: string; data: string }>,
+    logos: Array<{ name: string; data: string }>,
+    creds: GoogleAdsCredentials,
+  ): Promise<{ attached: number; skipped: number; skipReasons: string[] }> {
+    let attached = 0;
+    let skipped = 0;
+    const skipReasons: string[] = [];
+    let tempAssetId = -301;
+
+    const tryOne = async (
+      image: { name: string; data: string },
+      fieldType: 'AD_IMAGE' | 'LOGO',
+      label: string,
+    ) => {
+      if (!image.data) {
+        skipped += 1;
+        skipReasons.push(`${label}「${image.name || '?'}」无数据`);
+        return;
+      }
+      const id = tempAssetId;
+      tempAssetId -= 1;
+      try {
+        await this.googleAds.mutate(
+          customerId,
+          buildAttachCampaignImagePayload({
+            customerId,
+            campaignResource,
+            image,
+            fieldType,
+            tempAssetId: id,
+          }),
+          creds,
+        );
+        attached += 1;
+      } catch (error) {
+        skipped += 1;
+        const reason = error instanceof Error ? error.message : '未知错误';
+        skipReasons.push(`${label}「${(image.name || '?').slice(0, 40)}」: ${reason.slice(0, 160)}`);
+      }
+    };
+
+    for (const image of images.slice(0, 20)) {
+      await tryOne(image, 'AD_IMAGE', '图片');
+    }
+    for (const logo of logos.slice(0, 5)) {
+      await tryOne(logo, 'LOGO', '商标');
+    }
+    return { attached, skipped, skipReasons };
   }
 
   private async mustJob(ownerUserId: number, id: string) {

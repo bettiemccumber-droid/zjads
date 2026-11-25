@@ -164,6 +164,15 @@
 
 .ad-review__count--over {
   color: #cf1322;
+  font-weight: 600;
+}
+
+.ad-review__row--over {
+  padding: 8px;
+  margin: 0 -8px 8px;
+  border-radius: 10px;
+  background: #fff2f0;
+  border: 1px solid #ffccc7;
 }
 
 .ad-review__cid-banner {

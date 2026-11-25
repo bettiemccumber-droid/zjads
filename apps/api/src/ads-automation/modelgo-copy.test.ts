@@ -13,6 +13,7 @@ import {
   applyAdCopy,
   audienceLanguage,
   detectMerchantSeasonEvidence,
+  enforceAdCopyLimits,
   nearbySeasonCopyHint,
   parseModelJson,
 } from './modelgo-copy';
@@ -117,7 +118,7 @@ const longZh = '探索澳大利亚各地可预订的旅游体验与景点，含�
 const repaired = applyAdCopy(
   base,
   {
-    headlines: ['Klook AU', 'Book Klook', 'Klook Trips', 'Black Friday Deals Today Extra'],
+    headlines: ['Klook AU', 'Book Klook', 'Klook Trips', 'Black Friday Deals For Shoppers Now'],
     descriptions: [longDesc, 'Book tours and tickets with Klook today.'],
     keywords: ['klook'],
     callouts: ['Official Site', 'Shop Online'],
@@ -133,17 +134,46 @@ const repaired = applyAdCopy(
   [],
   { padFromTemplate: false },
 );
-assert.strictEqual(repaired.descriptions[0], longDesc, '超长描述不硬截断，保留与译文同义的原文');
+assert.strictEqual(repaired.descriptions[0], longDesc, 'applyAdCopy 不硬截断，保留完整原文');
 assert.strictEqual(repaired.translations?.descriptions?.[0], longZh);
-assert.ok(repaired.headlines[3].includes('Black Friday'), '超长标题保留完整短语');
+assert.ok(repaired.headlines[3].length > 30, '超长标题保留完整短语');
 assert.strictEqual(repaired.translations?.headlines?.[3], '黑色星期五优惠今日加码');
 assert.ok(validateDraft(withVerifiedSitelinks(repaired)).some((msg) => /描述|标题/.test(msg)));
+
+const enforced = enforceAdCopyLimits(repaired);
+assert.ok(enforced.descriptions.every((text) => text.length <= 90), 'enforce 后描述应压到上限内');
+assert.ok(enforced.headlines.every((text) => text.length <= 30), 'enforce 后标题应压到上限内');
+assert.strictEqual(enforced.translations?.descriptions?.[0] ?? '', '', '被压短的描述应清空错位译文');
+assert.strictEqual(enforced.translations?.headlines?.[3] ?? '', '', '被压短的标题应清空错位译文');
+assert.deepStrictEqual(validateDraft(withVerifiedSitelinks({
+  ...enforced,
+  sitelinks: draft.sitelinks.map((link) => ({ ...link, verified: true })),
+})).filter((msg) => /需在 1 到|超过 \d+ 个字符/.test(msg)), []);
+
 assert.ok(repaired.descriptions.length >= 2);
 assert.ok(repaired.headlines.length >= 3);
 assert.ok(repaired.callouts.length >= 1);
 assert.ok(!repaired.headlines.some((text) => /New Arrivals/i.test(text)));
 assert.strictEqual(repaired.structuredSnippets.length, 2);
 assert.strictEqual(repaired.structuredSnippets[0].header, 'Types');
+
+const overSitelinkDraft = enforceAdCopyLimits({
+  ...base,
+  sitelinks: [
+    {
+      linkText: 'Black Friday Dirt Bikes',
+      description1: 'Holiday deals on electric bikes today',
+      description2: 'Limited Cyber Week inventory now',
+      finalUrl: 'https://example.com/',
+      verified: true,
+    },
+  ],
+  translations: { sitelinks: ['黑色星期五越野车促销整句'] },
+});
+assert.ok(overSitelinkDraft.sitelinks[0].linkText.length <= 20);
+assert.ok(overSitelinkDraft.sitelinks[0].description1.length <= 25);
+assert.ok(overSitelinkDraft.sitelinks[0].description2.length <= 25);
+assert.strictEqual(overSitelinkDraft.translations?.sitelinks?.[0] ?? '', '');
 
 const withinLimits = applyAdCopy(
   base,

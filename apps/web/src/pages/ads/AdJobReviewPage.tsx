@@ -279,8 +279,11 @@ const SNIPPET_HEADERS = [
 
 const HEADLINE_MAX = 30;
 const DESC_MAX = 90;
+const CALLOUT_MAX = 25;
 const SITELINK_TEXT_MAX = 20;
 const SITELINK_DESC_MAX = 25;
+const SNIPPET_VALUE_MAX = 20;
+const BUSINESS_NAME_MAX = 25;
 
 function emptyDraft(): AdDraft {
   return {
@@ -364,11 +367,70 @@ function isOverLimit(text: string, max: number) {
 }
 
 function charCount(text: string, max: number) {
-  const over = isOverLimit(text, max);
+  const len = textLen(text);
+  const over = len > max;
   return (
     <span className={over ? 'ad-review__count ad-review__count--over' : 'ad-review__count'}>
-      {textLen(text)}/{max}
+      {over ? (
+        <>
+          <span className="ad-review__count-badge">超限 +{len - max}</span>
+          {len}/{max}
+        </>
+      ) : (
+        <>{len}/{max}</>
+      )}
     </span>
+  );
+}
+
+/** 通篇扫描超字数，供顶部醒目提示。 */
+function collectLengthIssues(draft: AdDraft): string[] {
+  const issues: string[] = [];
+  draft.headlines.forEach((text, index) => {
+    if (isOverLimit(text, HEADLINE_MAX)) {
+      issues.push(`标题 ${index + 1}（${textLen(text)}/${HEADLINE_MAX}）`);
+    }
+  });
+  draft.descriptions.forEach((text, index) => {
+    if (isOverLimit(text, DESC_MAX)) {
+      issues.push(`描述 ${index + 1}（${textLen(text)}/${DESC_MAX}）`);
+    }
+  });
+  draft.callouts.forEach((text, index) => {
+    if (isOverLimit(text, CALLOUT_MAX)) {
+      issues.push(`宣传信息 ${index + 1}（${textLen(text)}/${CALLOUT_MAX}）`);
+    }
+  });
+  draft.sitelinks.forEach((link, index) => {
+    const n = index + 1;
+    if (isOverLimit(link.linkText, SITELINK_TEXT_MAX)) {
+      issues.push(`站内链接 ${n} 文案（${textLen(link.linkText)}/${SITELINK_TEXT_MAX}）`);
+    }
+    if (isOverLimit(link.description1, SITELINK_DESC_MAX)) {
+      issues.push(`站内链接 ${n} 描述1（${textLen(link.description1)}/${SITELINK_DESC_MAX}）`);
+    }
+    if (isOverLimit(link.description2, SITELINK_DESC_MAX)) {
+      issues.push(`站内链接 ${n} 描述2（${textLen(link.description2)}/${SITELINK_DESC_MAX}）`);
+    }
+  });
+  draft.structuredSnippets.forEach((snippet, index) => {
+    snippet.values.forEach((value, valueIndex) => {
+      if (isOverLimit(value, SNIPPET_VALUE_MAX)) {
+        issues.push(`结构化摘要 ${index + 1} 第 ${valueIndex + 1} 值（${textLen(value)}/${SNIPPET_VALUE_MAX}）`);
+      }
+    });
+  });
+  if (isOverLimit(draft.businessName ?? '', BUSINESS_NAME_MAX)) {
+    issues.push(`商家名称（${textLen(draft.businessName ?? '')}/${BUSINESS_NAME_MAX}）`);
+  }
+  return issues;
+}
+
+function sitelinkOver(link: AdSitelink) {
+  return (
+    isOverLimit(link.linkText, SITELINK_TEXT_MAX)
+    || isOverLimit(link.description1, SITELINK_DESC_MAX)
+    || isOverLimit(link.description2, SITELINK_DESC_MAX)
   );
 }
 
@@ -687,6 +749,7 @@ export default function AdJobReviewPage() {
   }, [job, loadJob]);
 
   const eligibleCustomers = useMemo(() => customers.filter(isEligible), [customers]);
+  const lengthIssues = useMemo(() => collectLengthIssues(draft), [draft]);
   const merchantName = job?.input?.merchantName || draft.merchantUrl || '广告任务';
   const editable = job?.status === 'READY_FOR_REVIEW';
   const generating = Boolean(job && !['READY_FOR_REVIEW', 'COMPLETED', 'FAILED'].includes(job.status));
@@ -1003,6 +1066,21 @@ export default function AdJobReviewPage() {
         <Alert type="error" showIcon message="生成失败" description={job.errorMessage || '请返回商家页重新领取'} />
       ) : null}
 
+      {editable && lengthIssues.length ? (
+        <Alert
+          className="ad-review__length-alert"
+          type="error"
+          showIcon
+          message={`有 ${lengthIssues.length} 处超字数，请改短后再提交`}
+          description={(
+            <div className="ad-review__length-alert-list">
+              {lengthIssues.slice(0, 12).join('；')}
+              {lengthIssues.length > 12 ? `…等共 ${lengthIssues.length} 处` : ''}
+            </div>
+          )}
+        />
+      ) : null}
+
       {editable && job.errorMessage ? (
         <Alert
           type="warning"
@@ -1044,6 +1122,7 @@ export default function AdJobReviewPage() {
                   <div className="ad-review__row-main">
                     <Input
                       value={text}
+                      className={isOverLimit(text, HEADLINE_MAX) ? 'ad-review__input--over' : undefined}
                       status={isOverLimit(text, HEADLINE_MAX) ? 'error' : undefined}
                       disabled={!editable}
                       placeholder={generating && !text ? '生成中…' : undefined}
@@ -1053,6 +1132,9 @@ export default function AdJobReviewPage() {
                         setDraft({ ...draft, headlines });
                       }}
                     />
+                    {isOverLimit(text, HEADLINE_MAX) ? (
+                      <div className="ad-review__field-over-tip">标题最多 {HEADLINE_MAX} 字，请改短</div>
+                    ) : null}
                     {zhHint(draft.translations, 'headlines', index) ? (
                       <div className="ad-review__zh">{zhHint(draft.translations, 'headlines', index)}</div>
                     ) : null}
@@ -1101,6 +1183,7 @@ export default function AdJobReviewPage() {
                   <div className="ad-review__row-main">
                     <Input.TextArea
                       value={text}
+                      className={isOverLimit(text, DESC_MAX) ? 'ad-review__input--over' : undefined}
                       autoSize={{ minRows: 1, maxRows: 3 }}
                       status={isOverLimit(text, DESC_MAX) ? 'error' : undefined}
                       disabled={!editable}
@@ -1111,6 +1194,9 @@ export default function AdJobReviewPage() {
                         setDraft({ ...draft, descriptions });
                       }}
                     />
+                    {isOverLimit(text, DESC_MAX) ? (
+                      <div className="ad-review__field-over-tip">描述最多 {DESC_MAX} 字，请改短</div>
+                    ) : null}
                     {zhHint(draft.translations, 'descriptions', index) ? (
                       <div className="ad-review__zh">{zhHint(draft.translations, 'descriptions', index)}</div>
                     ) : null}
@@ -1305,8 +1391,13 @@ export default function AdJobReviewPage() {
                   key={`sl-${index}`}
                   size="small"
                   type="inner"
-                  className="ad-review__sitelink"
-                  title={`站内链接 ${index + 1}${index === 0 ? '（优先官网）' : ''}`}
+                  className={`ad-review__sitelink${sitelinkOver(link) ? ' ad-review__sitelink--over' : ''}`}
+                  title={(
+                    <Space size={8} wrap>
+                      <span>{`站内链接 ${index + 1}${index === 0 ? '（优先官网）' : ''}`}</span>
+                      {sitelinkOver(link) ? <Tag color="error">文案超限</Tag> : null}
+                    </Space>
+                  )}
                   extra={(
                     <Space>
                       {link.verified ? <Tag color="success">已验证</Tag> : <Tag color="warning">未验证</Tag>}
@@ -1347,9 +1438,13 @@ export default function AdJobReviewPage() {
                     </Space>
                   )}
                 >
+                  {sitelinkOver(link) ? (
+                    <div className="ad-review__field-over-tip">链接文字 ≤{SITELINK_TEXT_MAX}，两条描述各 ≤{SITELINK_DESC_MAX}，请改短</div>
+                  ) : null}
                   <Row gutter={[8, 8]}>
                     <Col span={8}>
                       <Input
+                        className={isOverLimit(link.linkText, SITELINK_TEXT_MAX) ? 'ad-review__input--over' : undefined}
                         placeholder="链接文字"
                         value={link.linkText}
                         status={isOverLimit(link.linkText, SITELINK_TEXT_MAX) ? 'error' : undefined}
@@ -1366,6 +1461,7 @@ export default function AdJobReviewPage() {
                     </Col>
                     <Col span={8}>
                       <Input
+                        className={isOverLimit(link.description1, SITELINK_DESC_MAX) ? 'ad-review__input--over' : undefined}
                         placeholder="描述 1"
                         value={link.description1}
                         status={isOverLimit(link.description1, SITELINK_DESC_MAX) ? 'error' : undefined}
@@ -1379,6 +1475,7 @@ export default function AdJobReviewPage() {
                     </Col>
                     <Col span={8}>
                       <Input
+                        className={isOverLimit(link.description2, SITELINK_DESC_MAX) ? 'ad-review__input--over' : undefined}
                         placeholder="描述 2"
                         value={link.description2}
                         status={isOverLimit(link.description2, SITELINK_DESC_MAX) ? 'error' : undefined}
@@ -1586,12 +1683,13 @@ export default function AdJobReviewPage() {
                 可写折扣、免运费、优惠等促销语；具体百分比优惠码更建议放下方促销栏。
               </div>
               {draft.callouts.map((text, index) => (
-                <div className={`ad-review__row${isOverLimit(text, 25) ? ' ad-review__row--over' : ''}`} key={`c-${index}`}>
+                <div className={`ad-review__row${isOverLimit(text, CALLOUT_MAX) ? ' ad-review__row--over' : ''}`} key={`c-${index}`}>
                   <div className="ad-review__row-index">{index + 1}</div>
                   <div className="ad-review__row-main">
                     <Input
                       value={text}
-                      status={isOverLimit(text, 25) ? 'error' : undefined}
+                      className={isOverLimit(text, CALLOUT_MAX) ? 'ad-review__input--over' : undefined}
+                      status={isOverLimit(text, CALLOUT_MAX) ? 'error' : undefined}
                       onChange={(event) => {
                         const callouts = [...draft.callouts];
                         callouts[index] = event.target.value;
@@ -1601,9 +1699,12 @@ export default function AdJobReviewPage() {
                     {zhHint(draft.translations, 'callouts', index) ? (
                       <div className="ad-review__zh">{zhHint(draft.translations, 'callouts', index)}</div>
                     ) : null}
+                    {isOverLimit(text, CALLOUT_MAX) ? (
+                      <div className="ad-review__field-over-tip">宣传信息最多 {CALLOUT_MAX} 字，请改短</div>
+                    ) : null}
                   </div>
                   <div className="ad-review__row-actions">
-                    {charCount(text, 25)}
+                    {charCount(text, CALLOUT_MAX)}
                     <Space size={4}>
                       <Tooltip title="AI 重新生成这条宣传信息">
                         <Button
@@ -1771,11 +1872,15 @@ export default function AdJobReviewPage() {
                 可选附加信息，可全部删除；提交时不强制。
               </div>
               <Space direction="vertical" style={{ width: '100%' }} size={8}>
-                {draft.structuredSnippets.map((snippet, index) => (
+                {draft.structuredSnippets.map((snippet, index) => {
+                  const overValues = snippet.values.filter((value) => isOverLimit(value, SNIPPET_VALUE_MAX));
+                  return (
                   <Card
                     key={`s-${index}`}
                     size="small"
                     type="inner"
+                    className={overValues.length ? 'ad-review__snippet--over' : undefined}
+                    title={overValues.length ? <Tag color="error">有值超限</Tag> : undefined}
                     extra={(
                       <Button
                         type="text"
@@ -1812,7 +1917,9 @@ export default function AdJobReviewPage() {
                     <Input.TextArea
                       rows={2}
                       disabled={!editable}
-                      placeholder="逗号或换行分隔，至少 3 个值"
+                      status={overValues.length ? 'error' : undefined}
+                      className={overValues.length ? 'ad-review__input--over' : undefined}
+                      placeholder="逗号或换行分隔，至少 3 个值；每个值 ≤20 字"
                       value={snippet.values.join(', ')}
                       onChange={(event) => {
                         const values = event.target.value
@@ -1825,13 +1932,19 @@ export default function AdJobReviewPage() {
                         setDraft({ ...draft, structuredSnippets });
                       }}
                     />
+                    {overValues.length ? (
+                      <div className="ad-review__field-over-tip">
+                        每个值最多 {SNIPPET_VALUE_MAX} 字，当前有 {overValues.length} 个超限
+                      </div>
+                    ) : null}
                     {zhHint(draft.translations, 'structuredSnippets', index) ? (
                       <div className="ad-review__zh" style={{ marginTop: 6 }}>
                         {zhHint(draft.translations, 'structuredSnippets', index)}
                       </div>
                     ) : null}
                   </Card>
-                ))}
+                  );
+                })}
                 {editable && draft.structuredSnippets.length < 2 ? (
                   <Button
                     type="dashed"
@@ -2020,11 +2133,15 @@ export default function AdJobReviewPage() {
                   >
                     <Input
                       value={draft.businessName ?? ''}
-                      maxLength={25}
-                      showCount
+                      className={isOverLimit(draft.businessName ?? '', BUSINESS_NAME_MAX) ? 'ad-review__input--over' : undefined}
+                      status={isOverLimit(draft.businessName ?? '', BUSINESS_NAME_MAX) ? 'error' : undefined}
+                      suffix={charCount(draft.businessName ?? '', BUSINESS_NAME_MAX)}
                       placeholder="可留空；留空则由 Google 按网址使用占位名称"
                       onChange={(event) => setDraft({ ...draft, businessName: event.target.value })}
                     />
+                    {isOverLimit(draft.businessName ?? '', BUSINESS_NAME_MAX) ? (
+                      <div className="ad-review__field-over-tip">商家名称最多 {BUSINESS_NAME_MAX} 字</div>
+                    ) : null}
                   </Form.Item>
                   <Form.Item label="落地页 URL">
                     <Space.Compact style={{ width: '100%' }}>
@@ -2044,13 +2161,21 @@ export default function AdJobReviewPage() {
                     <div className="ad-review__hint">提交 Google Ads 后会自动附加到落地页 URL 末尾。</div>
                   </Form.Item>
                 </Form>
+                {lengthIssues.length ? (
+                  <Alert
+                    type="error"
+                    showIcon
+                    style={{ marginBottom: 10 }}
+                    message={`还有 ${lengthIssues.length} 处超字数，改短后才能提交`}
+                  />
+                ) : null}
                 <Button
                   type="primary"
                   className="ad-review__publish"
                   icon={<RocketOutlined />}
                   size="large"
                   loading={publishing}
-                  disabled={!customerId}
+                  disabled={!customerId || lengthIssues.length > 0}
                   onClick={confirmPublish}
                 >
                   提交到 Google Ads

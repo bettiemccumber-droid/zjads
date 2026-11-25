@@ -164,28 +164,31 @@ ${seasonHint}`;
       'headlines',
       `Return JSON only:
 {"headlines": string[${AD_COPY_LIMITS.headlineCount.prefer}], "keywords": string[1 to 8], "negativeKeywords": string[4 to 12], "translations": {"headlines": string[${AD_COPY_LIMITS.headlineCount.prefer}], "keywords": string[1 to 8]}}
-Hard limits: each headline <= ${AD_COPY_LIMITS.headline}. Exactly ${AD_COPY_LIMITS.headlineCount.prefer} unique headlines. Strong purchase intent; low repetition; match audience language. Seasonal/holiday names ONLY when the season hint marks CONFIRMED for THIS merchant. translations.headlines are Simplified Chinese glosses for review. Always include useful negativeKeywords (careers, login, free pdf, etc.).`,
+HARD character limits (count every letter and space; reject your own draft if over): each headline <= ${AD_COPY_LIMITS.headline} (prefer 18–28). Exactly ${AD_COPY_LIMITS.headlineCount.prefer} unique headlines. Strong purchase intent; low repetition; match audience language. Seasonal/holiday names ONLY when the season hint marks CONFIRMED for THIS merchant. translations.headlines gloss the final short headline. Always include useful negativeKeywords (careers, login, free pdf, etc.).`,
       900,
     ),
     runChunk(
       'descriptions',
       `Return JSON only:
 {"descriptions": string[${AD_COPY_LIMITS.descriptionCount.prefer}], "translations": {"descriptions": string[${AD_COPY_LIMITS.descriptionCount.prefer}]}}
-Hard limits: each description <= ${AD_COPY_LIMITS.description}. Exactly ${AD_COPY_LIMITS.descriptionCount.prefer} unique descriptions. Match audience language; no placeholders like $X. translations are Simplified Chinese glosses.`,
+HARD limits: each description <= ${AD_COPY_LIMITS.description} (prefer ≤80). Exactly ${AD_COPY_LIMITS.descriptionCount.prefer} unique descriptions. Match audience language; no placeholders like $X. translations gloss the final short description.`,
       700,
     ),
     runChunk(
       'extensions',
       `Return JSON only:
 {"callouts": string[${AD_COPY_LIMITS.calloutCount.prefer}], "sitelinks": [{"linkText": string, "description1": string, "description2": string, "finalUrl": string}], "structuredSnippets": [{"header": string, "values": string[${AD_COPY_LIMITS.structuredValuesMin}+]}], "promotionAsset": {"enabled": boolean, "promotionTarget": string, "discountType": "PERCENT"|"MONETARY", "percentOff": number, "moneyAmountOff": string, "currencyCode": string, "languageCode": string, "finalUrl": string, "promotionCode": string, "ordersOverAmount": string, "occasion": string, "startDate": string, "endDate": string} | null, "translations": {"callouts": string[${AD_COPY_LIMITS.calloutCount.prefer}], "sitelinks": string[${AD_COPY_LIMITS.sitelinkCount.prefer}], "structuredSnippets": string[2], "promotion": string}}
-Callouts: exactly ${AD_COPY_LIMITS.calloutCount.prefer}, each <= ${AD_COPY_LIMITS.callout}, merchant-specific.
-Sitelinks: exactly ${AD_COPY_LIMITS.sitelinkCount.prefer}. linkText <= ${AD_COPY_LIMITS.sitelinkText}; each description <= ${AD_COPY_LIMITS.sitelinkDescription}; all fields required. One sitelink MUST use official site finalUrl ${input.merchantUrl} (or same-host root). Remaining finalUrls distinct https pages on same host. Avoid stock phrases (Official website, Shop now, Visit our site). Prefer purchase pages.
+Callouts: exactly ${AD_COPY_LIMITS.calloutCount.prefer}, each <= ${AD_COPY_LIMITS.callout} (prefer ≤20), merchant-specific.
+Sitelinks (MOST COMMON FAILURE — count characters carefully): exactly ${AD_COPY_LIMITS.sitelinkCount.prefer} rows.
+- linkText MAX ${AD_COPY_LIMITS.sitelinkText} chars (prefer 10–18). TOO LONG examples: "Black Friday Dirt Bikes" (23), "Fat Tire Electric Bikes" (23). Use short labels: "Dirt Bike Deals", "Fat Tire E-Bikes", "Clearance E-Bikes".
+- description1 and description2 each MAX ${AD_COPY_LIMITS.sitelinkDescription} chars (prefer 14–22). Use fragments, not sentences. TOO LONG: "Holiday deals on electric bikes for the family". OK: "Holiday e-bike deals", "Kids & adult sizes".
+- All four fields required. One sitelink MUST use official site finalUrl ${input.merchantUrl} (or same-host root). Remaining finalUrls distinct https pages on same host. Avoid stock phrases (Official website, Shop now, Visit our site). Prefer purchase pages.
 ${knownPages ? `Known on-site pages:\n${knownPages}` : ''}
 Structured snippets (critical): pick exactly 2 DIFFERENT headers from [${headers}] that best fit THIS merchant (${brand}) and site content — not a default pair.
 Guidance: travel/airlines → Destinations + Types (or Service catalog); hotels → Amenities + Destinations; multi-brand shop → Brands + Types; device/electronics → Models + Types; fashion own-brand → Styles + Types; local services → Service catalog + Types; courses/education → Courses or Degree programs + Types; entertainment → Shows + Types.
 Do NOT default to Types+Styles unless that truly fits. Never invent headers outside the list. Values must be concrete for this merchant (real categories/brands/models/destinations), each <= ${AD_COPY_LIMITS.structuredValue}, >= ${AD_COPY_LIMITS.structuredValuesMin} per header. Avoid generic filler like Apparel/Casual/Everyday unless the merchant actually sells those.
 promotionAsset.enabled=true only with concrete discount; else false/null. Leave startDate/endDate empty.
-translations.* are Simplified Chinese glosses aligned to each list.`,
+translations.* are Simplified Chinese glosses aligned to each FINAL short string.`,
       1600,
     ),
   ]);
@@ -254,7 +257,22 @@ Need at least ${AD_COPY_LIMITS.descriptionCount.min} unique descriptions. Each <
     throw new Error(`描述生成不足（${draft.descriptions.length}/${AD_COPY_LIMITS.descriptionCount.min}），请重试`);
   }
 
-  // 站内链接「尚未验证」由 generate 随后 autoVerify；超字数进审核红框，不丢草稿
+  // 站内链接等常超字：先让模型改短一轮，再用本地压限兜底（译文同步清空被改短的项）
+  if (reviewDraftGate(draft).lengthWarnings.length) {
+    try {
+      draft = await repairOverLimitCopy_(draft, {
+        brand,
+        language,
+        personaPrompt: input.personaPrompt || '',
+        merchantUrl: input.merchantUrl,
+      });
+    } catch {
+      // 改短失败不阻断；下面 enforce 仍会压到上限
+    }
+  }
+  draft = enforceAdCopyLimits(draft);
+
+  // 站内链接「尚未验证」由 generate 随后 autoVerify；压限后一般不应再有字数警告
   const { hardErrors } = reviewDraftGate(draft);
   if (hardErrors.length) {
     throw new Error(`文案校验未通过：${hardErrors.slice(0, 3).join('；')}`);
@@ -655,7 +673,7 @@ export function normalizeAdLine(value: string): string {
 
 /**
  * 截到 Google Ads 字数上限；尽量在空格处截断。
- * 仅用于模板兜底/结构化短值等；主广告文案请用 normalizeAdLine，避免与中文提示错位。
+ * 生成收尾 / 模板兜底用；审核编辑路径仍可用 normalizeAdLine 保留原文。
  */
 export function fitAdText(value: string, max: number): string {
   const text = normalizeAdLine(value);
@@ -665,6 +683,180 @@ export function fitAdText(value: string, max: number): string {
   const space = sliced.lastIndexOf(' ');
   if (space >= Math.floor(max * 0.6)) return sliced.slice(0, space).trim();
   return sliced.trim();
+}
+
+/**
+ * 把超限字段压到上限；被改短的行清空对应中文提示，避免「英文半截 / 中文整句」。
+ */
+export function enforceAdCopyLimits(draft: AdDraft): AdDraft {
+  const limits = AD_COPY_LIMITS;
+  const clamp = (text: string, max: number): { text: string; changed: boolean } => {
+    const normalized = normalizeAdLine(text);
+    if (adTextLen(normalized) <= max) return { text: normalized, changed: false };
+    const fitted = fitAdText(normalized, max);
+    return { text: fitted, changed: fitted !== normalized };
+  };
+
+  const headlineRows = draft.headlines.map((text) => clamp(text, limits.headline));
+  const descriptionRows = draft.descriptions.map((text) => clamp(text, limits.description));
+  const calloutRows = draft.callouts.map((text) => clamp(text, limits.callout));
+  const sitelinkRows = draft.sitelinks.map((link) => {
+    const linkText = clamp(link.linkText, limits.sitelinkText);
+    const description1 = clamp(link.description1, limits.sitelinkDescription);
+    const description2 = clamp(link.description2, limits.sitelinkDescription);
+    return {
+      link: {
+        ...link,
+        linkText: linkText.text,
+        description1: description1.text,
+        description2: description2.text,
+      },
+      changed: linkText.changed || description1.changed || description2.changed,
+    };
+  });
+  const snippetRows = (draft.structuredSnippets ?? []).map((snippet) => {
+    let changed = false;
+    const values = snippet.values.map((value) => {
+      const row = clamp(value, limits.structuredValue);
+      if (row.changed) changed = true;
+      return row.text;
+    });
+    return { snippet: { ...snippet, values }, changed };
+  });
+
+  const prev = draft.translations;
+  const mapZh = (list: string[] | undefined, changedFlags: boolean[]): string[] | undefined => {
+    if (!list?.length) return list;
+    return list.map((zh, index) => (changedFlags[index] ? '' : zh));
+  };
+
+  return {
+    ...draft,
+    headlines: headlineRows.map((row) => row.text),
+    descriptions: descriptionRows.map((row) => row.text),
+    callouts: calloutRows.map((row) => row.text),
+    sitelinks: sitelinkRows.map((row) => row.link),
+    structuredSnippets: snippetRows.map((row) => row.snippet),
+    translations: prev
+      ? {
+          ...prev,
+          headlines: mapZh(prev.headlines, headlineRows.map((row) => row.changed)),
+          descriptions: mapZh(prev.descriptions, descriptionRows.map((row) => row.changed)),
+          callouts: mapZh(prev.callouts, calloutRows.map((row) => row.changed)),
+          sitelinks: mapZh(prev.sitelinks, sitelinkRows.map((row) => row.changed)),
+          structuredSnippets: mapZh(prev.structuredSnippets, snippetRows.map((row) => row.changed)),
+        }
+      : prev,
+  };
+}
+
+async function repairOverLimitCopy_(
+  draft: AdDraft,
+  ctx: { brand: string; language: string; personaPrompt: string; merchantUrl: string },
+): Promise<AdDraft> {
+  const limits = AD_COPY_LIMITS;
+  const overSitelinks = draft.sitelinks
+    .map((link, index) => ({ index, link }))
+    .filter(({ link }) => (
+      adTextLen(link.linkText) > limits.sitelinkText
+      || adTextLen(link.description1) > limits.sitelinkDescription
+      || adTextLen(link.description2) > limits.sitelinkDescription
+    ));
+  const overHeadlines = draft.headlines
+    .map((text, index) => ({ index, text }))
+    .filter((row) => adTextLen(row.text) > limits.headline);
+  const overCallouts = draft.callouts
+    .map((text, index) => ({ index, text }))
+    .filter((row) => adTextLen(row.text) > limits.callout);
+  if (!overSitelinks.length && !overHeadlines.length && !overCallouts.length) return draft;
+
+  const raw = await askJson(
+    `Shorten Google Ads RSA copy for ${ctx.brand}. Audience language: ${ctx.language}.
+HARD limits — count every character including spaces:
+- headline <= ${limits.headline}
+- callout <= ${limits.callout}
+- sitelink linkText <= ${limits.sitelinkText}; description1/description2 <= ${limits.sitelinkDescription}
+Rewrite ONLY the listed over-limit items into short punchy phrases. Keep meaning. Keep sitelink finalUrl unchanged.
+Over-limit headlines: ${JSON.stringify(overHeadlines)}
+Over-limit callouts: ${JSON.stringify(overCallouts)}
+Over-limit sitelinks: ${JSON.stringify(overSitelinks.map((row) => ({
+      index: row.index,
+      linkText: row.link.linkText,
+      description1: row.link.description1,
+      description2: row.link.description2,
+      finalUrl: row.link.finalUrl,
+    })))}`,
+    `Return JSON only: {"headlines":[{"index":number,"text":string,"zh":string}],"callouts":[{"index":number,"text":string,"zh":string}],"sitelinks":[{"index":number,"linkText":string,"description1":string,"description2":string,"zh":string}]}
+Every returned text MUST already be within the hard limits. zh is Simplified Chinese gloss of the shortened text.`,
+    1200,
+    ctx.personaPrompt,
+  );
+
+  const next = { ...draft };
+  const headlines = [...draft.headlines];
+  const callouts = [...draft.callouts];
+  const sitelinks = [...draft.sitelinks];
+  const zhHead = [...(draft.translations?.headlines ?? [])];
+  const zhCall = [...(draft.translations?.callouts ?? [])];
+  const zhSite = [...(draft.translations?.sitelinks ?? [])];
+
+  for (const row of Array.isArray(raw.headlines) ? raw.headlines : []) {
+    if (!row || typeof row !== 'object') continue;
+    const index = Number((row as { index?: unknown }).index);
+    const text = normalizeAdLine(String((row as { text?: unknown }).text ?? ''));
+    if (!Number.isInteger(index) || index < 0 || index >= headlines.length || !text) continue;
+    if (adTextLen(text) > limits.headline) continue;
+    headlines[index] = text;
+    const zh = typeof (row as { zh?: unknown }).zh === 'string' ? String((row as { zh: string }).zh).trim() : '';
+    if (zh) zhHead[index] = zh;
+  }
+  for (const row of Array.isArray(raw.callouts) ? raw.callouts : []) {
+    if (!row || typeof row !== 'object') continue;
+    const index = Number((row as { index?: unknown }).index);
+    const text = normalizeAdLine(String((row as { text?: unknown }).text ?? ''));
+    if (!Number.isInteger(index) || index < 0 || index >= callouts.length || !text) continue;
+    if (adTextLen(text) > limits.callout) continue;
+    callouts[index] = text;
+    const zh = typeof (row as { zh?: unknown }).zh === 'string' ? String((row as { zh: string }).zh).trim() : '';
+    if (zh) zhCall[index] = zh;
+  }
+  for (const row of Array.isArray(raw.sitelinks) ? raw.sitelinks : []) {
+    if (!row || typeof row !== 'object') continue;
+    const index = Number((row as { index?: unknown }).index);
+    if (!Number.isInteger(index) || index < 0 || index >= sitelinks.length) continue;
+    const linkText = normalizeAdLine(String((row as { linkText?: unknown }).linkText ?? ''));
+    const description1 = normalizeAdLine(String((row as { description1?: unknown }).description1 ?? ''));
+    const description2 = normalizeAdLine(String((row as { description2?: unknown }).description2 ?? ''));
+    if (!linkText || !description1 || !description2) continue;
+    if (
+      adTextLen(linkText) > limits.sitelinkText
+      || adTextLen(description1) > limits.sitelinkDescription
+      || adTextLen(description2) > limits.sitelinkDescription
+    ) {
+      continue;
+    }
+    sitelinks[index] = {
+      ...sitelinks[index],
+      linkText,
+      description1,
+      description2,
+    };
+    const zh = typeof (row as { zh?: unknown }).zh === 'string' ? String((row as { zh: string }).zh).trim() : '';
+    if (zh) zhSite[index] = zh;
+  }
+
+  return {
+    ...next,
+    headlines,
+    callouts,
+    sitelinks,
+    translations: {
+      ...draft.translations,
+      headlines: zhHead.length ? zhHead : draft.translations?.headlines,
+      callouts: zhCall.length ? zhCall : draft.translations?.callouts,
+      sitelinks: zhSite.length ? zhSite : draft.translations?.sitelinks,
+    },
+  };
 }
 
 function uniqueNonEmpty(values: string[]): string[] {
@@ -750,14 +942,14 @@ Make linkText + description1 + description2 specific to this merchant/page. Do n
 Avoid duplicating these existing sitelink titles:
 ${avoid || '- (none)'}`,
       `Return JSON only: {"linkText": string, "description1": string, "description2": string, "zh": string}.
-Limits: linkText <= ${AD_COPY_LIMITS.sitelinkText}; each description <= ${AD_COPY_LIMITS.sitelinkDescription}; both descriptions required.
-zh is a short Simplified Chinese gloss of the three fields for human review.`,
+HARD limits (count every character): linkText <= ${AD_COPY_LIMITS.sitelinkText} (prefer 10–18); each description <= ${AD_COPY_LIMITS.sitelinkDescription} (prefer 14–22); both descriptions required. Use short fragments, not full sentences.
+zh is a short Simplified Chinese gloss of the three FINAL short fields.`,
       500,
       input.personaPrompt,
     );
-    const linkText = normalizeAdLine(String(raw.linkText ?? ''));
-    const description1 = normalizeAdLine(String(raw.description1 ?? ''));
-    const description2 = normalizeAdLine(String(raw.description2 ?? ''));
+    let linkText = normalizeAdLine(String(raw.linkText ?? ''));
+    let description1 = normalizeAdLine(String(raw.description1 ?? ''));
+    let description2 = normalizeAdLine(String(raw.description2 ?? ''));
     if (!linkText || !description1 || !description2) {
       throw new Error('模型没有返回完整的站内链接文案');
     }
@@ -768,9 +960,16 @@ zh is a short Simplified Chinese gloss of the three fields for human review.`,
     ) {
       throw new Error('生成的站内链接含违规表述，请再试一次');
     }
+    const fittedLink = fitAdText(linkText, AD_COPY_LIMITS.sitelinkText);
+    const fittedD1 = fitAdText(description1, AD_COPY_LIMITS.sitelinkDescription);
+    const fittedD2 = fitAdText(description2, AD_COPY_LIMITS.sitelinkDescription);
+    const shortened = fittedLink !== linkText || fittedD1 !== description1 || fittedD2 !== description2;
+    linkText = fittedLink;
+    description1 = fittedD1;
+    description2 = fittedD2;
     return {
       sitelink: { linkText, description1, description2 },
-      zh: typeof raw.zh === 'string' ? raw.zh.trim() : undefined,
+      zh: shortened ? undefined : (typeof raw.zh === 'string' ? raw.zh.trim() : undefined),
     };
   }
 
@@ -792,8 +991,10 @@ zh must gloss the exact text you return (same meaning), Simplified Chinese for h
     400,
     input.personaPrompt,
   );
-  const text = normalizeAdLine(String(raw.text ?? ''));
-  if (!text) throw new Error('模型没有返回文案');
+  const rawText = normalizeAdLine(String(raw.text ?? ''));
+  if (!rawText) throw new Error('模型没有返回文案');
+  const text = fitAdText(rawText, limit);
+  const shortened = text !== rawText;
   const unsafeKind = input.kind === 'headline' || input.kind === 'description' || input.kind === 'callout'
     ? input.kind
     : 'general';
@@ -803,10 +1004,9 @@ zh must gloss the exact text you return (same meaning), Simplified Chinese for h
   if (input.siblings.some((item) => item.trim().toLowerCase() === text.toLowerCase())) {
     throw new Error('生成结果与现有文案重复，请再试一次');
   }
-  // 超限不硬截断：保留原文与 zh 同义，由审核页标红；发布仍会被 validate 拦住
   return {
     text,
-    zh: typeof raw.zh === 'string' ? raw.zh.trim() : undefined,
+    zh: shortened ? undefined : (typeof raw.zh === 'string' ? raw.zh.trim() : undefined),
   };
 }
 

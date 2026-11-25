@@ -136,6 +136,11 @@ assert.deepStrictEqual(
   [],
   '商家名称可留空提交',
 );
+assert.deepStrictEqual(
+  validateDraft(withVerifiedSitelinks({ ...draft, businessName: 'ABC HOME FURNITURE' })),
+  [],
+  '商家名称允许全大写品牌名',
+);
 assert.ok(
   validateDraft(withVerifiedSitelinks({ ...draft, businessName: 'x'.repeat(26) })).some((msg) => /商家名称/.test(msg)),
   '商家名称超长应拦截',

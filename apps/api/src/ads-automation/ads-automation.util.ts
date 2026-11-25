@@ -631,7 +631,11 @@ export function validateDraft(draft: AdDraft): string[] {
   if (businessName.length > limits.businessName) {
     errors.push(`商家名称最多 ${limits.businessName} 个字符（可留空）`);
   } else if (businessName) {
-    errors.push(...policyHits(businessName, '商家名称', { allowPromo: true }));
+    // 品牌正式名可全大写（如 ABC HOME）；仍拦占位符/风险词
+    errors.push(...policyHits(businessName, '商家名称', {
+      allowPromo: true,
+      allowExcessiveUppercase: true,
+    }));
   }
   if (draft.finalUrlSuffix.startsWith('?') || draft.finalUrlSuffix.startsWith('&')) {
     errors.push('网址后缀不要以 ? 或 & 开头');
@@ -697,16 +701,20 @@ export function softenExcessiveUppercase(
 /**
  * Google Ads / 联盟投放常见拒登与禁忌词。命中则返回中文错误。
  * allowPromo：允许折扣、满减、免运费等促销语（标题/描述/宣传信息/站内链接）。
+ * allowExcessiveUppercase：商家名称等品牌字段可保留全大写正式名。
  */
 export function policyHits(
   text: string,
   label: string,
-  options: { allowPromo?: boolean } = {},
+  options: { allowPromo?: boolean; allowExcessiveUppercase?: boolean } = {},
 ): string[] {
   const value = text.toLowerCase();
   const hits: string[] = [];
   const allowPromo = Boolean(options.allowPromo);
-  if (new RegExp(`[A-Z]{${MAX_CONSECUTIVE_UPPERCASE + 1},}`).test(text)) {
+  if (
+    !options.allowExcessiveUppercase
+    && new RegExp(`[A-Z]{${MAX_CONSECUTIVE_UPPERCASE + 1},}`).test(text)
+  ) {
     hits.push(`${label} 连续大写不能超过 ${MAX_CONSECUTIVE_UPPERCASE} 个字母`);
   }
   if (/\$x\b|\[\s*链接\s*\]|\[link\]/i.test(text)) {

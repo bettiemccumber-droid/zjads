@@ -534,6 +534,28 @@ export function buildSampleDraft(input: {
   };
 }
 
+/** 字数超限类校验（可进审核改短，不必整单失败）。 */
+/** 字数类校验（可进审核页改短，不应整单丢弃 AI 草稿）。 */
+export function isLengthValidationMessage(message: string): boolean {
+  return /需在 1 到|超过 \d+ 个字符|超过 \d+ 个字/.test(message);
+}
+
+/** @deprecated 用 isLengthValidationMessage */
+export function isDraftLengthError(message: string): boolean {
+  return isLengthValidationMessage(message);
+}
+
+/**
+ * 拆开硬错误与超字数警告。超字数应进审核红框，不要丢掉 AI 草稿。
+ */
+export function reviewDraftGate(draft: AdDraft): { hardErrors: string[]; lengthWarnings: string[] } {
+  const errors = validateDraft(draft).filter((message) => !/尚未验证/.test(message));
+  return {
+    hardErrors: errors.filter((message) => !isLengthValidationMessage(message)),
+    lengthWarnings: errors.filter((message) => isLengthValidationMessage(message)),
+  };
+}
+
 /**
  * 确认发布前的字数、结构和政策词校验。返回中文错误列表，空数组表示可以通过。
  */

@@ -12,6 +12,7 @@ import {
   buildTrackUrl,
   isCustomerEligible,
   isMerchantHomepageUrl,
+  reviewDraftGate,
   softenExcessiveUppercase,
   suggestStructuredSnippetsForMerchant,
   usdToMicros,
@@ -246,5 +247,14 @@ assert.deepStrictEqual(
 assert.strictEqual(describeMediaAttachResult({ attached: 3, skipped: 0 }), '图片/商标已补挂 3 张');
 assert.strictEqual(describeMediaAttachResult({ attached: 2, skipped: 1 }), '已挂 2 张图片/商标，跳过 1 张');
 assert.strictEqual(describeMediaAttachResult({ attached: 0, skipped: 4 }), '图片/商标未挂上（跳过 4 张）');
+
+const overLong = {
+  ...draft,
+  headlines: [...draft.headlines.slice(0, 2), 'This headline is definitely over thirty chars'],
+  sitelinks: draft.sitelinks.map((link) => ({ ...link, verified: true })),
+};
+const gate = reviewDraftGate(overLong);
+assert.ok(gate.lengthWarnings.some((msg) => /标题/.test(msg)), '超长标题应进 lengthWarnings');
+assert.ok(!gate.hardErrors.some((msg) => /标题 \d+ 需在/.test(msg)), '超长标题不应进 hardErrors');
 
 console.log('ads-automation.util.test.ts: ok');

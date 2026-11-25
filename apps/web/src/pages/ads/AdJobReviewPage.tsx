@@ -1008,7 +1008,13 @@ export default function AdJobReviewPage() {
           type="warning"
           showIcon
           closable
-          message="部分文案已自动替换，请核对"
+          message={
+            /超字数|需在 1 到|超过 \d+ 个字符/.test(job.errorMessage)
+              ? '有文案超字数，请改短后发布'
+              : /文案校验未通过|自动进入预览/.test(job.errorMessage)
+                ? '生成未完全通过，请核对标红项'
+                : '部分文案已自动替换，请核对'
+          }
           description={job.errorMessage}
           onClose={() => setJob({ ...job, errorMessage: null })}
         />
@@ -1038,7 +1044,6 @@ export default function AdJobReviewPage() {
                   <div className="ad-review__row-main">
                     <Input
                       value={text}
-                      maxLength={40}
                       status={isOverLimit(text, HEADLINE_MAX) ? 'error' : undefined}
                       disabled={!editable}
                       placeholder={generating && !text ? '生成中…' : undefined}
@@ -1586,7 +1591,6 @@ export default function AdJobReviewPage() {
                   <div className="ad-review__row-main">
                     <Input
                       value={text}
-                      maxLength={25}
                       status={isOverLimit(text, 25) ? 'error' : undefined}
                       onChange={(event) => {
                         const callouts = [...draft.callouts];

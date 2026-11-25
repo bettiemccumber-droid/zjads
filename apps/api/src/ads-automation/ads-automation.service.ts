@@ -26,9 +26,11 @@ import {
   pickArticleImages,
   sampleArticleHtml,
   isCustomerEligible,
+  reviewDraftGate,
   sanitizeDraftForReview,
   stripKeywordDecorations,
   usdToMicros,
+  isLengthValidationMessage,
   validateAdImages,
   validateDraft,
 } from './ads-automation.util';
@@ -2116,21 +2118,34 @@ export class AdsAutomationService implements OnModuleInit {
       const sitelinkNote = draft.sitelinks.length
         ? `（站内链接已自动验证 ${verifiedCount}/${draft.sitelinks.length}）`
         : '';
+      const lengthWarnings = validateDraft(draft)
+        .filter((message) => !/尚未验证/.test(message))
+        .filter(isLengthValidationMessage);
+      const lengthNote = lengthWarnings.length
+        ? `文案超字数，请改短后发布：${lengthWarnings.slice(0, 5).join('；')}`
+        : null;
       await this.prisma.adJob.update({
         where: { id: jobId },
         data: {
           status: 'READY_FOR_REVIEW',
           step: 'READY_FOR_REVIEW',
           progress: 80,
-          progressMessage: force
-            ? (useModel ? `已重新生成文案，请核对${sitelinkNote}` : `已重新生成示例文案，请核对${sitelinkNote}`)
-            : (useModel ? `已按投放国家生成文案${sitelinkNote}` : `最终预览${sitelinkNote}`),
+          progressMessage: lengthNote
+            ? '已生成文案（有超字数项，请改短）'
+            : force
+              ? (useModel ? `已重新生成文案，请核对${sitelinkNote}` : `已重新生成示例文案，请核对${sitelinkNote}`)
+              : (useModel ? `已按投放国家生成文案${sitelinkNote}` : `最终预览${sitelinkNote}`),
           languageCode: language,
-          errorMessage: null,
+          errorMessage: lengthNote,
           draft: draft as unknown as Prisma.InputJsonValue,
         },
       });
-      await this.addEvent(jobId, 'READY_FOR_REVIEW', 'READY_FOR_REVIEW', force ? '重新生成完成' : '最终预览');
+      await this.addEvent(
+        jobId,
+        'READY_FOR_REVIEW',
+        'READY_FOR_REVIEW',
+        lengthNote || (force ? '重新生成完成' : '最终预览'),
+      );
     } catch (error) {
       const message = error instanceof Error ? error.message : '生成失败';
       try {

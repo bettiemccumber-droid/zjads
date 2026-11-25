@@ -11,6 +11,8 @@ import {
   isUnsafeAdText,
   normalizeStructuredSnippetHeader,
   SampleArticle,
+  reviewDraftGate,
+  isLengthValidationMessage,
   sanitizeDraftForReview,
   softenExcessiveUppercase,
   stripKeywordDecorations,
@@ -252,10 +254,10 @@ Need at least ${AD_COPY_LIMITS.descriptionCount.min} unique descriptions. Each <
     throw new Error(`描述生成不足（${draft.descriptions.length}/${AD_COPY_LIMITS.descriptionCount.min}），请重试`);
   }
 
-  // 站内链接「尚未验证」由 generate 随后 autoVerify；此处不因此整单失败
-  const errors = validateDraft(draft).filter((message) => !/尚未验证/.test(message));
-  if (errors.length) {
-    throw new Error(`文案校验未通过：${errors.slice(0, 3).join('；')}`);
+  // 站内链接「尚未验证」由 generate 随后 autoVerify；超字数进审核红框，不丢草稿
+  const { hardErrors } = reviewDraftGate(draft);
+  if (hardErrors.length) {
+    throw new Error(`文案校验未通过：${hardErrors.slice(0, 3).join('；')}`);
   }
   return draft;
 }

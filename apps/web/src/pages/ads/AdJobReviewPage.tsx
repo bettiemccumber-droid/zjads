@@ -354,35 +354,6 @@ function zhHint(translations: AdCopyTranslations | undefined, key: keyof AdCopyT
   return list[index]?.trim() || '';
 }
 
-/** 审核对照是否含汉字；英文/法语误填视为缺失。 */
-function looksLikeZhGloss(text: string | undefined) {
-  const value = (text ?? '').trim();
-  if (!value) return false;
-  return /[\u4e00-\u9fff]/.test(value);
-}
-
-function countMissingZhGlosses(draft: AdDraft) {
-  let missing = 0;
-  draft.headlines.forEach((text, index) => {
-    if (text.trim() && !looksLikeZhGloss(zhHint(draft.translations, 'headlines', index))) missing += 1;
-  });
-  draft.descriptions.forEach((text, index) => {
-    if (text.trim() && !looksLikeZhGloss(zhHint(draft.translations, 'descriptions', index))) missing += 1;
-  });
-  draft.callouts.forEach((text, index) => {
-    if (text.trim() && !looksLikeZhGloss(zhHint(draft.translations, 'callouts', index))) missing += 1;
-  });
-  draft.sitelinks.forEach((link, index) => {
-    if (
-      (link.linkText.trim() || link.description1.trim() || link.description2.trim())
-      && !looksLikeZhGloss(zhHint(draft.translations, 'sitelinks', index))
-    ) {
-      missing += 1;
-    }
-  });
-  return missing;
-}
-
 function isEligible(row: AdsCustomer) {
   const verification = row.verificationStatus ?? 'UNKNOWN';
   return (
@@ -506,7 +477,6 @@ export default function AdJobReviewPage() {
   const [verifyingSitelinkIndex, setVerifyingSitelinkIndex] = useState<number | null>(null);
   const [verifyingAllSitelinks, setVerifyingAllSitelinks] = useState(false);
   const [regeneratingKey, setRegeneratingKey] = useState<string | null>(null);
-  const [refreshingZh, setRefreshingZh] = useState(false);
   // 用 ref 读脏标记，避免改系列名时重建 loadJob → 重新拉任务盖掉未保存的广告草稿
   const campaignNameDirtyRef = useRef(false);
   campaignNameDirtyRef.current = campaignNameDirty;
@@ -787,13 +757,11 @@ export default function AdJobReviewPage() {
 
   const eligibleCustomers = useMemo(() => customers.filter(isEligible), [customers]);
   const lengthIssues = useMemo(() => collectLengthIssues(draft), [draft]);
-  const missingZhCount = useMemo(() => countMissingZhGlosses(draft), [draft]);
   const merchantName = job?.input?.merchantName || draft.merchantUrl || '广告任务';
   const editable = job?.status === 'READY_FOR_REVIEW';
   const generating = Boolean(job && !['READY_FOR_REVIEW', 'COMPLETED', 'FAILED'].includes(job.status));
   // 生成中也展示预览骨架，文案到位后填入对应位置
   const showWorkspace = Boolean(job && (editable || generating || job.status === 'FAILED'));
-  const canRefreshZh = Boolean(job && (editable || job.status === 'COMPLETED') && missingZhCount > 0);
   const previewHeadlines = draft.headlines.length
     ? draft.headlines
     : (generating ? Array.from({ length: 15 }, () => '') : draft.headlines);
@@ -822,30 +790,6 @@ export default function AdJobReviewPage() {
       message.error(Array.isArray(apiMessage) ? apiMessage.join('；') : apiMessage || '重新生成失败');
     } finally {
       setRegeneratingKey(null);
-    }
-  };
-
-  const refreshZhTranslations = async () => {
-    if (!id || !canRefreshZh || refreshingZh) return;
-    setRefreshingZh(true);
-    try {
-      if (editable) {
-        await api.patch<ApiResult<AdJob>>(`/ad-jobs/${id}/draft`, draft);
-      }
-      const res = await api.post<ApiResult<AdJob>>(`/ad-jobs/${id}/translations/zh`);
-      if (!res.data.success) {
-        message.error(res.data.message || '补全中文失败');
-        return;
-      }
-      const next = res.data.data;
-      setJob(next);
-      if (next.draft) setDraft(hydrateDraft(next.draft));
-      message.success('已补全简体中文对照');
-    } catch (err) {
-      const apiMessage = (err as { response?: { data?: { message?: string | string[] } } }).response?.data?.message;
-      message.error(Array.isArray(apiMessage) ? apiMessage.join('；') : apiMessage || '补全中文失败');
-    } finally {
-      setRefreshingZh(false);
     }
   };
 
@@ -1168,27 +1112,12 @@ export default function AdJobReviewPage() {
             </div>
           </div>
         </Space>
-        {editable || canRefreshZh ? (
+        {editable ? (
           <Space>
-            {canRefreshZh ? (
-              <Tooltip title="投放文案不变；把英文/法语等误填的对照改成简体中文">
-                <Button
-                  icon={<SyncOutlined />}
-                  loading={refreshingZh}
-                  onClick={() => void refreshZhTranslations()}
-                >
-                  {`补全中文（${missingZhCount}）`}
-                </Button>
-              </Tooltip>
-            ) : null}
-            {editable ? (
-              <>
-                <Button icon={<SaveOutlined />} loading={saving} onClick={() => void saveDraft()}>保存草稿</Button>
-                <Button type="primary" icon={<SendOutlined />} loading={publishing} disabled={!customerId} onClick={confirmPublish}>
-                  提交到 Google Ads
-                </Button>
-              </>
-            ) : null}
+            <Button icon={<SaveOutlined />} loading={saving} onClick={() => void saveDraft()}>保存草稿</Button>
+            <Button type="primary" icon={<SendOutlined />} loading={publishing} disabled={!customerId} onClick={confirmPublish}>
+              提交到 Google Ads
+            </Button>
           </Space>
         ) : null}
       </div>
@@ -1259,14 +1188,9 @@ export default function AdJobReviewPage() {
           showIcon
           message="已处理完成"
           description={(
-            <Space wrap>
+            <Space>
               <span>系列状态：{job.campaign?.status || '—'}</span>
               <Link to="/ads/articles">去文章管理</Link>
-              {canRefreshZh ? (
-                <Button size="small" icon={<SyncOutlined />} loading={refreshingZh} onClick={() => void refreshZhTranslations()}>
-                  {`补全中文对照（${missingZhCount}）`}
-                </Button>
-              ) : null}
             </Space>
           )}
         />

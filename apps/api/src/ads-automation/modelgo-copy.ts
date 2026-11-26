@@ -171,7 +171,7 @@ HARD character limits (count every letter and space; reject your own draft if ov
       'descriptions',
       `Return JSON only:
 {"descriptions": string[${AD_COPY_LIMITS.descriptionCount.prefer}], "translations": {"descriptions": string[${AD_COPY_LIMITS.descriptionCount.prefer}]}}
-HARD limits: each description <= ${AD_COPY_LIMITS.description} (prefer ≤80). Exactly ${AD_COPY_LIMITS.descriptionCount.prefer} unique descriptions. Match audience language; no placeholders like $X. translations gloss the final short description.`,
+HARD limits: each description <= ${AD_COPY_LIMITS.description} (prefer ≤80). Exactly ${AD_COPY_LIMITS.descriptionCount.prefer} unique descriptions. Match audience language; no placeholders like $X. translations.descriptions MUST be Simplified Chinese (简体中文) glosses of the final short descriptions — never Spanish/English/audience language.`,
       700,
     ),
     runChunk(
@@ -257,7 +257,7 @@ Need at least ${AD_COPY_LIMITS.descriptionCount.min} unique descriptions. Each <
     throw new Error(`描述生成不足（${draft.descriptions.length}/${AD_COPY_LIMITS.descriptionCount.min}），请重试`);
   }
 
-  // 站内链接等常超字：先让模型改短一轮，再用本地压限兜底（译文同步清空被改短的项）
+  // 超字先让模型改短（含描述）并带回简体中文；再用本地压限兜底（被压短的项会清空错位译文）
   if (reviewDraftGate(draft).lengthWarnings.length) {
     try {
       draft = await repairOverLimitCopy_(draft, {
@@ -271,6 +271,15 @@ Need at least ${AD_COPY_LIMITS.descriptionCount.min} unique descriptions. Each <
     }
   }
   draft = enforceAdCopyLimits(draft);
+  // 压短清空、模型漏给、或误写成投放语种时，补回简体中文对照
+  try {
+    draft = await fillMissingZhGlosses_(draft, {
+      brand,
+      personaPrompt: input.personaPrompt || '',
+    });
+  } catch {
+    // 译文补全失败不阻断投放文案
+  }
 
   // 站内链接「尚未验证」由 generate 随后 autoVerify；压限后一般不应再有字数警告
   const { hardErrors } = reviewDraftGate(draft);
@@ -324,7 +333,7 @@ Content rules:
 - Never use more than 4 consecutive uppercase Latin letters (SHOPNOW is bad; Shop Now / FREE is ok). Avoid ALL-CAPS words longer than 4 letters.
 - Callouts and descriptions MAY mention discounts, free shipping, coupons, or sale language when plausible. Concrete % off / coupon codes still prefer promotionAsset when known.
 - promotionAsset: optional. Set enabled=true only when a concrete discount is known or strongly typical for this merchant; otherwise enabled=false or null. Use percentOff as whole percent (20 means 20%). moneyAmountOff is a decimal string. languageCode should match the ad language. finalUrl defaults to merchant URL if omitted. occasion may be empty or a real holiday occasion when applicable. Always leave startDate and endDate empty (operators set schedule manually later).
-- translations: required Simplified Chinese glosses for human review only (not sent to Google). Must include: headlines, descriptions, callouts, sitelinks, keywords (aligned to keywords[]), structuredSnippets (2 strings; each is comma-separated Chinese glosses for that snippet's values), and promotion if any. translations.headlines[i] MUST mean the same as headlines[i] as finally written (within the character limit) — never gloss a longer unused draft.
+- translations: required Simplified Chinese (简体中文) glosses for human review only (not sent to Google). NEVER write Spanish/English/audience-language into translations.*. Must include: headlines, descriptions, callouts, sitelinks, keywords (aligned to keywords[]), structuredSnippets (2 strings; each is comma-separated Chinese glosses for that snippet's values), and promotion if any. translations.headlines[i] / descriptions[i] MUST mean the same as the FINAL short English line — never gloss a longer unused draft.
 - structuredSnippets: pick exactly 2 DIFFERENT headers from [${headers}] that best fit THIS merchant (not a fixed Types+Styles habit). Examples: travel/airlines → Destinations + Types; hotels → Amenities + Destinations; multi-brand → Brands + Types; electronics → Models + Types; fashion own-brand → Styles + Types; services → Service catalog + Types. Use exact English header strings. Values must be merchant-specific (not Apparel/Casual filler). Each needs at least ${AD_COPY_LIMITS.structuredValuesMin} short values.
 - Always include useful negativeKeywords (careers, login, free pdf, etc.).
 - Ad final URL (RSA) stays ${merchantUrl}. No URLs inside headline/description/callout text.
@@ -765,19 +774,26 @@ async function repairOverLimitCopy_(
   const overHeadlines = draft.headlines
     .map((text, index) => ({ index, text }))
     .filter((row) => adTextLen(row.text) > limits.headline);
+  const overDescriptions = draft.descriptions
+    .map((text, index) => ({ index, text }))
+    .filter((row) => adTextLen(row.text) > limits.description);
   const overCallouts = draft.callouts
     .map((text, index) => ({ index, text }))
     .filter((row) => adTextLen(row.text) > limits.callout);
-  if (!overSitelinks.length && !overHeadlines.length && !overCallouts.length) return draft;
+  if (!overSitelinks.length && !overHeadlines.length && !overDescriptions.length && !overCallouts.length) {
+    return draft;
+  }
 
   const raw = await askJson(
     `Shorten Google Ads RSA copy for ${ctx.brand}. Audience language: ${ctx.language}.
 HARD limits — count every character including spaces:
 - headline <= ${limits.headline}
+- description <= ${limits.description}
 - callout <= ${limits.callout}
 - sitelink linkText <= ${limits.sitelinkText}; description1/description2 <= ${limits.sitelinkDescription}
 Rewrite ONLY the listed over-limit items into short punchy phrases. Keep meaning. Keep sitelink finalUrl unchanged.
 Over-limit headlines: ${JSON.stringify(overHeadlines)}
+Over-limit descriptions: ${JSON.stringify(overDescriptions)}
 Over-limit callouts: ${JSON.stringify(overCallouts)}
 Over-limit sitelinks: ${JSON.stringify(overSitelinks.map((row) => ({
       index: row.index,
@@ -786,17 +802,19 @@ Over-limit sitelinks: ${JSON.stringify(overSitelinks.map((row) => ({
       description2: row.link.description2,
       finalUrl: row.link.finalUrl,
     })))}`,
-    `Return JSON only: {"headlines":[{"index":number,"text":string,"zh":string}],"callouts":[{"index":number,"text":string,"zh":string}],"sitelinks":[{"index":number,"linkText":string,"description1":string,"description2":string,"zh":string}]}
-Every returned text MUST already be within the hard limits. zh is Simplified Chinese gloss of the shortened text.`,
-    1200,
+    `Return JSON only: {"headlines":[{"index":number,"text":string,"zh":string}],"descriptions":[{"index":number,"text":string,"zh":string}],"callouts":[{"index":number,"text":string,"zh":string}],"sitelinks":[{"index":number,"linkText":string,"description1":string,"description2":string,"zh":string}]}
+Every returned text MUST already be within the hard limits. zh MUST be Simplified Chinese (简体中文) gloss of the shortened text — never Spanish/English/audience language.`,
+    1400,
     ctx.personaPrompt,
   );
 
   const next = { ...draft };
   const headlines = [...draft.headlines];
+  const descriptions = [...draft.descriptions];
   const callouts = [...draft.callouts];
   const sitelinks = [...draft.sitelinks];
   const zhHead = [...(draft.translations?.headlines ?? [])];
+  const zhDesc = [...(draft.translations?.descriptions ?? [])];
   const zhCall = [...(draft.translations?.callouts ?? [])];
   const zhSite = [...(draft.translations?.sitelinks ?? [])];
 
@@ -809,6 +827,16 @@ Every returned text MUST already be within the hard limits. zh is Simplified Chi
     headlines[index] = text;
     const zh = typeof (row as { zh?: unknown }).zh === 'string' ? String((row as { zh: string }).zh).trim() : '';
     if (zh) zhHead[index] = zh;
+  }
+  for (const row of Array.isArray(raw.descriptions) ? raw.descriptions : []) {
+    if (!row || typeof row !== 'object') continue;
+    const index = Number((row as { index?: unknown }).index);
+    const text = normalizeAdLine(String((row as { text?: unknown }).text ?? ''));
+    if (!Number.isInteger(index) || index < 0 || index >= descriptions.length || !text) continue;
+    if (adTextLen(text) > limits.description) continue;
+    descriptions[index] = text;
+    const zh = typeof (row as { zh?: unknown }).zh === 'string' ? String((row as { zh: string }).zh).trim() : '';
+    if (zh) zhDesc[index] = zh;
   }
   for (const row of Array.isArray(raw.callouts) ? raw.callouts : []) {
     if (!row || typeof row !== 'object') continue;
@@ -848,15 +876,107 @@ Every returned text MUST already be within the hard limits. zh is Simplified Chi
   return {
     ...next,
     headlines,
+    descriptions,
     callouts,
     sitelinks,
     translations: {
       ...draft.translations,
       headlines: zhHead.length ? zhHead : draft.translations?.headlines,
+      descriptions: zhDesc.length ? zhDesc : draft.translations?.descriptions,
       callouts: zhCall.length ? zhCall : draft.translations?.callouts,
       sitelinks: zhSite.length ? zhSite : draft.translations?.sitelinks,
     },
   };
+}
+
+/** 审核用对照译文：空缺或明显不是简体中文时，按最终英文补写简体中文。 */
+async function fillMissingZhGlosses_(
+  draft: AdDraft,
+  ctx: { brand: string; personaPrompt: string },
+): Promise<AdDraft> {
+  const missingHeadlines = draft.headlines
+    .map((text, index) => ({ index, text }))
+    .filter((row) => row.text.trim() && !looksLikeZhGloss_(draft.translations?.headlines?.[row.index]));
+  const missingDescriptions = draft.descriptions
+    .map((text, index) => ({ index, text }))
+    .filter((row) => row.text.trim() && !looksLikeZhGloss_(draft.translations?.descriptions?.[row.index]));
+  const missingCallouts = draft.callouts
+    .map((text, index) => ({ index, text }))
+    .filter((row) => row.text.trim() && !looksLikeZhGloss_(draft.translations?.callouts?.[row.index]));
+  const missingSitelinks = draft.sitelinks
+    .map((link, index) => ({
+      index,
+      linkText: link.linkText,
+      description1: link.description1,
+      description2: link.description2,
+    }))
+    .filter((row) => (
+      (row.linkText.trim() || row.description1.trim() || row.description2.trim())
+      && !looksLikeZhGloss_(draft.translations?.sitelinks?.[row.index])
+    ));
+  if (
+    !missingHeadlines.length
+    && !missingDescriptions.length
+    && !missingCallouts.length
+    && !missingSitelinks.length
+  ) {
+    return draft;
+  }
+
+  const raw = await askJson(
+    `Write Simplified Chinese (简体中文) review glosses for Google Ads copy of ${ctx.brand}.
+Gloss the FINAL English strings only. Do not rewrite the English. Do not use Spanish/English/other languages for zh.
+Missing headlines: ${JSON.stringify(missingHeadlines)}
+Missing descriptions: ${JSON.stringify(missingDescriptions)}
+Missing callouts: ${JSON.stringify(missingCallouts)}
+Missing sitelinks: ${JSON.stringify(missingSitelinks)}`,
+    `Return JSON only: {"headlines":[{"index":number,"zh":string}],"descriptions":[{"index":number,"zh":string}],"callouts":[{"index":number,"zh":string}],"sitelinks":[{"index":number,"zh":string}]}
+Each zh must be Simplified Chinese and mean the same as the listed English.`,
+    1200,
+    ctx.personaPrompt,
+  );
+
+  const zhHead = padZhList_(draft.translations?.headlines, draft.headlines.length);
+  const zhDesc = padZhList_(draft.translations?.descriptions, draft.descriptions.length);
+  const zhCall = padZhList_(draft.translations?.callouts, draft.callouts.length);
+  const zhSite = padZhList_(draft.translations?.sitelinks, draft.sitelinks.length);
+
+  const applyZh = (list: string[], rows: unknown) => {
+    for (const row of Array.isArray(rows) ? rows : []) {
+      if (!row || typeof row !== 'object') continue;
+      const index = Number((row as { index?: unknown }).index);
+      const zh = typeof (row as { zh?: unknown }).zh === 'string' ? String((row as { zh: string }).zh).trim() : '';
+      if (!Number.isInteger(index) || index < 0 || index >= list.length || !looksLikeZhGloss_(zh)) continue;
+      list[index] = zh.slice(0, 120);
+    }
+  };
+  applyZh(zhHead, raw.headlines);
+  applyZh(zhDesc, raw.descriptions);
+  applyZh(zhCall, raw.callouts);
+  applyZh(zhSite, raw.sitelinks);
+
+  return {
+    ...draft,
+    translations: {
+      ...draft.translations,
+      headlines: zhHead,
+      descriptions: zhDesc,
+      callouts: zhCall,
+      sitelinks: zhSite,
+    },
+  };
+}
+
+function padZhList_(list: string[] | undefined, size: number): string[] {
+  const out = Array.from({ length: size }, (_, index) => (list?.[index] ?? '').trim());
+  return out;
+}
+
+/** 审核对照是否像简体中文（至少含汉字）；西语/英文误填视为缺失。 */
+function looksLikeZhGloss_(text: string | undefined): boolean {
+  const value = (text ?? '').trim();
+  if (!value) return false;
+  return /[\u4e00-\u9fff]/.test(value);
 }
 
 function uniqueNonEmpty(values: string[]): string[] {

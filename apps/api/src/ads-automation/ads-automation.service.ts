@@ -37,7 +37,7 @@ import {
 import { crawlMerchantAdContext, crawlMerchantImages, probeLandingPageUrl } from './merchant-page-images';
 import { AiPersonaService } from './ai-persona.service';
 import { resolveAdLanguage } from './market-language';
-import { AdCopyFieldKind, rewriteAdField, writeAdCopy, writeArticle } from './modelgo-copy';
+import { AdCopyFieldKind, fillMissingZhGlosses, rewriteAdField, writeAdCopy, writeArticle } from './modelgo-copy';
 import { modelGoConfig } from './modelgo.client';
 import { fetchPublicImageBuffer, prepareAdImageAssets } from './ad-image-assets';
 import {
@@ -1851,6 +1851,37 @@ export class AdsAutomationService implements OnModuleInit {
       return campaign;
     });
     return this.campaignJson(updated);
+  }
+
+  /**
+   * 补全审核用简体中文对照（不改投放原文，不推 Google）。
+   * 用于模型误写成英文/法语，或压字后被清空的情况。
+   */
+  async refreshZhTranslations(ownerUserId: number, jobId: string) {
+    if (!modelGoConfig().enabled) {
+      throw new BadRequestException('未配置文案模型，无法补全中文');
+    }
+    const job = await this.prisma.adJob.findFirst({
+      where: { id: jobId, ownerUserId },
+      include: { campaign: true },
+    });
+    if (!job) throw new NotFoundException('任务不存在');
+    if (job.status !== 'READY_FOR_REVIEW' && job.status !== 'COMPLETED') {
+      throw new BadRequestException('仅待确认或已完成的任务可补全中文对照');
+    }
+    const draft = this.readDraft(job.draft);
+    const jobInput = (job.input ?? {}) as { merchantName?: string };
+    const brand = jobInput.merchantName || draft.businessName || 'Merchant';
+    const personaPrompt = await this.personas.activePrompt(ownerUserId, 'ads');
+    const next = await fillMissingZhGlosses(draft, {
+      brand,
+      personaPrompt,
+    });
+    await this.prisma.adJob.update({
+      where: { id: jobId },
+      data: { draft: next as unknown as Prisma.InputJsonValue },
+    });
+    return this.getJob(ownerUserId, jobId);
   }
 
   /**

@@ -164,7 +164,7 @@ ${seasonHint}`;
       'headlines',
       `Return JSON only:
 {"headlines": string[${AD_COPY_LIMITS.headlineCount.prefer}], "keywords": string[1 to 8], "negativeKeywords": string[4 to 12], "translations": {"headlines": string[${AD_COPY_LIMITS.headlineCount.prefer}], "keywords": string[1 to 8]}}
-HARD character limits (count every letter and space; reject your own draft if over): each headline <= ${AD_COPY_LIMITS.headline} (prefer 18–28). Exactly ${AD_COPY_LIMITS.headlineCount.prefer} unique headlines. Strong purchase intent; low repetition; match audience language. Seasonal/holiday names ONLY when the season hint marks CONFIRMED for THIS merchant. translations.headlines gloss the final short headline. Always include useful negativeKeywords (careers, login, free pdf, etc.).`,
+HARD character limits (count every letter and space; reject your own draft if over): each headline <= ${AD_COPY_LIMITS.headline} (prefer 18–28). Exactly ${AD_COPY_LIMITS.headlineCount.prefer} unique headlines. Strong purchase intent; low repetition; match audience language. Seasonal/holiday names ONLY when the season hint marks CONFIRMED for THIS merchant. translations.headlines / translations.keywords MUST be Simplified Chinese (简体中文) glosses of the final short strings — never English/French/Spanish/audience language. Always include useful negativeKeywords (careers, login, free pdf, etc.).`,
       900,
     ),
     runChunk(
@@ -273,7 +273,7 @@ Need at least ${AD_COPY_LIMITS.descriptionCount.min} unique descriptions. Each <
   draft = enforceAdCopyLimits(draft);
   // 压短清空、模型漏给、或误写成投放语种时，补回简体中文对照
   try {
-    draft = await fillMissingZhGlosses_(draft, {
+    draft = await fillMissingZhGlosses(draft, {
       brand,
       personaPrompt: input.personaPrompt || '',
     });
@@ -333,7 +333,7 @@ Content rules:
 - Never use more than 4 consecutive uppercase Latin letters (SHOPNOW is bad; Shop Now / FREE is ok). Avoid ALL-CAPS words longer than 4 letters.
 - Callouts and descriptions MAY mention discounts, free shipping, coupons, or sale language when plausible. Concrete % off / coupon codes still prefer promotionAsset when known.
 - promotionAsset: optional. Set enabled=true only when a concrete discount is known or strongly typical for this merchant; otherwise enabled=false or null. Use percentOff as whole percent (20 means 20%). moneyAmountOff is a decimal string. languageCode should match the ad language. finalUrl defaults to merchant URL if omitted. occasion may be empty or a real holiday occasion when applicable. Always leave startDate and endDate empty (operators set schedule manually later).
-- translations: required Simplified Chinese (简体中文) glosses for human review only (not sent to Google). NEVER write Spanish/English/audience-language into translations.*. Must include: headlines, descriptions, callouts, sitelinks, keywords (aligned to keywords[]), structuredSnippets (2 strings; each is comma-separated Chinese glosses for that snippet's values), and promotion if any. translations.headlines[i] / descriptions[i] MUST mean the same as the FINAL short English line — never gloss a longer unused draft.
+- translations: required Simplified Chinese (简体中文) glosses for human review only (not sent to Google). NEVER write English/French/Spanish/audience-language into translations.* — even when ad copy itself is French/Spanish/etc. Must include: headlines, descriptions, callouts, sitelinks, keywords (aligned to keywords[]), structuredSnippets (2 strings; each is comma-separated Chinese glosses for that snippet's values), and promotion if any. translations.headlines[i] / descriptions[i] MUST mean the same as the FINAL short ad line — never gloss a longer unused draft.
 - structuredSnippets: pick exactly 2 DIFFERENT headers from [${headers}] that best fit THIS merchant (not a fixed Types+Styles habit). Examples: travel/airlines → Destinations + Types; hotels → Amenities + Destinations; multi-brand → Brands + Types; electronics → Models + Types; fashion own-brand → Styles + Types; services → Service catalog + Types. Use exact English header strings. Values must be merchant-specific (not Apparel/Casual filler). Each needs at least ${AD_COPY_LIMITS.structuredValuesMin} short values.
 - Always include useful negativeKeywords (careers, login, free pdf, etc.).
 - Ad final URL (RSA) stays ${merchantUrl}. No URLs inside headline/description/callout text.
@@ -889,8 +889,11 @@ Every returned text MUST already be within the hard limits. zh MUST be Simplifie
   };
 }
 
-/** 审核用对照译文：空缺或明显不是简体中文时，按最终英文补写简体中文。 */
-async function fillMissingZhGlosses_(
+/**
+ * 审核用对照译文：空缺或明显不是简体中文时，按最终投放文案（可为法语等）补写简体中文。
+ * 可供生成后自动调用，也可在审核页一键补全。
+ */
+export async function fillMissingZhGlosses(
   draft: AdDraft,
   ctx: { brand: string; personaPrompt: string },
 ): Promise<AdDraft> {
@@ -914,25 +917,31 @@ async function fillMissingZhGlosses_(
       (row.linkText.trim() || row.description1.trim() || row.description2.trim())
       && !looksLikeZhGloss_(draft.translations?.sitelinks?.[row.index])
     ));
+  const missingKeywords = (draft.keywords ?? [])
+    .map((item, index) => ({ index, text: item.text }))
+    .filter((row) => row.text.trim() && !looksLikeZhGloss_(draft.translations?.keywords?.[row.index]));
   if (
     !missingHeadlines.length
     && !missingDescriptions.length
     && !missingCallouts.length
     && !missingSitelinks.length
+    && !missingKeywords.length
   ) {
     return draft;
   }
 
   const raw = await askJson(
     `Write Simplified Chinese (简体中文) review glosses for Google Ads copy of ${ctx.brand}.
-Gloss the FINAL English strings only. Do not rewrite the English. Do not use Spanish/English/other languages for zh.
+The listed strings are the FINAL ad copy (may be French, Spanish, English, etc.). Do NOT rewrite them.
+For each item, output ONLY a Simplified Chinese gloss of that string. Never output English/French/Spanish as zh.
 Missing headlines: ${JSON.stringify(missingHeadlines)}
 Missing descriptions: ${JSON.stringify(missingDescriptions)}
 Missing callouts: ${JSON.stringify(missingCallouts)}
-Missing sitelinks: ${JSON.stringify(missingSitelinks)}`,
-    `Return JSON only: {"headlines":[{"index":number,"zh":string}],"descriptions":[{"index":number,"zh":string}],"callouts":[{"index":number,"zh":string}],"sitelinks":[{"index":number,"zh":string}]}
-Each zh must be Simplified Chinese and mean the same as the listed English.`,
-    1200,
+Missing sitelinks: ${JSON.stringify(missingSitelinks)}
+Missing keywords: ${JSON.stringify(missingKeywords)}`,
+    `Return JSON only: {"headlines":[{"index":number,"zh":string}],"descriptions":[{"index":number,"zh":string}],"callouts":[{"index":number,"zh":string}],"sitelinks":[{"index":number,"zh":string}],"keywords":[{"index":number,"zh":string}]}
+Each zh MUST contain Chinese characters (汉字) and mean the same as the listed ad copy.`,
+    1600,
     ctx.personaPrompt,
   );
 
@@ -940,6 +949,7 @@ Each zh must be Simplified Chinese and mean the same as the listed English.`,
   const zhDesc = padZhList_(draft.translations?.descriptions, draft.descriptions.length);
   const zhCall = padZhList_(draft.translations?.callouts, draft.callouts.length);
   const zhSite = padZhList_(draft.translations?.sitelinks, draft.sitelinks.length);
+  const zhKw = padZhList_(draft.translations?.keywords, draft.keywords.length);
 
   const applyZh = (list: string[], rows: unknown) => {
     for (const row of Array.isArray(rows) ? rows : []) {
@@ -954,6 +964,7 @@ Each zh must be Simplified Chinese and mean the same as the listed English.`,
   applyZh(zhDesc, raw.descriptions);
   applyZh(zhCall, raw.callouts);
   applyZh(zhSite, raw.sitelinks);
+  applyZh(zhKw, raw.keywords);
 
   return {
     ...draft,
@@ -963,6 +974,7 @@ Each zh must be Simplified Chinese and mean the same as the listed English.`,
       descriptions: zhDesc,
       callouts: zhCall,
       sitelinks: zhSite,
+      keywords: zhKw,
     },
   };
 }
@@ -1087,9 +1099,10 @@ zh is a short Simplified Chinese gloss of the three FINAL short fields.`,
     linkText = fittedLink;
     description1 = fittedD1;
     description2 = fittedD2;
+    const zhRaw = typeof raw.zh === 'string' ? raw.zh.trim() : '';
     return {
       sitelink: { linkText, description1, description2 },
-      zh: shortened ? undefined : (typeof raw.zh === 'string' ? raw.zh.trim() : undefined),
+      zh: shortened || !looksLikeZhGloss_(zhRaw) ? undefined : zhRaw,
     };
   }
 
@@ -1124,9 +1137,10 @@ zh must gloss the exact text you return (same meaning), Simplified Chinese for h
   if (input.siblings.some((item) => item.trim().toLowerCase() === text.toLowerCase())) {
     throw new Error('生成结果与现有文案重复，请再试一次');
   }
+  const zhRaw = typeof raw.zh === 'string' ? raw.zh.trim() : '';
   return {
     text,
-    zh: shortened ? undefined : (typeof raw.zh === 'string' ? raw.zh.trim() : undefined),
+    zh: shortened || !looksLikeZhGloss_(zhRaw) ? undefined : zhRaw,
   };
 }
 

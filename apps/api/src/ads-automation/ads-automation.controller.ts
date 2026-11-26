@@ -761,6 +761,13 @@ export class AdsAutomationController {
     return ok(await this.ads.patchDraft(user.id, id, body));
   }
 
+  /** 补全审核用简体中文对照（不改投放文案）。 */
+  @Post('ad-jobs/:id/translations/zh')
+  async refreshZhTranslations(@CurrentUser() user: AuthUser, @Param('id') id: string) {
+    this.assertWriter(user);
+    return ok(await this.ads.refreshZhTranslations(user.id, id), '已补全中文对照');
+  }
+
   /** 审核页单条重写：标题 / 描述 / 宣传信息 / 站内链接。 */
   @Post('ad-jobs/:id/regenerate-field')
   async regenerateField(

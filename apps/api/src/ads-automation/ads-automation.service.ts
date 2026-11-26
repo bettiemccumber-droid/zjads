@@ -2278,8 +2278,21 @@ export class AdsAutomationService implements OnModuleInit {
     const alias = (aliasHint || input.affiliateAlias || account?.affiliateAlias || input.platformCode || merchant?.platformCode || 'ads')
       .trim()
       .toLowerCase() || 'ads';
-    const existingCount = await this.prisma.adAutomationCampaign.count({ where: { ownerUserId } });
-    const sequence = 2001 + existingCount;
+    // 新序号从 001 起；旧 20xx 号段不参与递增，避免接着 2074 往下滚
+    const existing = await this.prisma.adAutomationCampaign.findMany({
+      where: { ownerUserId },
+      select: { campaignName: true },
+    });
+    let maxSeq = 0;
+    for (const row of existing) {
+      const head = row.campaignName.split('-')[0]?.trim() ?? '';
+      if (!/^\d{1,3}$/.test(head)) continue;
+      const value = Number.parseInt(head, 10);
+      if (Number.isFinite(value) && value >= 1 && value < 2000) {
+        maxSeq = Math.max(maxSeq, value);
+      }
+    }
+    const sequence = maxSeq + 1;
     const name = buildCampaignName({
       sequence,
       platformCode: alias,

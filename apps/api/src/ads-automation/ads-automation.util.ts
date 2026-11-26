@@ -325,8 +325,9 @@ export function buildCampaignName(input: {
   now?: Date;
 }): string {
   const alias = (input.platformCode || 'ads').trim().toLowerCase() || 'ads';
+  const sequence = Math.max(1, Math.floor(input.sequence));
   return [
-    String(input.sequence),
+    String(sequence).padStart(3, '0'),
     alias,
     merchantSlug(input.merchantName),
     input.countryCode.toUpperCase(),

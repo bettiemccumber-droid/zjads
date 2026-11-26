@@ -55,14 +55,25 @@ assert.strictEqual(usdToMicros('3.00'), '3000000');
 assert.strictEqual(usdToMicros('0.50'), '500000');
 assert.strictEqual(
   buildCampaignName({
-    sequence: 2007,
+    sequence: 7,
     platformCode: 'BSH1',
     merchantName: 'AG Jeans Outlet',
     countryCode: 'US',
     mid: '1865558',
     now: new Date('2026-11-12T02:00:00.000Z'),
   }),
-  '2007-bsh1-AGJeansOutlet-US-1112-1865558',
+  '007-bsh1-AGJeansOutlet-US-1112-1865558',
+);
+assert.strictEqual(
+  buildCampaignName({
+    sequence: 1,
+    platformCode: 'rw6',
+    merchantName: 'Smallable',
+    countryCode: 'FR',
+    mid: '19162527',
+    now: new Date('2026-11-26T02:00:00.000Z'),
+  }),
+  '001-rw6-Smallable-FR-1126-19162527',
 );
 assert.strictEqual(
   buildTrackUrl('partnermatic', 'https://bellroy.com/'),

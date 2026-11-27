@@ -9,8 +9,8 @@ import './CampaignExpandableTable.css';
 /** 主表横向滚动宽度（紧凑布局，配合固定列） */
 export const CAMPAIGN_MAIN_SCROLL_X = 1360;
 
-/** 按天子表列宽合计 */
-export const CAMPAIGN_DAILY_SCROLL_X = 1040;
+/** 按天子表列宽合计（含拒付佣金、净利润） */
+export const CAMPAIGN_DAILY_SCROLL_X = 1184;
 
 const OPTIONAL_COLUMN_STORAGE_KEY = 'zjads.campaignOptionalColumns';
 
@@ -111,7 +111,12 @@ function calcCr(orderCount: number, clicks: number) {
   return clicks > 0 ? (orderCount / clicks) * 100 : 0;
 }
 
-function netProfitValue(r: CampaignSummaryRow) {
+function netProfitValue(r: {
+  commission: number;
+  rejectedCommission?: number;
+  cost: number;
+  netProfit?: number;
+}) {
   return r.netProfit ?? r.commission - (r.rejectedCommission ?? 0) - r.cost;
 }
 
@@ -463,6 +468,7 @@ function sumDailyRows(days: CampaignDailyRow[]) {
     cost: 0,
     orderCount: 0,
     commission: 0,
+    rejectedCommission: 0,
     affiliateClicks: 0,
     weightedBgt: 0,
     weightedRnk: 0,
@@ -474,6 +480,7 @@ function sumDailyRows(days: CampaignDailyRow[]) {
     acc.cost += d.cost;
     acc.orderCount += d.orderCount;
     acc.commission += d.commission;
+    acc.rejectedCommission += d.rejectedCommission ?? 0;
     acc.affiliateClicks += d.affiliateClicks ?? 0;
     acc.weightedBgt += d.searchBudgetLostIs * d.impressions;
     acc.weightedRnk += d.searchRankLostIs * d.impressions;
@@ -484,7 +491,8 @@ function sumDailyRows(days: CampaignDailyRow[]) {
   const cr = calcCr(acc.orderCount, acc.clicks);
   const isBgt = acc.impressions > 0 ? acc.weightedBgt / acc.impressions : 0;
   const isRnk = acc.impressions > 0 ? acc.weightedRnk / acc.impressions : 0;
-  return { ...acc, roi, epc, cpc, cr, isBgt, isRnk };
+  const netProfit = acc.commission - acc.rejectedCommission - acc.cost;
+  return { ...acc, roi, epc, cpc, cr, isBgt, isRnk, netProfit };
 }
 
 interface CampaignExpandableTableProps {
@@ -656,6 +664,20 @@ export default function CampaignExpandableTable({
         align: 'center',
         ...kpiColumn('commission'),
         render: (v: number) => <MoneyCell value={v} variant="commission" kpi />,
+      },
+      {
+        title: '拒付佣金',
+        dataIndex: 'rejectedCommission',
+        width: 72,
+        align: 'center',
+        render: (v: number | undefined) => <RejectedCommissionCell value={v} />,
+      },
+      {
+        title: '净利润',
+        dataIndex: 'netProfit',
+        width: 72,
+        align: 'center',
+        render: (_v: number | undefined, r) => <NetProfitCell value={netProfitValue(r)} />,
       },
       {
         title: 'CR',
@@ -1213,25 +1235,31 @@ export default function CampaignExpandableTable({
                             <MoneyCell value={tot.commission} variant="commission" kpi />
                           </Table.Summary.Cell>
                           <Table.Summary.Cell index={8} align="center">
+                            <RejectedCommissionCell value={tot.rejectedCommission} />
+                          </Table.Summary.Cell>
+                          <Table.Summary.Cell index={9} align="center">
+                            <NetProfitCell value={tot.netProfit} />
+                          </Table.Summary.Cell>
+                          <Table.Summary.Cell index={10} align="center">
                             {tot.clicks > 0 ? (
                               <span className="cell-metric-muted">{tot.cr.toFixed(2)}%</span>
                             ) : (
                               '—'
                             )}
                           </Table.Summary.Cell>
-                          <Table.Summary.Cell index={9} align="center">
+                          <Table.Summary.Cell index={11} align="center">
                             <span className="cell-metric-muted">${tot.epc.toFixed(2)}</span>
                           </Table.Summary.Cell>
-                          <Table.Summary.Cell index={10} align="center">
+                          <Table.Summary.Cell index={12} align="center">
                             <span className="cell-metric-muted">${tot.cpc.toFixed(2)}</span>
                           </Table.Summary.Cell>
-                          <Table.Summary.Cell index={11} align="center" className="col-kpi col-kpi-roi">
+                          <Table.Summary.Cell index={13} align="center" className="col-kpi col-kpi-roi">
                             <RoiCell value={tot.roi} size="daily" />
                           </Table.Summary.Cell>
-                          <Table.Summary.Cell index={12} align="center">
+                          <Table.Summary.Cell index={14} align="center">
                             {pct(tot.isBgt)}
                           </Table.Summary.Cell>
-                          <Table.Summary.Cell index={13} align="center">
+                          <Table.Summary.Cell index={15} align="center">
                             {pct(tot.isRnk)}
                           </Table.Summary.Cell>
                         </Table.Summary.Row>

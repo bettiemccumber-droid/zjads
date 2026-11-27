@@ -118,3 +118,35 @@ export function isOrphanAffiliateCampaign(campaignId: string, campaignName: stri
   if ((campaignId || '').startsWith('orphan|')) return true;
   return (campaignName || '').includes('无 Sheet 系列');
 }
+
+/**
+ * 把「按日归因后」的联盟指标按系列键加总。
+ * 汇总行佣金/订单应等于该系列每日归因之和，避免整段区间只认一条系列。
+ */
+export function sumDailyAffiliateAttributionByCampaignKey(
+  dailyRows: ReadonlyArray<{
+    campaignGroupKey: string;
+    orderCount: number;
+    commission: number;
+    affiliateClicks: number;
+    rejectedCommission?: number;
+  }>,
+): Map<string, AffiliateMetricsSlice> {
+  const out = new Map<string, AffiliateMetricsSlice>();
+  for (const row of dailyRows) {
+    const key = row.campaignGroupKey;
+    if (!key) continue;
+    const prev = out.get(key) ?? {
+      orderCount: 0,
+      commission: 0,
+      affiliateClicks: 0,
+      rejectedCommission: 0,
+    };
+    prev.orderCount += row.orderCount || 0;
+    prev.commission += row.commission || 0;
+    prev.affiliateClicks += row.affiliateClicks || 0;
+    prev.rejectedCommission += row.rejectedCommission || 0;
+    out.set(key, prev);
+  }
+  return out;
+}

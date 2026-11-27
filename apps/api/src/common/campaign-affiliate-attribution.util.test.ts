@@ -6,6 +6,7 @@ import {
   campaignAffiliateAttributionKey,
   campaignCoversMerchantAffiliate,
   isOrphanAffiliateCampaign,
+  sumDailyAffiliateAttributionByCampaignKey,
 } from './campaign-affiliate-attribution.util';
 
 function runTests() {
@@ -50,6 +51,43 @@ function runTests() {
 
   assert.equal(isOrphanAffiliateCampaign('orphan|87590|pm1', 'Sun & Snow（无 Sheet 系列 · pm1）'), true);
   assert.equal(isOrphanAffiliateCampaign('123', '149-lh1-sunandsnow-pl-0612-87590'), false);
+
+  // 同商家新旧系列：按日归因后再加总，两边都能拿到各自日期的佣金
+  const summed = sumDailyAffiliateAttributionByCampaignKey([
+    {
+      campaignGroupKey: 'old',
+      orderCount: 2,
+      commission: 100,
+      affiliateClicks: 5,
+      rejectedCommission: 1,
+    },
+    {
+      campaignGroupKey: 'new',
+      orderCount: 9,
+      commission: 41.91,
+      affiliateClicks: 3,
+      rejectedCommission: 0,
+    },
+    {
+      campaignGroupKey: 'old',
+      orderCount: 1,
+      commission: 44.39,
+      affiliateClicks: 2,
+      rejectedCommission: 0,
+    },
+    {
+      campaignGroupKey: 'new',
+      orderCount: 0,
+      commission: 0,
+      affiliateClicks: 0,
+      rejectedCommission: 0,
+    },
+  ]);
+  assert.equal(summed.get('old')?.commission, 144.39);
+  assert.equal(summed.get('old')?.orderCount, 3);
+  assert.equal(summed.get('new')?.commission, 41.91);
+  assert.equal(summed.get('new')?.orderCount, 9);
+  assert.equal(summed.get('new')?.rejectedCommission, 0);
 
   console.log('campaign-affiliate-attribution.util.test.ts: all passed');
 }

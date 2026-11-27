@@ -16,6 +16,7 @@ import {
   campaignAffiliateAttributionKey,
   campaignCoversMerchantAffiliate,
   isOrphanAffiliateCampaign,
+  sumDailyAffiliateAttributionByCampaignKey,
 } from '../common/campaign-affiliate-attribution.util';
 import {
   parseCampaignName,
@@ -451,28 +452,26 @@ export class ReportsService {
       q.startDate,
       q.endDate,
     );
-    const clicksByCampaign = this.computeAffiliateClicksByCampaignKey(
+    // 汇总佣金/订单 = 按日归因后再加总（同商家新旧系列可各拿各天；广告费仍用 Google 区间汇总）
+    const attributedDaily = this.buildAttributedCampaignDailyRows_(
       adRows,
       affiliateByDay,
       q.startDate,
       q.endDate,
+      [...map.values()],
     );
+    const affiliateByCampaign = sumDailyAffiliateAttributionByCampaignKey(attributedDaily);
 
     let summary = [...map.values()]
       .map((r) => {
-        const affiliate = this.lookupAffiliateMetrics(
-          affiliateMetrics,
-          r.merchantId,
-          r.affiliateAlias,
-        );
+        const affiliate = affiliateByCampaign.get(r.campaignGroupKey) ?? { ...EMPTY_AFFILIATE };
         const cost = r.cost;
         const commission = affiliate.commission;
         const clicks = r.clicks;
         const roi = cost > 0 ? (commission - cost) / cost : 0;
         const avgCpc = clicks > 0 ? cost / clicks : 0;
         const epc = clicks > 0 ? commission / clicks : 0;
-        const affiliateClicks =
-          clicksByCampaign.get(r.campaignGroupKey) ?? affiliate.affiliateClicks;
+        const affiliateClicks = affiliate.affiliateClicks;
         const rejectedCommission = affiliate.rejectedCommission;
         const netProfit = commission - rejectedCommission - cost;
 
@@ -504,8 +503,6 @@ export class ReportsService {
           operationSuggestion: suggestOperation(roi, affiliate.orderCount, cost),
         };
       });
-
-    summary = this.dedupeAffiliateAttributionOnCampaigns(summary);
     // 状态用该系列全库最新一天，避免查询区间停在暂停前一天时仍显示「启用中」
     summary = await this.applyLatestCampaignStatuses_(ownerId, summary);
     summary.sort((a, b) => b.roi - a.roi || b.commission - a.commission || b.clicks - a.clicks);
@@ -590,68 +587,12 @@ export class ReportsService {
       orderBy: [{ date: 'desc' }, { campaignName: 'asc' }],
     });
 
-    let rows = this.supplementAffiliateOnlyDailyRows_(
-      this.mergeCampaignDailyByGroup_(
-        adRows.map((ad) => {
-          const dateStr = ad.date.toISOString().slice(0, 10);
-          const parsed = parseCampaignName(ad.campaignName);
-          const alias = (ad.affiliateAlias || parsed.affiliateAlias || '').toLowerCase();
-          const merchantId = ad.merchantId || parsed.merchantId;
-          const affiliate = this.lookupAffiliateMetricsForDay(
-            affiliateByDay,
-            merchantId,
-            alias,
-            dateStr,
-          );
-          const cost = Number(ad.cost);
-          const clicks = ad.clicks;
-          const commission = affiliate.commission;
-          const rejectedCommission = affiliate.rejectedCommission;
-          const roi = cost > 0 ? (commission - cost) / cost : 0;
-          const avgCpc = clicks > 0 ? cost / clicks : Number(ad.avgCpc);
-          const campaignGroupKey = resolveCampaignGroupKey({
-            campaignName: ad.campaignName,
-            merchantId,
-            affiliateAlias: alias,
-            customerId: ad.customerId,
-            campaignId: ad.campaignId,
-          });
-
-          return {
-            date: dateStr,
-            campaignGroupKey,
-            customerId: ad.customerId,
-            campaignId: ad.campaignId,
-            campaignName: ad.campaignName,
-            campaignStatus: ad.campaignStatus ?? '',
-            affiliateAlias: alias,
-            merchantId,
-            dailyBudget: Number(ad.campaignBudget),
-            impressions: ad.impressions,
-            clicks,
-            cost,
-            orderCount: affiliate.orderCount,
-            commission,
-            rejectedCommission,
-            affiliateClicks: affiliate.affiliateClicks,
-            searchBudgetLostIs: Number(ad.searchBudgetLostIs),
-            searchRankLostIs: Number(ad.searchRankLostIs),
-            avgCpc,
-            maxCpc: Number(ad.maxCpc),
-            epc: clicks > 0 ? commission / clicks : 0,
-            roi,
-            profit: commission - cost,
-            netProfit: commission - rejectedCommission - cost,
-            operationSuggestion: suggestOperation(roi, affiliate.orderCount, cost),
-          };
-        }),
-      ),
+    let rows = this.buildAttributedCampaignDailyRows_(
+      adRows,
       affiliateByDay,
       q.startDate,
       q.endDate,
     );
-
-    rows = this.dedupeAffiliateAttributionOnCampaignDaily(rows);
 
     const statusMode = resolveCampaignStatusMode(q);
     rows = filterCampaignDailyByGroupStatus(rows, statusMode);
@@ -1038,44 +979,42 @@ export class ReportsService {
   }
 
   /**
-   * 按「有 Google Ads 数据的日期」汇总联盟点击（与展开明细合计一致）
+   * 构建「按日归因」后的系列日明细：合并同逻辑系列、补 0 花费出单日、同商家同日只留一条赢家。
+   * extraTemplates：汇总里已有、但区间内无 Google 行的停投/补行系列，避免滞后单丢数。
    */
-  private computeAffiliateClicksByCampaignKey(
+  private buildAttributedCampaignDailyRows_(
     adRows: Array<{
-      customerId: string;
-      campaignId: string;
-      campaignName: string;
       date: Date;
+      campaignId: string;
+      customerId: string;
+      campaignName: string;
+      campaignStatus?: string | null;
       affiliateAlias: string | null;
       merchantId: string | null;
-      cost: unknown;
+      campaignBudget?: unknown;
+      impressions?: number;
       clicks: number;
+      cost: unknown;
+      searchBudgetLostIs?: unknown;
+      searchRankLostIs?: unknown;
+      avgCpc?: unknown;
+      maxCpc?: unknown;
     }>,
     affiliateByDay: Awaited<ReturnType<typeof this.buildAffiliateMetricsByMerchantDay>>,
     startDate: string,
     endDate: string,
-  ): Map<string, number> {
-    type DayRow = {
-      date: string;
+    extraTemplates: Array<{
+      campaignGroupKey: string;
       campaignId: string;
       customerId: string;
       campaignName: string;
-      merchantId: string;
       affiliateAlias: string;
-      cost: number;
-      clicks: number;
-      orderCount: number;
-      commission: number;
-      affiliateClicks: number;
-      roi: number;
-      profit: number;
-      rejectedCommission: number;
-      netProfit: number;
-      epc: number;
-      operationSuggestion: string;
-    };
-
-    const raw: DayRow[] = adRows.map((ad) => {
+      merchantId: string;
+      dailyBudget?: number;
+      maxCpc?: number;
+    }> = [],
+  ) {
+    const mapped = adRows.map((ad) => {
       const dateStr = ad.date.toISOString().slice(0, 10);
       const parsed = parseCampaignName(ad.campaignName);
       const alias = (ad.affiliateAlias || parsed.affiliateAlias || '').toLowerCase();
@@ -1088,62 +1027,99 @@ export class ReportsService {
       );
       const cost = Number(ad.cost);
       const clicks = ad.clicks;
+      const commission = affiliate.commission;
       const rejectedCommission = affiliate.rejectedCommission;
-      const roi = cost > 0 ? (affiliate.commission - cost) / cost : 0;
-      return {
-        date: dateStr,
-        campaignId: ad.campaignId,
-        customerId: ad.customerId,
+      const roi = cost > 0 ? (commission - cost) / cost : 0;
+      const campaignGroupKey = resolveCampaignGroupKey({
         campaignName: ad.campaignName,
         merchantId,
         affiliateAlias: alias,
-        cost,
+        customerId: ad.customerId,
+        campaignId: ad.campaignId,
+      });
+
+      return {
+        date: dateStr,
+        campaignGroupKey,
+        customerId: ad.customerId,
+        campaignId: ad.campaignId,
+        campaignName: ad.campaignName,
+        campaignStatus: ad.campaignStatus ?? '',
+        affiliateAlias: alias,
+        merchantId,
+        dailyBudget: Number(ad.campaignBudget ?? 0),
+        impressions: ad.impressions ?? 0,
         clicks,
+        cost,
         orderCount: affiliate.orderCount,
-        commission: affiliate.commission,
+        commission,
         rejectedCommission,
         affiliateClicks: affiliate.affiliateClicks,
+        searchBudgetLostIs: Number(ad.searchBudgetLostIs ?? 0),
+        searchRankLostIs: Number(ad.searchRankLostIs ?? 0),
+        avgCpc: clicks > 0 ? cost / clicks : Number(ad.avgCpc ?? 0),
+        maxCpc: Number(ad.maxCpc ?? 0),
+        epc: clicks > 0 ? commission / clicks : 0,
         roi,
-        profit: affiliate.commission - cost,
-        netProfit: affiliate.commission - rejectedCommission - cost,
-        epc: clicks > 0 ? affiliate.commission / clicks : 0,
+        profit: commission - cost,
+        netProfit: commission - rejectedCommission - cost,
         operationSuggestion: suggestOperation(roi, affiliate.orderCount, cost),
       };
     });
 
-    const deduped = this.dedupeAffiliateAttributionOnCampaignDaily(
-      this.supplementAffiliateOnlyDailyRows_(
-        this.mergeCampaignDailyByGroup_(
-          raw.map((r) => ({
-            ...r,
-            campaignGroupKey: resolveCampaignGroupKey({
-              campaignName: r.campaignName,
-              merchantId: r.merchantId,
-              affiliateAlias: r.affiliateAlias,
-              customerId: r.customerId,
-              campaignId: r.campaignId,
-            }),
-            campaignName: r.campaignName,
-            campaignStatus: '',
-            dailyBudget: 0,
-            impressions: 0,
-            searchBudgetLostIs: 0,
-            searchRankLostIs: 0,
-            avgCpc: 0,
-            maxCpc: 0,
-          })),
-        ),
+    let rows = this.mergeCampaignDailyByGroup_(mapped);
+    const present = new Set(rows.map((r) => r.campaignGroupKey));
+
+    for (const tpl of extraTemplates) {
+      if (!tpl.campaignGroupKey || present.has(tpl.campaignGroupKey)) continue;
+      if (!tpl.merchantId) continue;
+      present.add(tpl.campaignGroupKey);
+      const alias = (tpl.affiliateAlias || '').toLowerCase();
+      // 占位行也带上 startDate 当天联盟数，避免「已 seen」导致当天 0 花费出单被跳过
+      const affiliate = this.lookupAffiliateMetricsForDay(
         affiliateByDay,
+        tpl.merchantId,
+        alias,
         startDate,
-        endDate,
-      ),
-    );
-    const byCampaign = new Map<string, number>();
-    for (const r of deduped) {
-      const key = r.campaignGroupKey;
-      byCampaign.set(key, (byCampaign.get(key) ?? 0) + r.affiliateClicks);
+      );
+      const commission = affiliate.commission;
+      const rejectedCommission = affiliate.rejectedCommission;
+      rows.push({
+        date: startDate,
+        campaignGroupKey: tpl.campaignGroupKey,
+        customerId: tpl.customerId || '',
+        campaignId: tpl.campaignId || '',
+        campaignName: tpl.campaignName || '',
+        campaignStatus: '',
+        affiliateAlias: alias,
+        merchantId: tpl.merchantId,
+        dailyBudget: tpl.dailyBudget ?? 0,
+        impressions: 0,
+        clicks: 0,
+        cost: 0,
+        orderCount: affiliate.orderCount,
+        commission,
+        rejectedCommission,
+        affiliateClicks: affiliate.affiliateClicks,
+        searchBudgetLostIs: 0,
+        searchRankLostIs: 0,
+        avgCpc: 0,
+        maxCpc: tpl.maxCpc ?? 0,
+        epc: 0,
+        roi: 0,
+        profit: commission,
+        netProfit: commission - rejectedCommission,
+        operationSuggestion: suggestOperation(0, affiliate.orderCount, 0),
+      });
     }
-    return byCampaign;
+
+    rows = this.supplementAffiliateOnlyDailyRows_(
+      rows,
+      affiliateByDay,
+      startDate,
+      endDate,
+    );
+    return this.dedupeAffiliateAttributionOnCampaignDaily(rows);
   }
 
   /**
@@ -1610,8 +1586,10 @@ export class ReportsService {
       orderCount: number;
       commission: number;
       affiliateClicks: number;
+      rejectedCommission?: number;
       roi: number;
       profit: number;
+      netProfit?: number;
       epc: number;
       operationSuggestion: string;
     },
@@ -1633,15 +1611,18 @@ export class ReportsService {
       const winnerIdx = key ? winnerByKey.get(key) : undefined;
       if (winnerIdx === undefined || winnerIdx === idx) return row;
 
+      const roi = row.cost > 0 ? -1 : 0;
       return {
         ...row,
         orderCount: 0,
         commission: 0,
+        rejectedCommission: 0,
         affiliateClicks: 0,
-        roi: row.cost > 0 ? -1 : 0,
+        roi,
         profit: -row.cost,
+        netProfit: -row.cost,
         epc: 0,
-        operationSuggestion: suggestOperation(row.cost > 0 ? -1 : 0, 0, row.cost),
+        operationSuggestion: suggestOperation(roi, 0, row.cost),
       };
     });
   }

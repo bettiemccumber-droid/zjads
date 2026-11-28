@@ -73,6 +73,7 @@ const SYNC_PLATFORM_SHORT: Record<string, string> = {
   ultrainfluence: 'UI',
   collabglow: 'CG',
   famesta: 'FS',
+  brandsparkhub: 'BSH',
 };
 
 interface MerchantRow {

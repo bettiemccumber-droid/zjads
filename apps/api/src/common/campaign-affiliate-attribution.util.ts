@@ -21,6 +21,7 @@ export function affiliateAliasSamePlatformFamily(a: string, b: string): boolean 
   if (left.startsWith('ui') && right.startsWith('ui')) return true;
   if (left.startsWith('cg') && right.startsWith('cg')) return true;
   if (left.startsWith('fs') && right.startsWith('fs')) return true;
+  if (isBrandsparkhubAlias_(left) && isBrandsparkhubAlias_(right)) return true;
   return left === right;
 }
 
@@ -37,6 +38,7 @@ export function campaignAffiliateAttributionKey(merchantId: string, alias: strin
   if (a.startsWith('ui')) return `ui:${merchantId}`;
   if (a.startsWith('cg')) return `cg:${merchantId}`;
   if (a.startsWith('fs')) return `fs:${merchantId}`;
+  if (isBrandsparkhubAlias_(a)) return `bsh:${merchantId}`;
   return `${merchantId}|${a}`;
 }
 
@@ -46,7 +48,7 @@ export function campaignAffiliateAttributionKey(merchantId: string, alias: strin
 export function aggregateAffiliateMetricsByFamily(
   byKey: ReadonlyMap<string, AffiliateMetricsSlice>,
   merchantId: string,
-  familyPrefix: 'lh' | 'lb' | 'pm' | 'ui' | 'cg' | 'fs',
+  familyPrefix: 'lh' | 'lb' | 'pm' | 'ui' | 'cg' | 'fs' | 'bsh',
 ): AffiliateMetricsSlice {
   const result: AffiliateMetricsSlice = {
     orderCount: 0,
@@ -59,7 +61,7 @@ export function aggregateAffiliateMetricsByFamily(
     if (pipe < 0) continue;
     const mid = key.slice(0, pipe);
     const alias = key.slice(pipe + 1).toLowerCase();
-    if (mid !== merchantId || !alias.startsWith(familyPrefix)) continue;
+    if (mid !== merchantId || !aliasMatchesFamily_(alias, familyPrefix)) continue;
     result.commission += metrics.commission;
     result.orderCount += metrics.orderCount;
     result.affiliateClicks += metrics.affiliateClicks;
@@ -74,7 +76,7 @@ export function aggregateAffiliateMetricsByFamily(
 export function aggregateAffiliateMetricsByFamilyForDay(
   byKey: ReadonlyMap<string, AffiliateMetricsSlice>,
   merchantId: string,
-  familyPrefix: 'lh' | 'lb' | 'pm' | 'ui' | 'cg' | 'fs',
+  familyPrefix: 'lh' | 'lb' | 'pm' | 'ui' | 'cg' | 'fs' | 'bsh',
   dateStr: string,
 ): AffiliateMetricsSlice {
   const suffix = `|${dateStr}`;
@@ -91,13 +93,26 @@ export function aggregateAffiliateMetricsByFamilyForDay(
     if (pipe < 0) continue;
     const mid = body.slice(0, pipe);
     const alias = body.slice(pipe + 1).toLowerCase();
-    if (mid !== merchantId || !alias.startsWith(familyPrefix)) continue;
+    if (mid !== merchantId || !aliasMatchesFamily_(alias, familyPrefix)) continue;
     result.commission += metrics.commission;
     result.orderCount += metrics.orderCount;
     result.affiliateClicks += metrics.affiliateClicks;
     result.rejectedCommission += metrics.rejectedCommission;
   }
   return result;
+}
+
+/** Brandsparkhub 广告前缀：正式 bsh；接入期备用 bsp */
+function isBrandsparkhubAlias_(alias: string): boolean {
+  return alias.startsWith('bsh') || alias.startsWith('bsp');
+}
+
+function aliasMatchesFamily_(
+  alias: string,
+  familyPrefix: 'lh' | 'lb' | 'pm' | 'ui' | 'cg' | 'fs' | 'bsh',
+): boolean {
+  if (familyPrefix === 'bsh') return isBrandsparkhubAlias_(alias);
+  return alias.startsWith(familyPrefix);
 }
 
 /** Sheet 中是否已有系列可承接该商家的联盟归因（同平台族不限序号；含暂停后重开的新系列） */

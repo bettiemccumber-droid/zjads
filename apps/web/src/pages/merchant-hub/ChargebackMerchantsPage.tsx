@@ -63,6 +63,7 @@ const PLATFORM_SHORT: Record<string, string> = {
   collabglow: 'CG',
   ultrainfluence: 'UI',
   famesta: 'FS',
+  brandsparkhub: 'BSH',
 };
 
 const KNOWN_PLATFORM_CODES = new Set(Object.keys(PLATFORM_SHORT));

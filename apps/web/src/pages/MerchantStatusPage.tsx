@@ -163,6 +163,7 @@ const PLATFORM_CLASS: Record<string, string> = {
   ultrainfluence: 'ultrainfluence',
   collabglow: 'collabglow',
   famesta: 'famesta',
+  brandsparkhub: 'brandsparkhub',
 };
 
 function renderStatusPill(label: string, variant: string, size: 'sm' | 'md' = 'md') {

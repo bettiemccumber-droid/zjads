@@ -9,6 +9,7 @@ const PLATFORM_CODES = [
   'ultrainfluence',
   'collabglow',
   'famesta',
+  'brandsparkhub',
 ] as const;
 
 const PLATFORM_SHORT: Record<string, string> = {
@@ -19,6 +20,7 @@ const PLATFORM_SHORT: Record<string, string> = {
   ultrainfluence: 'UI',
   collabglow: 'CG',
   famesta: 'FS',
+  brandsparkhub: 'BSH',
 };
 
 export interface MerchantAccountPick {

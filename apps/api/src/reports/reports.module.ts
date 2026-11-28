@@ -12,6 +12,7 @@ import { SettlementPartnermaticPaymentsSyncService } from './settlement-partnerm
 import { SettlementUltrainfluencePaymentsSyncService } from './settlement-ultrainfluence-payments-sync.service';
 import { SettlementFamestaPaymentsSyncService } from './settlement-famesta-payments-sync.service';
 import { SettlementCollabglowPaymentsSyncService } from './settlement-collabglow-payments-sync.service';
+import { SettlementBrandsparkhubPaymentsSyncService } from './settlement-brandsparkhub-payments-sync.service';
 import { SettlementAllPaymentsSyncService } from './settlement-all-payments-sync.service';
 import { SettlementRewardooPaymentsSyncService } from './settlement-rewardoo-payments-sync.service';
 import { SettlementUsdCnyRateService } from './settlement-usd-cny-rate.service';
@@ -33,6 +34,7 @@ import { CryptoService } from '../common/crypto.service';
     SettlementUltrainfluencePaymentsSyncService,
     SettlementFamestaPaymentsSyncService,
     SettlementCollabglowPaymentsSyncService,
+    SettlementBrandsparkhubPaymentsSyncService,
     SettlementAllPaymentsSyncService,
     CryptoService,
     SettlementMonthlyReportService,

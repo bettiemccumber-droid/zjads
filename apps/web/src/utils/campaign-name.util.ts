@@ -40,6 +40,7 @@ export function inferPlatformNameFromAlias(alias: string): string {
   if (a.startsWith('ui')) return 'UltraInfluence';
   if (a.startsWith('cg')) return 'CollabGlow';
   if (a.startsWith('fs')) return 'Famesta';
+  if (a.startsWith('bsh') || a.startsWith('bsp')) return 'Brandsparkhub';
   return '';
 }
 

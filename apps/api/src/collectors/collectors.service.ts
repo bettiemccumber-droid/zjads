@@ -29,6 +29,12 @@ import {
 } from './famesta.collector';
 import { fetchFamestaClicks } from './famesta-clicks';
 import {
+  fetchBrandsparkhubOrders,
+  normalizeBrandsparkhubOrders,
+  summarizeBshTransactionApi,
+} from './brandsparkhub.collector';
+import { fetchBrandsparkhubClicks } from './brandsparkhub-clicks';
+import {
   fetchLinkHaitaoCommissions,
   normalizeLinkHaitaoOrders,
   summarizeLhCommissionApi,
@@ -114,6 +120,11 @@ export interface CollectResultWithPmMeta extends CollectResult {
     orderCount: number;
     totalCommission: number;
   };
+  bshApi?: {
+    apiListRows: number;
+    orderCount: number;
+    totalCommission: number;
+  };
   /** RW Performance 看板 Orders 汇总（与报表一致） */
   rwPerformanceOrderCount?: number;
   rwPerformanceOrderError?: string;
@@ -133,6 +144,8 @@ export interface CollectResultWithPmMeta extends CollectResult {
   cgClickError?: string;
   fsClickTotal?: number;
   fsClickError?: string;
+  bshClickTotal?: number;
+  bshClickError?: string;
   rwClickTotal?: number;
   /** RW 联盟点击采集失败时的错误信息（订单仍会写入） */
   rwClickError?: string;
@@ -173,6 +186,7 @@ export class CollectorsService {
     let uiApi: CollectResultWithPmMeta['uiApi'];
     let cgApi: CollectResultWithPmMeta['cgApi'];
     let fsApi: CollectResultWithPmMeta['fsApi'];
+    let bshApi: CollectResultWithPmMeta['bshApi'];
     let pmClickTotal: number | undefined;
     let lhClickTotal: number | undefined;
     let lbClickTotal: number | undefined;
@@ -185,6 +199,8 @@ export class CollectorsService {
     let cgClickError: string | undefined;
     let fsClickTotal: number | undefined;
     let fsClickError: string | undefined;
+    let bshClickTotal: number | undefined;
+    let bshClickError: string | undefined;
     let rwClickTotal: number | undefined;
     let rwClickError: string | undefined;
     let rwPerformanceOrderCount: number | undefined;
@@ -258,6 +274,35 @@ export class CollectorsService {
           } catch (clickErr) {
             fsClickError = clickErr instanceof Error ? clickErr.message : String(clickErr);
             await onProgress?.(`FS 联盟点击采集失败（订单仍会写入）: ${fsClickError}`);
+          }
+        }
+        break;
+      }
+      case 'brandsparkhub': {
+        const raw = await fetchBrandsparkhubOrders(apiToken, startDate, endDate);
+        bshApi = summarizeBshTransactionApi(raw);
+        normalized = normalizeBrandsparkhubOrders(raw, mappings);
+
+        if (options.includeClicks) {
+          await onProgress?.('订单已拉取，正在采集 Brandsparkhub 联盟点击…');
+          try {
+            const clickAggs = await fetchBrandsparkhubClicks(
+              apiToken,
+              startDate,
+              endDate,
+              async (p) => {
+                await onProgress?.(
+                  `Brandsparkhub 联盟点击 ${p.slotIndex}/${p.totalSlots}，已汇总 ${p.clicksSoFar} 次`,
+                );
+              },
+            );
+            await this.replaceClicksInRange(account.id, startDate, endDate);
+            bshClickTotal = await this.persistClicks(account.id, clickAggs);
+          } catch (clickErr) {
+            bshClickError = clickErr instanceof Error ? clickErr.message : String(clickErr);
+            await onProgress?.(
+              `Brandsparkhub 联盟点击采集失败（订单仍会写入）: ${bshClickError}`,
+            );
           }
         }
         break;
@@ -559,6 +604,7 @@ export class CollectorsService {
       uiApi,
       cgApi,
       fsApi,
+      bshApi,
       lbClickTotal,
       lbClickEstimatedDays,
       lbClickCollectDate,
@@ -569,6 +615,8 @@ export class CollectorsService {
       cgClickError,
       fsClickTotal,
       fsClickError,
+      bshClickTotal,
+      bshClickError,
       rwClickTotal,
       rwClickError,
       rwPerformanceOrderCount,

@@ -111,6 +111,8 @@ const PLATFORM_HINTS: Array<{ re: RegExp; code: string }> = [
   { re: /collabglow|chuizhan[_\s-]?cg|\bcg推荐|\bcg\b/i, code: 'collabglow' },
   { re: /ultrainfluence|chuizhan[_\s-]?ui|\bui推荐|\bui\b/i, code: 'ultrainfluence' },
   { re: /famesta|chuizhan[_\s-]?fs|\bfs推荐|\bfs\b/i, code: 'famesta' },
+  // 勿用裸 \bbsh\b：运营名单里 bsh 仍指向 shoplooks
+  { re: /brandsparkhub|chuizhan[_\s-]?bsp|\bbsp推荐|\bbsp\b/i, code: 'brandsparkhub' },
 ];
 
 /**

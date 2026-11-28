@@ -14,7 +14,13 @@ function runTests() {
   assert.equal(campaignAffiliateAttributionKey('159854', 'ui2'), 'ui:159854');
   assert.equal(campaignAffiliateAttributionKey('159854', 'lh5'), 'lh:159854');
   assert.equal(campaignAffiliateAttributionKey('159854', 'lh6'), 'lh:159854');
+  assert.equal(campaignAffiliateAttributionKey('66303', 'bsh5'), 'bsh:66303');
+  assert.equal(campaignAffiliateAttributionKey('66303', 'bsh1'), 'bsh:66303');
+  assert.equal(campaignAffiliateAttributionKey('66303', 'bsp1'), 'bsh:66303');
   assert.equal(affiliateAliasSamePlatformFamily('ui1', 'ui2'), true);
+  assert.equal(affiliateAliasSamePlatformFamily('bsh5', 'bsh1'), true);
+  assert.equal(affiliateAliasSamePlatformFamily('bsh5', 'bsp1'), true);
+  assert.equal(affiliateAliasSamePlatformFamily('bsh5', 'cg1'), false);
   assert.notEqual(
     campaignAffiliateAttributionKey('87590', 'lh1'),
     campaignAffiliateAttributionKey('87590', 'pm1'),
@@ -32,8 +38,9 @@ function runTests() {
   assert.equal(campaignCoversMerchantAffiliate(pmCampaigns, '126667', 'pm5'), true);
 
   const byKey = new Map([
-    ['87590|lh1', { orderCount: 0, commission: 0, affiliateClicks: 0 }],
-    ['87590|pm1', { orderCount: 1, commission: 25.47, affiliateClicks: 3 }],
+    ['87590|lh1', { orderCount: 0, commission: 0, affiliateClicks: 0, rejectedCommission: 0 }],
+    ['87590|pm1', { orderCount: 1, commission: 25.47, affiliateClicks: 3, rejectedCommission: 0 }],
+    ['66303|bsh5', { orderCount: 2, commission: 10, affiliateClicks: 5, rejectedCommission: 1 }],
   ]);
   const pmOnly = aggregateAffiliateMetricsByFamily(byKey, '87590', 'pm');
   assert.equal(pmOnly.orderCount, 1);
@@ -41,10 +48,14 @@ function runTests() {
   const lhOnly = aggregateAffiliateMetricsByFamily(byKey, '87590', 'lh');
   assert.equal(lhOnly.orderCount, 0);
   assert.equal(lhOnly.commission, 0);
+  const bshOnly = aggregateAffiliateMetricsByFamily(byKey, '66303', 'bsh');
+  assert.equal(bshOnly.orderCount, 2);
+  assert.equal(bshOnly.commission, 10);
+  assert.equal(bshOnly.rejectedCommission, 1);
 
   const byDay = new Map([
-    ['87590|pm1|2026-07-18', { orderCount: 1, commission: 25.47, affiliateClicks: 1 }],
-    ['87590|lh1|2026-07-18', { orderCount: 0, commission: 0, affiliateClicks: 0 }],
+    ['87590|pm1|2026-07-18', { orderCount: 1, commission: 25.47, affiliateClicks: 1, rejectedCommission: 0 }],
+    ['87590|lh1|2026-07-18', { orderCount: 0, commission: 0, affiliateClicks: 0, rejectedCommission: 0 }],
   ]);
   const pmDay = aggregateAffiliateMetricsByFamilyForDay(byDay, '87590', 'pm', '2026-07-18');
   assert.equal(pmDay.commission, 25.47);

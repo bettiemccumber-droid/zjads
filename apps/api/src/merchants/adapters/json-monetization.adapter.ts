@@ -21,6 +21,10 @@ const JSON_MONETIZATION: Record<
     url: 'https://api.famesta.com/api/monetization',
     source: 'famesta',
   },
+  brandsparkhub: {
+    url: 'https://api.brandsparkhub.com/api/monetization',
+    source: 'brandsparkhub',
+  },
 };
 
 /**

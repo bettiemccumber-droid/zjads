@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { AuthUser } from '../common/ownership.util';
 import { SettlementCollabglowPaymentsSyncService } from './settlement-collabglow-payments-sync.service';
+import { SettlementBrandsparkhubPaymentsSyncService } from './settlement-brandsparkhub-payments-sync.service';
 import { SettlementFamestaPaymentsSyncService } from './settlement-famesta-payments-sync.service';
 import { SettlementLinkbuxPaymentsSyncService } from './settlement-linkbux-payments-sync.service';
 import { SettlementLinkhaitaoPaymentsSyncService } from './settlement-linkhaitao-payments-sync.service';
@@ -39,6 +40,7 @@ export class SettlementAllPaymentsSyncService {
     private readonly ultrainfluence: SettlementUltrainfluencePaymentsSyncService,
     private readonly famesta: SettlementFamestaPaymentsSyncService,
     private readonly collabglow: SettlementCollabglowPaymentsSyncService,
+    private readonly brandsparkhub: SettlementBrandsparkhubPaymentsSyncService,
   ) {}
 
   async syncForMonth(
@@ -60,6 +62,10 @@ export class SettlementAllPaymentsSyncService {
       },
       { platform: 'famesta', run: () => this.famesta.syncForMonth(user, month, queryUserId) },
       { platform: 'collabglow', run: () => this.collabglow.syncForMonth(user, month, queryUserId) },
+      {
+        platform: 'brandsparkhub',
+        run: () => this.brandsparkhub.syncForMonth(user, month, queryUserId),
+      },
     ];
 
     const platforms: AllPaymentsSyncResult['platforms'] = [];

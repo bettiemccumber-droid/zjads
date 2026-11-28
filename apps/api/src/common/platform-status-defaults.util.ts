@@ -63,6 +63,7 @@ export function defaultStatusMappingsForPlatform(platformCode: string): StatusMa
     case 'ultrainfluence':
     case 'collabglow':
     case 'famesta':
+    case 'brandsparkhub':
       return UI_DEFAULTS;
     case 'linkhaitao':
       return LH_DEFAULTS;

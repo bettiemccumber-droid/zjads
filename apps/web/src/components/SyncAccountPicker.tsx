@@ -14,6 +14,7 @@ const PLATFORM_CODES = [
   'ultrainfluence',
   'collabglow',
   'famesta',
+  'brandsparkhub',
 ] as const;
 
 
@@ -33,6 +34,8 @@ const PLATFORM_SHORT: Record<string, string> = {
   collabglow: 'CG',
 
   famesta: 'FS',
+
+  brandsparkhub: 'BSH',
 
 };
 

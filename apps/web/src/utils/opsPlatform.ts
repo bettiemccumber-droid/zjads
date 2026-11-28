@@ -24,6 +24,8 @@ export const OPS_PLATFORM_ALIASES: Record<string, string> = {
   ui: 'ultrainfluence',
   famesta: 'famesta',
   fs: 'famesta',
+  brandsparkhub: 'brandsparkhub',
+  bsp: 'brandsparkhub',
   chuizhan_lh: 'linkhaitao',
   chuizhanlh: 'linkhaitao',
   chuizhan_rw: 'rewardoo',
@@ -49,7 +51,8 @@ export const OPS_PLATFORM_SHORT: Record<string, string> = {
   ultrainfluence: 'UI',
   collabglow: 'CG',
   famesta: 'FS',
-  shoplooks: 'BSH',
+  brandsparkhub: 'BSH',
+  shoplooks: 'SL',
 };
 
 /**

@@ -44,6 +44,8 @@ const PLATFORM_ALIASES: Record<string, string> = {
   ui: 'ultrainfluence',
   famesta: 'famesta',
   fs: 'famesta',
+  brandsparkhub: 'brandsparkhub',
+  bsp: 'brandsparkhub',
   chuizhan_lh: 'linkhaitao',
   chuizhanlh: 'linkhaitao',
   chuizhan_rw: 'rewardoo',

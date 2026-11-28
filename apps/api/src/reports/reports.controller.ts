@@ -30,6 +30,7 @@ import { SettlementPartnermaticPaymentsSyncService } from './settlement-partnerm
 import { SettlementUltrainfluencePaymentsSyncService } from './settlement-ultrainfluence-payments-sync.service';
 import { SettlementFamestaPaymentsSyncService } from './settlement-famesta-payments-sync.service';
 import { SettlementCollabglowPaymentsSyncService } from './settlement-collabglow-payments-sync.service';
+import { SettlementBrandsparkhubPaymentsSyncService } from './settlement-brandsparkhub-payments-sync.service';
 import { SettlementAllPaymentsSyncService } from './settlement-all-payments-sync.service';
 import { SettlementRewardooPaymentsSyncService } from './settlement-rewardoo-payments-sync.service';
 
@@ -184,6 +185,7 @@ export class ReportsController {
     private readonly settlementUltrainfluencePaymentsSync: SettlementUltrainfluencePaymentsSyncService,
     private readonly settlementFamestaPaymentsSync: SettlementFamestaPaymentsSyncService,
     private readonly settlementCollabglowPaymentsSync: SettlementCollabglowPaymentsSyncService,
+    private readonly settlementBrandsparkhubPaymentsSync: SettlementBrandsparkhubPaymentsSyncService,
     private readonly settlementAllPaymentsSync: SettlementAllPaymentsSyncService,
   ) {}
 
@@ -329,6 +331,21 @@ export class ReportsController {
   ) {
     const queryUserId = body.userId ? parseInt(body.userId, 10) : undefined;
     const result = await this.settlementFamestaPaymentsSync.syncForMonth(
+      user,
+      body.month,
+      queryUserId,
+    );
+    return ok(result);
+  }
+
+  /** 从 Brandsparkhub Payment API 同步 Brandsparkhub 列应收/实收 */
+  @Post('settlement-monthly/sync-brandsparkhub-payments')
+  async syncSettlementBrandsparkhubPayments(
+    @CurrentUser() user: AuthUser,
+    @Body() body: SaveSettlementActualCommissionDto,
+  ) {
+    const queryUserId = body.userId ? parseInt(body.userId, 10) : undefined;
+    const result = await this.settlementBrandsparkhubPaymentsSync.syncForMonth(
       user,
       body.month,
       queryUserId,

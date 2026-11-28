@@ -41,6 +41,8 @@ export function platformCodeFromAlias(alias: string): string {
   if (prefix.startsWith('ui')) return 'ultrainfluence';
   if (prefix.startsWith('cg')) return 'collabglow';
   if (prefix.startsWith('fs')) return 'famesta';
+  // bsh：广告系列实名（如 000-bsh5-…）；bsp：接入期备用前缀，仍映射到同一平台
+  if (prefix.startsWith('bsh') || prefix.startsWith('bsp')) return 'brandsparkhub';
   return '';
 }
 
@@ -56,5 +58,6 @@ export function inferPlatformNameFromAlias(alias: string): string {
   if (a.startsWith('ui')) return 'UltraInfluence';
   if (a.startsWith('cg')) return 'CollabGlow';
   if (a.startsWith('fs')) return 'Famesta';
+  if (a.startsWith('bsh') || a.startsWith('bsp')) return 'Brandsparkhub';
   return '';
 }

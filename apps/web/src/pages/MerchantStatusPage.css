@@ -327,6 +327,11 @@
   background: #ecfdf5;
   color: #047857;
 }
+.merchant-status-platform--brandsparkhub {
+  color: #0369a1;
+  background: #e0f2fe;
+}
+
 .merchant-status-platform--famesta {
   background: #fff1f2;
   color: #be123c;

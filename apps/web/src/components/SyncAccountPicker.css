@@ -134,6 +134,11 @@
   background: #ffe4e6;
 }
 
+.sync-platform-badge.brandsparkhub {
+  color: #0369a1;
+  background: #e0f2fe;
+}
+
 .sync-account-name {
   font-size: 14px;
   font-weight: 600;
